@@ -691,6 +691,39 @@ Run syntax checks:
 python3 -m compileall -q src/jarvis_line
 ```
 
+## Contributing
+
+Jarvis Line uses a simple beta-friendly branch flow:
+
+```text
+feature/* or fix/*
+  -> develop
+  -> main
+  -> version tag and GitHub Release
+```
+
+Branch roles:
+
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.1.0b2`.
+- `develop`: integration branch for reviewed changes before release.
+- `feature/*`: new features.
+- `fix/*`: bug fixes.
+
+Contribution flow:
+
+1. Open pull requests against `develop`.
+2. Include tests or a clear smoke-test note for behavior changes.
+3. For bugs, attach a redacted support bundle when possible.
+4. After review and CI, changes merge into `develop`.
+5. Release preparation happens by opening a `develop -> main` pull request.
+6. Releases are cut from `main` with a version tag and GitHub pre-release/release.
+
+Recommended support bundle for bug reports:
+
+```bash
+jarvis-line support-bundle --output ./jarvis-line-support.zip
+```
+
 ## Beta Status
 
 Jarvis Line is prepared as a `0.1.0b2` beta package.
