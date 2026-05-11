@@ -655,12 +655,12 @@ python3 -m pytest -q
 Run syntax checks:
 
 ```bash
-python3 -m py_compile src/jarvis_line/*.py
+python3 -m compileall -q src/jarvis_line
 ```
 
 ## Beta Status
 
-Jarvis Line is prepared as a `0.1.0b1` beta package.
+Jarvis Line is prepared as a `0.1.0b2` beta package.
 
 Beta-ready project pieces:
 

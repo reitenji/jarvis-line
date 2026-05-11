@@ -4,13 +4,14 @@ from jarvis_line import audio_worker
 
 
 def test_format_command_parts_replaces_placeholders():
+    output_path = Path("out.wav")
     parts = audio_worker.format_command_parts(
         ["tts", "--text", "{text_json}", "--out", "{output}"],
         "hello",
-        Path("/tmp/out.wav"),
+        output_path,
     )
 
-    assert parts == ["tts", "--text", '"hello"', "--out", "/tmp/out.wav"]
+    assert parts == ["tts", "--text", '"hello"', "--out", str(output_path)]
 
 
 def test_dequeue_drops_stale_jobs(tmp_path, monkeypatch):

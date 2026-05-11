@@ -15,11 +15,12 @@ def main() -> int:
     assert watcher.speak_mode_allows("final_answer") is True
     assert watcher.speak_mode_allows("commentary") is False
 
+    output_path = Path(tempfile.gettempdir()) / "out.wav"
     assert audio_worker.format_command_parts(
         ["tts", "{text_json}", "{output}"],
         "hello",
-        Path("/tmp/out.wav"),
-    ) == ["tts", '"hello"', "/tmp/out.wav"]
+        output_path,
+    ) == ["tts", '"hello"', str(output_path)]
 
     assert "speed is ignored by macos" in cli.validate_config({"tts": "macos", "speed": 1.2})
     assert "speed is ignored by system" in cli.validate_config({"tts": "system", "speed": 1.2})

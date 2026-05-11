@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0b2
+
+- Fixed Windows CI syntax checks by replacing shell glob expansion with `compileall`.
+- Fixed smoke/unit path assertions so they are platform independent.
+- Updated GitHub Actions to Node 24-compatible action versions.
+
 ## 0.1.0b1
 
 - Added session watcher, latest-message cache, audio queue, and single audio worker.
