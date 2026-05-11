@@ -90,6 +90,16 @@ jarvis-line doctor
 
 Jarvis Line only speaks lines that the agent explicitly emits. Add the instruction snippet to the file your agent reads.
 
+Current integration support:
+
+| Agent | Instruction install | Hook/runtime install |
+|---|---:|---:|
+| Codex | Yes, via `AGENTS.md` | Yes, via `jarvis-line install codex` |
+| Claude | Yes, via `CLAUDE.md` | Not yet |
+| Gemini | Yes, via `GEMINI.md` | Not yet |
+
+Codex is the only full hook integration today. Claude and Gemini support currently means Jarvis Line can install the instruction block that tells the agent to emit `Jarvis line: ...`; native Claude/Gemini session watching or hook installation is planned as a separate integration.
+
 Codex:
 
 ```bash
@@ -503,11 +513,18 @@ Example quieter config:
 
 ## Runtime Commands
 
-Install the Codex hook:
+Install the Codex hook/runtime integration:
 
 ```bash
 jarvis-line init --language en
 jarvis-line install codex
+```
+
+Claude and Gemini currently use instruction support only:
+
+```bash
+jarvis-line instructions install claude --path ./CLAUDE.md --language en
+jarvis-line instructions install gemini --path ./GEMINI.md --language en
 ```
 
 Start, stop, or restart the runtime:
