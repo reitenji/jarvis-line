@@ -1,5 +1,7 @@
 import argparse
 
+import pytest
+
 from jarvis_line import cli
 
 
@@ -154,6 +156,30 @@ def test_update_install_from_git_builds_pip_spec(tmp_path, monkeypatch):
 
     assert cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None)) == 0
     assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@main"
+
+
+def test_top_level_help_is_product_friendly(capsys):
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["--help"])
+
+    out = capsys.readouterr().out
+    assert exc.value.code == 0
+    assert "Voice notifications for AI coding agents" in out
+    assert "Quick start:" in out
+    assert "jarvis-line init --language en" in out
+    assert "support-bundle" in out
+
+
+def test_help_command_prints_top_level_help(capsys):
+    parser = cli.build_parser()
+    args = parser.parse_args(["help"])
+
+    assert args.func(args) == 0
+    out = capsys.readouterr().out
+    assert "jarvis-line --help" in out
+    assert "Common commands:" in out
 
 
 def test_find_runtime_pids_matches_packaged_audio_worker(monkeypatch):

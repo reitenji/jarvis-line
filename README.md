@@ -527,6 +527,8 @@ jarvis-line uninstall codex
 Check status:
 
 ```bash
+jarvis-line --help
+jarvis-line help
 jarvis-line --version
 jarvis-line status
 ```

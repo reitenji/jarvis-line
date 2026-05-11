@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0b3
 
+- Added product-friendly top-level CLI help and a `jarvis-line help` command.
 - Documented local dogfood timing observations for Kokoro and system TTS.
 
 ## 0.1.0b2
