@@ -128,10 +128,17 @@ jarvis-line tts test
 
 ## If You Do Not Want Kokoro
 
-Use system TTS:
+Use system TTS. On macOS this uses the default system voice, which is often better than forcing a specific older voice:
 
 ```bash
 jarvis-line tts use system
+```
+
+For the default macOS system voice, leave voice overrides unset:
+
+```bash
+jarvis-line config set system_voice null
+jarvis-line config set system_rate null
 ```
 
 Or connect any TTS through the command backend:
