@@ -52,7 +52,7 @@ def append_log(message: str) -> None:
         HOOKS_DIR.mkdir(parents=True, exist_ok=True)
         rotate_log_if_needed()
         with LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(f"{int(time.time())} {message}\n")
+            f.write(f"{time.time():.3f} {message}\n")
     except Exception:
         pass
 
@@ -149,27 +149,63 @@ def update_worker_heartbeat() -> None:
     update_json(STATE_PATH, {}, mutate)
 
 
-def ensure_speaker():
+def ensure_speaker(preload_voice: bool = False):
     cfg = ks.load_config()
     global _SPEAKER
     if _SPEAKER is None:
+        started = time.perf_counter()
         model_path = Path(cfg.get("model_path", ""))
         voices_path = Path(cfg.get("voices_path", ""))
         engine = ks.Kokoro(str(model_path), str(voices_path))
         _SPEAKER = {"config": cfg, "engine": engine, "voice_cache": {}}
-        append_log("speaker-init")
+        append_log(f"speaker-init duration_ms={(time.perf_counter() - started) * 1000:.0f}")
+    if preload_voice:
+        speaker = _SPEAKER
+        voice_spec = str(speaker["config"].get("voice", "bm_george:70,bm_lewis:30"))
+        voice_cache = speaker["voice_cache"]
+        if voice_spec not in voice_cache:
+            started = time.perf_counter()
+            voice_cache[voice_spec] = ks.build_voice_tensor(speaker["engine"], voice_spec)
+            append_log(f"voice-warm voice={voice_spec} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
     return _SPEAKER
+
+
+def warm_tts_if_configured() -> None:
+    cfg = ks.load_config()
+    if cfg.get("speech_enabled") is False:
+        return
+    if cfg.get("warm_tts") is False:
+        return
+    backend = str(cfg.get("tts") or "kokoro").strip().lower()
+    if backend != "kokoro":
+        return
+    try:
+        speaker = ensure_speaker(preload_voice=True)
+        voice_spec = str(speaker["config"].get("voice", "bm_george:70,bm_lewis:30"))
+        voice = speaker["voice_cache"][voice_spec]
+        warm_text = str(cfg.get("warm_tts_text") or "Ready.").strip() or "Ready."
+        lang = str(cfg.get("lang", "en-gb"))
+        speed = float(cfg.get("speed", 1.08))
+        metrics = ks.warm_stream(speaker["engine"], warm_text, voice, lang, speed)
+        first_chunk_ms = metrics.get("first_chunk_ms") if isinstance(metrics, dict) else None
+        if first_chunk_ms is not None:
+            append_log(f"stream-warm first_chunk_ms={float(first_chunk_ms):.0f}")
+        append_log("tts-warm-ready backend=kokoro")
+    except Exception as exc:
+        append_log(f"tts-warm-error backend=kokoro reason={exc.__class__.__name__}")
 
 
 def speak_line(line: str) -> None:
     if not line:
         return
     with file_lock(AUDIO_LOCK_PATH):
+        started = time.perf_counter()
         cfg = ks.load_config()
         fallback = str(cfg.get("fallback_tts") or "").strip().lower()
         backend = str(cfg.get("tts") or "kokoro").strip().lower()
         try:
             speak_with_backend(line, cfg, backend)
+            append_log(f"backend-done backend={backend} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
             return
         except Exception as exc:
             if not fallback or fallback == backend:
@@ -178,6 +214,7 @@ def speak_line(line: str) -> None:
             fallback_cfg = dict(cfg)
             fallback_cfg["tts"] = fallback
             speak_with_backend(line, fallback_cfg, fallback)
+            append_log(f"backend-done backend={fallback} fallback_from={backend} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
 
 
 def speak_with_backend(line: str, cfg: dict[str, Any], backend: str) -> None:
@@ -204,7 +241,10 @@ def speak_with_backend(line: str, cfg: dict[str, Any], backend: str) -> None:
 
         if playback_mode == "stream":
             try:
-                ks.play_stream(speaker["engine"], line, voice, lang, speed, volume)
+                metrics = ks.play_stream(speaker["engine"], line, voice, lang, speed, volume) or {}
+                first_chunk_ms = metrics.get("first_chunk_ms") if isinstance(metrics, dict) else None
+                if first_chunk_ms is not None:
+                    append_log(f"stream-played first_chunk_ms={float(first_chunk_ms):.0f}")
                 return
             except Exception as exc:
                 append_log(f"stream-fallback reason={exc.__class__.__name__}")
@@ -353,6 +393,8 @@ def speak_system(line: str, cfg: dict[str, Any]) -> None:
 
 def run_worker() -> int:
     append_log("worker-start")
+    update_worker_heartbeat()
+    warm_tts_if_configured()
     last_heartbeat = 0.0
     while True:
         now = time.time()
@@ -368,12 +410,16 @@ def run_worker() -> int:
         line = str(job.get("jarvis_line") or "").strip()
         phase = str(job.get("phase") or "")
         session_key = str(job.get("session_key") or "")
+        enqueued_ts_ms = int(job.get("enqueued_ts_ms") or 0)
+        queue_delay_ms = max(0, int(time.time() * 1000) - enqueued_ts_ms) if enqueued_ts_ms else 0
         if not line:
             append_log("job-skip empty-line")
             continue
-        append_log(f"job-speak phase={phase} session={session_key} line={line}")
+        append_log(f"job-speak phase={phase} queue_delay_ms={queue_delay_ms} session={session_key} line={line}")
+        started = time.perf_counter()
         try:
             speak_line(line)
+            append_log(f"job-done phase={phase} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
         except Exception as exc:
             append_log(f"job-error reason={exc.__class__.__name__}")
 

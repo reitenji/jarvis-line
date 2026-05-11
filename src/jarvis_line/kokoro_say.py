@@ -115,17 +115,21 @@ def spawn_player(sound_path: Path, volume: float) -> None:
     raise RuntimeError(f"Unsupported platform for playback: {sys.platform}")
 
 
-def play_stream(engine: Any, text: str, voice, lang: str, speed: float, volume: float) -> None:
+def play_stream(engine: Any, text: str, voice, lang: str, speed: float, volume: float) -> dict[str, float | None]:
     deps = kokoro_deps()
     np = deps["np"]
     sd = deps["sd"]
     volume = max(0.0, min(volume, 1.0))
+    started = time.perf_counter()
 
-    async def _run() -> None:
+    async def _run() -> dict[str, float | None]:
         stream = None
         last_sample_rate = None
+        first_chunk_ms = None
         try:
             async for chunk, sample_rate in engine.create_stream(text, voice=voice, lang=lang, speed=speed):
+                if first_chunk_ms is None:
+                    first_chunk_ms = (time.perf_counter() - started) * 1000
                 if stream is None:
                     stream = sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32")
                     stream.start()
@@ -147,8 +151,25 @@ def play_stream(engine: Any, text: str, voice, lang: str, speed: float, volume: 
             if stream is not None:
                 stream.stop()
                 stream.close()
+        return {"first_chunk_ms": first_chunk_ms}
 
-    asyncio.run(_run())
+    return asyncio.run(_run())
+
+
+def warm_stream(engine: Any, text: str, voice, lang: str, speed: float) -> dict[str, float | None]:
+    started = time.perf_counter()
+
+    async def _run() -> dict[str, float | None]:
+        stream = engine.create_stream(text, voice=voice, lang=lang, speed=speed)
+        try:
+            await anext(stream)
+            return {"first_chunk_ms": (time.perf_counter() - started) * 1000}
+        finally:
+            close = getattr(stream, "aclose", None)
+            if close:
+                await close()
+
+    return asyncio.run(_run())
 
 
 def synthesize_to_file(
