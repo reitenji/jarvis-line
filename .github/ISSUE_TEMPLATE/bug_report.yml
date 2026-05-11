@@ -1,0 +1,80 @@
+name: Bug report
+description: Report a Jarvis Line issue with a redacted support bundle.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a Jarvis Line issue.
+
+        Before submitting, please run:
+
+        ```bash
+        jarvis-line doctor
+        jarvis-line support-bundle --output ./jarvis-line-support.zip
+        ```
+
+        Attach `jarvis-line-support.zip` to the issue. Do not paste raw logs.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Preflight
+      options:
+        - label: I ran `jarvis-line doctor`.
+          required: true
+        - label: I generated and attached a redacted support bundle.
+          required: true
+        - label: I did not paste raw private logs or secrets.
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run ...
+        2. Start ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: dropdown
+    id: tts
+    attributes:
+      label: TTS backend
+      options:
+        - kokoro
+        - system
+        - macos
+        - command
+        - unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra notes
+      description: Add anything that is not already in the support bundle.
