@@ -723,7 +723,7 @@ feature/* or fix/*
 
 Branch roles:
 
-- `main`: release-ready code only. Public installs should prefer version tags such as `v0.1.0b2`.
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.1.0b3`.
 - `develop`: integration branch for reviewed changes before release.
 - `feature/*`: new features.
 - `fix/*`: bug fixes.
@@ -745,7 +745,7 @@ jarvis-line support-bundle --output ./jarvis-line-support.zip
 
 ## Beta Status
 
-Jarvis Line is prepared as a `0.1.0b2` beta package.
+Jarvis Line is prepared as a `0.1.0b3` beta package.
 
 Beta-ready project pieces:
 
