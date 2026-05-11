@@ -75,7 +75,7 @@ What `init` does:
 7. Installs the Codex hook.
 8. Installs Jarvis Line instructions into `AGENTS.md`.
 
-Kokoro is the preferred default because it gives a consistent local voice. If you do not want Kokoro, keeping the system TTS fallback is fine.
+Kokoro is the preferred local default because it gives a consistent offline voice. If you do not want Kokoro, use the `system` backend. On macOS, `system` uses the default system voice, which can sound better than forcing older voices such as `Daniel`.
 
 Manual setup is also available:
 
@@ -236,7 +236,7 @@ jarvis-line kokoro configure \
 
 ### System TTS
 
-System TTS is the low-friction fallback.
+System TTS is the recommended fallback for users who do not want Kokoro.
 
 ```bash
 jarvis-line tts use system
@@ -253,6 +253,16 @@ System TTS supports:
 - `system_voice`
 - `system_rate`
 - `volume`
+
+For the best macOS fallback voice, leave `system_voice` unset:
+
+```bash
+jarvis-line config set system_voice null
+jarvis-line config set system_rate null
+jarvis-line tts use system
+```
+
+This lets macOS choose its default system voice instead of forcing a specific voice.
 
 ### macOS `say`
 
@@ -438,7 +448,7 @@ Fresh setup starts from this shape:
 
 ### Default System Fallback Config
 
-If Kokoro is not ready, `setup --default` keeps the behavior defaults and switches only the TTS-specific shape:
+If Kokoro is not ready, or if the user chooses not to use Kokoro, `system` is the recommended default fallback. `setup --default` keeps the behavior defaults and switches only the TTS-specific shape:
 
 ```json
 {
@@ -558,6 +568,13 @@ Test speech:
 ```bash
 jarvis-line tts test --text "Jarvis line test is ready."
 ```
+
+Timing note:
+
+- `jarvis-line tts test` measures the full command duration, including synthesis and playback.
+- In local macOS dogfood testing, a short Kokoro test line took about `8.24s` end to end.
+- The same short line with system TTS took about `3.94s` end to end.
+- For queued Jarvis lines, Kokoro typically started the first audible audio chunk in about `2.1s` to `3.2s`; the remaining time was the spoken line itself.
 
 Check Kokoro:
 

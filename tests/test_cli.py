@@ -156,6 +156,17 @@ def test_update_install_from_git_builds_pip_spec(tmp_path, monkeypatch):
     assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@main"
 
 
+def test_find_runtime_pids_matches_packaged_audio_worker(monkeypatch):
+    monkeypatch.setattr(cli, "CODEX_HOME", cli.Path("/Users/me/.codex"))
+    monkeypatch.setattr(cli, "KOKORO_VENV", cli.Path("/Users/me/.codex/tts/kokoro-venv"))
+    monkeypatch.setattr(cli, "process_lines", lambda: [
+        "101 /usr/bin/python /Users/me/.codex/tts/kokoro-venv/lib/python3.11/site-packages/jarvis_line/audio_worker.py",
+        "102 /usr/bin/python /Users/me/.gemini/hooks/jarvis_line_watcher.py --watch",
+    ])
+
+    assert cli.find_runtime_pids("audio_worker") == [101]
+
+
 def test_profiles_and_prefix_helpers(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cli, "CONFIG_PROFILES_PATH", tmp_path / "profiles.json")

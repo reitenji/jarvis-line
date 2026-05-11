@@ -46,6 +46,8 @@ DEFAULT_KOKORO_CONFIG = {
     "max_queue_size": 8,
     "dedupe_window_seconds": None,
     "fallback_tts": None,
+    "warm_tts": True,
+    "warm_tts_text": "Ready.",
     "message_template": "{line}",
     "assistant_name": "Jarvis",
     "speech_enabled": True,
@@ -112,6 +114,8 @@ COMMON_CONFIG_KEYS = {
     "max_queue_size",
     "dedupe_window_seconds",
     "fallback_tts",
+    "warm_tts",
+    "warm_tts_text",
     "message_template",
     "assistant_name",
     "speech_enabled",
@@ -214,6 +218,8 @@ CONFIG_FIELD_HELP = {
     "max_queue_size": {"type": "integer", "description": "Maximum queued audio jobs."},
     "dedupe_window_seconds": {"type": "integer|null", "description": "Override duplicate suppression window."},
     "fallback_tts": {"type": "string|null", "description": "Fallback TTS backend if the selected backend fails.", "values": ["system", "macos", "command", None]},
+    "warm_tts": {"type": "boolean", "description": "Preload the selected TTS engine in the audio worker to reduce first-speech delay."},
+    "warm_tts_text": {"type": "string", "description": "Short text used for silent Kokoro stream warm-up."},
     "message_template": {"type": "string", "description": "Template for spoken output. Use {line} for the Jarvis line."},
     "assistant_name": {"type": "string", "description": "Assistant/persona name used in generated instructions."},
     "speech_enabled": {"type": "boolean", "description": "Project/user switch for all Jarvis Line speech."},
@@ -735,6 +741,59 @@ def pid_alive(pid: int) -> bool:
         return False
 
 
+def process_lines() -> list[str]:
+    if platform.system() == "Windows":
+        commands = [
+            ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }"],
+        ]
+    else:
+        commands = [["ps", "-ax", "-o", "pid=,command="]]
+    for command in commands:
+        try:
+            out = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
+            return out.splitlines()
+        except Exception:
+            continue
+    return []
+
+
+def normalized_path_text(value: object) -> str:
+    return str(value).replace("\\", "/")
+
+
+def find_runtime_pids(kind: str) -> list[int]:
+    pids = []
+    this_pid = os.getpid()
+    if kind == "watcher":
+        markers = (
+            "jarvis_line/watcher.py --watch-sessions",
+            "jarvis_line.watcher --watch-sessions",
+        )
+    else:
+        markers = (
+            "jarvis_line/audio_worker.py",
+            "jarvis_line.audio_worker",
+        )
+    codex_home = normalized_path_text(CODEX_HOME)
+    kokoro_venv = normalized_path_text(KOKORO_VENV)
+    for line in process_lines():
+        normalized_line = normalized_path_text(line)
+        if not any(marker in normalized_line for marker in markers):
+            continue
+        if codex_home not in normalized_line and kokoro_venv not in normalized_line:
+            continue
+        parts = line.strip().split()
+        if not parts:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        if pid != this_pid:
+            pids.append(pid)
+    return pids
+
+
 def terminate_pid(pid: int) -> None:
     if not pid:
         return
@@ -993,8 +1052,14 @@ def runtime_stop(_args) -> int:
     state = load_json(STATE_PATH, {})
     watcher = state.get("__watcher__", {}) if isinstance(state, dict) else {}
     worker = state.get("__audio_worker__", {}) if isinstance(state, dict) else {}
-    terminate_pid(int(watcher.get("pid") or 0))
-    terminate_pid(int(worker.get("pid") or 0))
+    pids = {
+        int(watcher.get("pid") or 0),
+        int(worker.get("pid") or 0),
+        *find_runtime_pids("watcher"),
+        *find_runtime_pids("audio_worker"),
+    }
+    for pid in pids:
+        terminate_pid(pid)
     print("Stopped Jarvis Line runtime.")
     print_next("run `jarvis-line start` to start it again.")
     return 0

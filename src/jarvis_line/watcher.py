@@ -252,7 +252,13 @@ def find_watcher_pids() -> list[int]:
     pids = []
     this_pid = os.getpid()
     for line in process_lines():
-        if "jarvis_line_watcher.py --watch-file" not in line and "jarvis_line_watcher.py --watch-sessions" not in line:
+        if (
+            "jarvis_line/watcher.py --watch-file" not in line
+            and "jarvis_line/watcher.py --watch-sessions" not in line
+            and "jarvis_line.watcher --watch-sessions" not in line
+            and "jarvis_line_watcher.py --watch-file" not in line
+            and "jarvis_line_watcher.py --watch-sessions" not in line
+        ):
             continue
         parts = line.strip().split()
         if not parts:
@@ -274,11 +280,22 @@ def terminate_stale_watchers(keep_pid: int | None = None) -> None:
         append_log(f"stale-watcher-killed pid={pid}")
 
 
+def normalized_path_text(value: object) -> str:
+    return str(value).replace("\\", "/")
+
+
 def find_audio_worker_pids() -> list[int]:
     pids = []
     this_pid = os.getpid()
     for line in process_lines():
-        if "jarvis_line_audio_worker.py" not in line:
+        normalized_line = normalized_path_text(line)
+        if (
+            "jarvis_line/audio_worker.py" not in normalized_line
+            and "jarvis_line.audio_worker" not in normalized_line
+            and "jarvis_line_audio_worker.py" not in normalized_line
+        ):
+            continue
+        if normalized_path_text(CODEX_HOME) not in normalized_line and normalized_path_text(KOKORO_VENV) not in normalized_line:
             continue
         parts = line.strip().split()
         if not parts:
@@ -490,20 +507,7 @@ def launch_audio_worker() -> None:
         terminate_stale_audio_workers(keep_pid=pid)
         return
 
-    live_workers = find_audio_worker_pids()
-    if live_workers:
-        keep_pid = live_workers[0]
-        terminate_stale_audio_workers(keep_pid=keep_pid)
-        def keep_existing(new_state):
-            new_state["__audio_worker__"] = {
-                "pid": keep_pid,
-                "mode": "audio",
-                "started_ts": int(time.time()),
-                "heartbeat_ts_ms": int(time.time() * 1000),
-            }
-        update_json(STATE_PATH, {}, keep_existing)
-        append_log(f"audio-worker-adopt pid={keep_pid}")
-        return
+    terminate_stale_audio_workers()
 
     worker = state.get("__audio_worker__", {}) if isinstance(state, dict) else {}
     old_pid = int((worker or {}).get("pid") or 0)
