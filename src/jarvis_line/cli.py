@@ -1453,6 +1453,29 @@ INSTRUCTION_FILES = {
 }
 
 
+HELP_DESCRIPTION = "Voice notifications for AI coding agents, powered by hook-driven TTS."
+
+HELP_EPILOG = """Quick start:
+  jarvis-line init --language en
+  jarvis-line doctor
+  jarvis-line tts test --text "Jarvis line test is ready."
+
+Common commands:
+  jarvis-line status                 Show runtime, queue, and TTS status
+  jarvis-line setup --default        Install a low-friction default setup
+  jarvis-line tts use system         Switch to platform system TTS
+  jarvis-line kokoro status          Check Kokoro model/runtime readiness
+  jarvis-line logs tail              Inspect watcher and audio worker logs
+  jarvis-line support-bundle         Create a redacted issue-report bundle
+  jarvis-line update check           Check whether an update is available
+
+More help:
+  jarvis-line --help
+  jarvis-line <command> --help
+  jarvis-line help
+"""
+
+
 def instruction_snippet(target: str = "agents", language: str = "en", style: str = "strict") -> str:
     if language == "en":
         language_rule = "Any `Jarvis line` must be written in English."
@@ -1555,12 +1578,20 @@ def instructions_doctor(args) -> int:
     return 1
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-line")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="jarvis-line",
+        description=HELP_DESCRIPTION,
+        epilog=HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--version", action="version", version=f"jarvis-line {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    setup = sub.add_parser("setup")
+    help_cmd = sub.add_parser("help", help="Show this help message and exit.")
+    help_cmd.set_defaults(func=lambda _args: parser.print_help() or 0)
+
+    setup = sub.add_parser("setup", help="Configure Jarvis Line.")
     setup.add_argument("--default", action="store_true", help="Use the recommended low-friction setup.")
     setup.add_argument("--test", action="store_true", help="Play a short test phrase after setup.")
     setup.set_defaults(func=lambda args: setup_default(args) if args.default else setup_wizard(args))
@@ -1575,14 +1606,14 @@ def main() -> int:
     init.add_argument("--test", action="store_true", help="Play a short test phrase during setup.")
     init.set_defaults(func=init_project)
 
-    doctor_parser = sub.add_parser("doctor")
+    doctor_parser = sub.add_parser("doctor", help="Run health checks and optional fixes.")
     doctor_parser.add_argument("--fix", action="store_true")
     doctor_parser.add_argument("--json", action="store_true", dest="json_output")
     doctor_parser.set_defaults(func=doctor)
 
-    sub.add_parser("status").set_defaults(func=status)
+    sub.add_parser("status", help="Show runtime, queue, and TTS status.").set_defaults(func=status)
 
-    update = sub.add_parser("update")
+    update = sub.add_parser("update", help="Check, install, or configure updates.")
     update_sub = update.add_subparsers(dest="update_command", required=True)
     update_check_parser = update_sub.add_parser("check")
     update_check_parser.add_argument("--index-url")
@@ -1602,27 +1633,27 @@ def main() -> int:
     update_config_parser.add_argument("--git-repo")
     update_config_parser.add_argument("--git-ref")
     update_config_parser.set_defaults(func=update_configure)
-    start = sub.add_parser("start")
+    start = sub.add_parser("start", help="Start the watcher and audio worker runtime.")
     start.add_argument("--test", action="store_true")
     start.set_defaults(func=runtime_start)
-    sub.add_parser("stop").set_defaults(func=runtime_stop)
-    restart = sub.add_parser("restart")
+    sub.add_parser("stop", help="Stop the watcher and audio worker runtime.").set_defaults(func=runtime_stop)
+    restart = sub.add_parser("restart", help="Restart the watcher and audio worker runtime.")
     restart.add_argument("--test", action="store_true")
     restart.set_defaults(func=runtime_restart)
 
-    queue = sub.add_parser("queue")
+    queue = sub.add_parser("queue", help="Inspect or clear queued spoken lines.")
     queue_sub = queue.add_subparsers(dest="queue_command", required=True)
     queue_sub.add_parser("status").set_defaults(func=queue_status)
     queue_sub.add_parser("clear").set_defaults(func=queue_clear)
 
-    logs = sub.add_parser("logs")
+    logs = sub.add_parser("logs", help="Inspect Jarvis Line logs.")
     logs_sub = logs.add_subparsers(dest="logs_command", required=True)
     tail = logs_sub.add_parser("tail")
     tail.add_argument("target", choices=("all", "watcher", "audio"), nargs="?", default="all")
     tail.add_argument("--lines", type=int, default=80)
     tail.set_defaults(func=logs_tail)
 
-    kokoro = sub.add_parser("kokoro")
+    kokoro = sub.add_parser("kokoro", help="Manage Kokoro status, dependencies, and config.")
     kokoro_sub = kokoro.add_subparsers(dest="kokoro_command", required=True)
     kokoro_sub.add_parser("status").set_defaults(func=kokoro_status)
     kokoro_sub.add_parser("install-deps").set_defaults(func=kokoro_install_deps)
@@ -1633,7 +1664,7 @@ def main() -> int:
     kokoro_config.add_argument("--lang")
     kokoro_config.set_defaults(func=kokoro_configure)
 
-    bundle = sub.add_parser("support-bundle")
+    bundle = sub.add_parser("support-bundle", help="Create a redacted support bundle for bug reports.")
     bundle.add_argument("--output")
     bundle.add_argument("--full", action="store_true", help="Include full redacted logs instead of safe tails.")
     bundle.add_argument("--max-log-bytes", type=int, default=5_000_000, help="Maximum bytes per log in --full mode.")
@@ -1641,21 +1672,21 @@ def main() -> int:
     bundle.add_argument("--include-config-full", action="store_true", help="Include a full redacted config snapshot.")
     bundle.set_defaults(func=support_bundle)
 
-    install = sub.add_parser("install")
+    install = sub.add_parser("install", help="Install hooks for supported agents.")
     install_sub = install.add_subparsers(dest="install_target", required=True)
     install_codex_parser = install_sub.add_parser("codex")
     install_codex_parser.set_defaults(func=install_codex)
 
-    uninstall = sub.add_parser("uninstall")
+    uninstall = sub.add_parser("uninstall", help="Remove installed hooks.")
     uninstall_sub = uninstall.add_subparsers(dest="uninstall_target", required=True)
     uninstall_codex_parser = uninstall_sub.add_parser("codex")
     uninstall_codex_parser.set_defaults(func=uninstall_codex)
 
-    migrate = sub.add_parser("migrate-config")
+    migrate = sub.add_parser("migrate-config", help="Migrate legacy Jarvis Line config.")
     migrate.add_argument("--remove-legacy", action="store_true")
     migrate.set_defaults(func=migrate_config)
 
-    config = sub.add_parser("config")
+    config = sub.add_parser("config", help="Read, edit, and inspect configuration.")
     config_sub = config.add_subparsers(dest="config_command", required=True)
     get = config_sub.add_parser("get")
     get.add_argument("key", nargs="?")
@@ -1692,7 +1723,7 @@ def main() -> int:
     prefix_remove_cmd.add_argument("prefix")
     prefix_remove_cmd.set_defaults(func=prefix_remove)
 
-    instructions = sub.add_parser("instructions")
+    instructions = sub.add_parser("instructions", help="Print, install, or check agent instructions.")
     instructions_sub = instructions.add_subparsers(dest="instructions_command", required=True)
     inst_print = instructions_sub.add_parser("print")
     inst_print.add_argument("target", choices=tuple(INSTRUCTION_FILES.keys()), nargs="?", default="agents")
@@ -1716,7 +1747,7 @@ def main() -> int:
     inst_doctor.add_argument("--path")
     inst_doctor.set_defaults(func=instructions_doctor)
 
-    tts = sub.add_parser("tts")
+    tts = sub.add_parser("tts", help="Select, test, and inspect TTS engines.")
     tts_sub = tts.add_subparsers(dest="tts_command", required=True)
     use = tts_sub.add_parser("use")
     use.add_argument("preset", choices=("kokoro", "system", "macos", "command"))
@@ -1731,6 +1762,11 @@ def main() -> int:
     caps.add_argument("preset", nargs="?", choices=("kokoro", "system", "macos", "command"))
     caps.set_defaults(func=tts_capabilities)
 
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
     return args.func(args)
 
