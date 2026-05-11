@@ -569,6 +569,13 @@ Test speech:
 jarvis-line tts test --text "Jarvis line test is ready."
 ```
 
+Timing note:
+
+- `jarvis-line tts test` measures the full command duration, including synthesis and playback.
+- In local macOS dogfood testing, a short Kokoro test line took about `8.24s` end to end.
+- The same short line with system TTS took about `3.94s` end to end.
+- For queued Jarvis lines, Kokoro typically started the first audible audio chunk in about `2.1s` to `3.2s`; the remaining time was the spoken line itself.
+
 Check Kokoro:
 
 ```bash

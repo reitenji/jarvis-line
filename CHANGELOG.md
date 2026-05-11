@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Documented local dogfood timing observations for Kokoro and system TTS.
+
 ## 0.1.0b2
 
 - Fixed Windows CI syntax checks by replacing shell glob expansion with `compileall`.
