@@ -35,6 +35,7 @@ KOKORO_VENV = TTS_HOME / "kokoro-venv"
 KOKORO_PY = KOKORO_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 KOKORO_MODEL = TTS_HOME / "kokoro-models" / "kokoro-v1.0.onnx"
 KOKORO_VOICES = TTS_HOME / "kokoro-models" / "voices-v1.0.bin"
+DEFAULT_GIT_REPO = "https://github.com/reitenji/jarvis-line.git"
 
 
 DEFAULT_KOKORO_CONFIG = {
@@ -56,9 +57,9 @@ DEFAULT_KOKORO_CONFIG = {
     "update_check_enabled": True,
     "update_check_interval_hours": 24,
     "update_index_url": "https://pypi.org/pypi/jarvis-line/json",
-    "update_source": "pypi",
-    "update_git_repo": None,
-    "update_git_ref": "main",
+    "update_source": "git",
+    "update_git_repo": DEFAULT_GIT_REPO,
+    "update_git_ref": "latest",
     "last_update_check_ts": 0,
     "model_path": str(KOKORO_MODEL),
     "voices_path": str(KOKORO_VOICES),
@@ -541,7 +542,7 @@ def update_check(args) -> int:
     cfg = load_effective_config()
     source = str(getattr(args, "source", None) or cfg.get("update_source") or "pypi").strip().lower()
     if source == "git":
-        repo = getattr(args, "repo", None) or cfg.get("update_git_repo")
+        repo = getattr(args, "repo", None) or cfg.get("update_git_repo") or DEFAULT_GIT_REPO
         if not repo:
             print("Could not check for updates.")
             print_next("set `update_git_repo` or pass `--repo` for git-based update checks.")
@@ -569,28 +570,84 @@ def update_check(args) -> int:
     return 0
 
 
-def update_install(args) -> int:
-    cfg = load_effective_config()
+def update_install_command(args, cfg: dict[str, Any], ref_override: str | None = None) -> list[str] | None:
     source = getattr(args, "source", None) or cfg.get("update_source") or "pypi"
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade"]
     if source == "pypi" and getattr(args, "pre", False):
         cmd.append("--pre")
     if source == "git":
-        repo = getattr(args, "repo", None) or cfg.get("update_git_repo")
-        ref = getattr(args, "ref", None) or cfg.get("update_git_ref") or "main"
+        repo = getattr(args, "repo", None) or cfg.get("update_git_repo") or DEFAULT_GIT_REPO
+        ref = ref_override or getattr(args, "ref", None) or cfg.get("update_git_ref") or "latest"
         if not repo:
             print("Git update requires --repo or config key update_git_repo.")
-            print_next("set it with `jarvis-line update configure --source git --git-repo <url> --git-ref main`.")
-            return 1
+            print_next("set it with `jarvis-line update configure --source git --git-repo <url>`.")
+            return None
+        if str(ref).strip().lower() == "latest":
+            latest = fetch_latest_git_version(str(repo))
+            if not latest:
+                print("Could not resolve latest git tag.")
+                print_next("check your network, git authentication, or pass `--ref vX.Y.Z`.")
+                return None
+            ref = f"v{latest}"
         package = f"git+{repo}@{ref}"
     else:
         package = getattr(args, "package", None) or "jarvis-line"
     cmd.append(package)
+    return cmd
+
+
+def run_update_command(cmd: list[str]) -> int:
     print("Running:", " ".join(cmd))
     proc = subprocess.run(cmd)
     if proc.returncode == 0:
         print_next("run `jarvis-line --version` and `jarvis-line doctor`.")
     return proc.returncode
+
+
+def update_install(args) -> int:
+    cfg = load_effective_config()
+    cmd = update_install_command(args, cfg)
+    if cmd is None:
+        return 1
+    return run_update_command(cmd)
+
+
+def update_apply(args) -> int:
+    cfg = load_effective_config()
+    source = str(getattr(args, "source", None) or cfg.get("update_source") or "git").strip().lower()
+    if source == "git":
+        repo = getattr(args, "repo", None) or cfg.get("update_git_repo") or DEFAULT_GIT_REPO
+        requested_ref = getattr(args, "ref", None) or "latest"
+        latest = fetch_latest_git_version(str(repo))
+        if not latest:
+            print("Could not check for updates.")
+            print_next("check your network, git authentication, or set `update_git_repo` to a reachable repository.")
+            return 1
+        ref = f"v{latest}" if str(requested_ref).strip().lower() == "latest" else str(requested_ref)
+        print("Current version:", __version__)
+        print("Latest version:", latest)
+        cfg["last_update_check_ts"] = int(time.time())
+        save_json(CONFIG_PATH, cfg)
+        if not is_newer_version(latest) and str(requested_ref).strip().lower() == "latest":
+            print("Jarvis Line is up to date.")
+            return 0
+        cmd = update_install_command(argparse.Namespace(source="git", repo=repo, ref=ref, pre=False, package=None), cfg, ref_override=ref)
+        return 1 if cmd is None else run_update_command(cmd)
+
+    latest = fetch_latest_version(str(getattr(args, "index_url", None) or cfg.get("update_index_url") or DEFAULT_KOKORO_CONFIG["update_index_url"]))
+    if not latest:
+        print("Could not check for updates.")
+        print_next("check your network or set `update_index_url` to a reachable package index.")
+        return 1
+    print("Current version:", __version__)
+    print("Latest version:", latest)
+    cfg["last_update_check_ts"] = int(time.time())
+    save_json(CONFIG_PATH, cfg)
+    if not is_newer_version(latest):
+        print("Jarvis Line is up to date.")
+        return 0
+    cmd = update_install_command(argparse.Namespace(source="pypi", pre=getattr(args, "pre", False), package=getattr(args, "package", None), repo=None, ref=None), cfg)
+    return 1 if cmd is None else run_update_command(cmd)
 
 
 def update_configure(args) -> int:
@@ -1739,6 +1796,14 @@ def build_parser() -> argparse.ArgumentParser:
     update_check_parser.add_argument("--index-url")
     update_check_parser.add_argument("--repo", help="Git repository URL for --source git.")
     update_check_parser.set_defaults(func=update_check)
+    update_apply_parser = update_sub.add_parser("apply")
+    update_apply_parser.add_argument("--source", choices=("pypi", "git"), help="Apply updates from PyPI or git tags.")
+    update_apply_parser.add_argument("--pre", action="store_true", help="Allow PyPI pre-release versions.")
+    update_apply_parser.add_argument("--package", help="PyPI package spec to install, defaults to jarvis-line.")
+    update_apply_parser.add_argument("--index-url")
+    update_apply_parser.add_argument("--repo", help="Git repository URL for --source git.")
+    update_apply_parser.add_argument("--ref", help="Git ref to install, defaults to latest tag for git updates.")
+    update_apply_parser.set_defaults(func=update_apply)
     update_install_parser = update_sub.add_parser("install")
     update_install_parser.add_argument("--source", choices=("pypi", "git"), help="Install from PyPI or a git repository.")
     update_install_parser.add_argument("--pre", action="store_true", help="Allow pre-release versions.")

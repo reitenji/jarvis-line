@@ -185,15 +185,18 @@ def test_update_check_from_git_reports_latest_tag(tmp_path, monkeypatch, capsys)
     assert "Update available" in out
 
 
-def test_update_check_from_git_requires_repo(tmp_path, monkeypatch, capsys):
+def test_update_check_from_git_uses_default_repo(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     cli.save_json(tmp_path / "config.json", {"update_source": "git"})
+    seen = []
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: seen.append(repo) or cli.__version__)
 
     rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
     out = capsys.readouterr().out
 
-    assert rc == 1
-    assert "update_git_repo" in out
+    assert rc == 0
+    assert "Jarvis Line is up to date." in out
+    assert seen == [cli.DEFAULT_GIT_REPO]
 
 
 def test_fetch_latest_git_version_uses_semver_tags(monkeypatch):
@@ -209,6 +212,61 @@ def test_fetch_latest_git_version_uses_semver_tags(monkeypatch):
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: Proc())
 
     assert cli.fetch_latest_git_version("ssh://example/repo.git") == "0.1.0"
+
+
+def test_update_apply_from_git_installs_latest_tag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(tmp_path / "config.json", {
+        "update_source": "git",
+        "update_git_repo": "ssh://git@github.com-personal/me/jarvis-line.git",
+        "update_git_ref": "latest",
+    })
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "9.9.9")
+    calls = []
+
+    class Proc:
+        returncode = 0
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd: calls.append(cmd) or Proc())
+
+    rc = cli.update_apply(argparse.Namespace(source=None, pre=False, package=None, index_url=None, repo=None, ref=None))
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "Latest version: 9.9.9" in out
+    assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@v9.9.9"
+
+
+def test_update_apply_from_git_skips_when_current(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(tmp_path / "config.json", {"update_source": "git", "update_git_ref": "v0.1.0b1"})
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: cli.__version__)
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd: calls.append(cmd))
+
+    rc = cli.update_apply(argparse.Namespace(source=None, pre=False, package=None, index_url=None, repo=None, ref=None))
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "Jarvis Line is up to date." in out
+    assert calls == []
+
+
+def test_update_apply_from_git_allows_explicit_ref(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(tmp_path / "config.json", {"update_source": "git"})
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: cli.__version__)
+    calls = []
+
+    class Proc:
+        returncode = 0
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd: calls.append(cmd) or Proc())
+
+    rc = cli.update_apply(argparse.Namespace(source=None, pre=False, package=None, index_url=None, repo=None, ref="v9.9.9"))
+
+    assert rc == 0
+    assert calls[0][-1] == f"git+{cli.DEFAULT_GIT_REPO}@v9.9.9"
 
 
 def test_update_configure(tmp_path, monkeypatch):
@@ -227,14 +285,21 @@ def test_update_configure(tmp_path, monkeypatch):
     assert cfg["update_index_url"] == "https://example.com/pkg.json"
 
 
-def test_update_install_from_git_requires_repo(tmp_path, monkeypatch, capsys):
+def test_update_install_from_git_resolves_latest_ref(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     cli.save_json(tmp_path / "config.json", {"update_source": "git"})
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "9.9.9")
+    calls = []
+
+    class Proc:
+        returncode = 0
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd: calls.append(cmd) or Proc())
 
     rc = cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None))
 
-    assert rc == 1
-    assert "Git update requires" in capsys.readouterr().out
+    assert rc == 0
+    assert calls[0][-1] == f"git+{cli.DEFAULT_GIT_REPO}@v9.9.9"
 
 
 def test_update_install_from_git_builds_pip_spec(tmp_path, monkeypatch):
