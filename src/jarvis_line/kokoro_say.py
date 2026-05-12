@@ -217,7 +217,7 @@ def main() -> int:
     if args.tempfile:
         playback_mode = "tempfile"
 
-    temp_dir = Path(cfg.get("temp_dir", str(Path.home() / ".codex" / "tts" / "generated")))
+    temp_dir = Path(cfg.get("temp_dir", str(Path.home() / ".jarvis-line" / "tts" / "generated")))
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     # Explicit output files should always be rendered to disk.

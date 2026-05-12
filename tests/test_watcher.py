@@ -41,9 +41,9 @@ def test_queue_replaces_latest_final(tmp_path, monkeypatch):
 
 def test_find_audio_worker_pids_matches_packaged_worker(monkeypatch):
     monkeypatch.setattr(watcher, "CODEX_HOME", watcher.Path("/Users/me/.codex"))
-    monkeypatch.setattr(watcher, "KOKORO_VENV", watcher.Path("/Users/me/.codex/tts/kokoro-venv"))
+    monkeypatch.setattr(watcher, "KOKORO_VENV", watcher.Path("/Users/me/.jarvis-line/tts/kokoro-venv"))
     monkeypatch.setattr(watcher, "process_lines", lambda: [
-        "201 /usr/bin/python /Users/me/.codex/tts/kokoro-venv/lib/python3.11/site-packages/jarvis_line/audio_worker.py",
+        "201 /usr/bin/python /Users/me/.jarvis-line/tts/kokoro-venv/lib/python3.11/site-packages/jarvis_line/audio_worker.py",
         "202 /usr/bin/python /Users/me/.gemini/hooks/jarvis_line_watcher.py --watch",
     ])
 
