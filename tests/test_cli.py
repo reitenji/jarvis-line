@@ -161,12 +161,54 @@ def test_update_check_reports_newer_version(tmp_path, monkeypatch, capsys):
     cli.save_json(tmp_path / "config.json", {"update_index_url": "https://example.invalid/json"})
     monkeypatch.setattr(cli, "fetch_latest_version", lambda url: "9.9.9")
 
-    rc = cli.update_check(argparse.Namespace(index_url=None))
+    rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
     out = capsys.readouterr().out
 
     assert rc == 10
     assert "Update available" in out
     assert cli.load_json(tmp_path / "config.json", {})["last_update_check_ts"] > 0
+
+
+def test_update_check_from_git_reports_latest_tag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(tmp_path / "config.json", {
+        "update_source": "git",
+        "update_git_repo": "ssh://git@github.com-personal/me/jarvis-line.git",
+    })
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.1.0b9")
+
+    rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
+    out = capsys.readouterr().out
+
+    assert rc == 10
+    assert "Latest version: 0.1.0b9" in out
+    assert "Update available" in out
+
+
+def test_update_check_from_git_requires_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(tmp_path / "config.json", {"update_source": "git"})
+
+    rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert "update_git_repo" in out
+
+
+def test_fetch_latest_git_version_uses_semver_tags(monkeypatch):
+    class Proc:
+        returncode = 0
+        stdout = "\n".join([
+            "aaa\trefs/tags/v0.1.0b2",
+            "bbb\trefs/tags/v0.1.0b4",
+            "ccc\trefs/tags/not-a-version",
+            "ddd\trefs/tags/v0.1.0",
+        ])
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: Proc())
+
+    assert cli.fetch_latest_git_version("ssh://example/repo.git") == "0.1.0"
 
 
 def test_update_configure(tmp_path, monkeypatch):

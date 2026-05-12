@@ -82,8 +82,20 @@ jarvis-line update check
 ```
 
 ```text
-Current version: 0.1.0b4
-Latest version: 0.1.0b4
+Current version: 0.1.0b5
+Latest version: 0.1.0b5
+Jarvis Line is up to date.
+```
+
+For GitHub tag-based installs, check tags from the configured git repository:
+
+```bash
+jarvis-line update check --source git --repo https://github.com/reitenji/jarvis-line.git
+```
+
+```text
+Current version: 0.1.0b5
+Latest version: 0.1.0b5
 Jarvis Line is up to date.
 ```
 
