@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0b6
+
+- Added `jarvis-line update apply` for one-command update checks and installs.
+- Made git-based updates default to the public GitHub repository and the latest release tag.
+- Kept `jarvis-line update check` read-only while giving users a simpler update path.
+
 ## 0.1.0b5
 
 - Fixed git-based `jarvis-line update check` so GitHub tag installs can check the latest release without relying on PyPI.

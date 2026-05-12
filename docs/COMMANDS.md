@@ -82,8 +82,8 @@ jarvis-line update check
 ```
 
 ```text
-Current version: 0.1.0b5
-Latest version: 0.1.0b5
+Current version: 0.1.0b6
+Latest version: 0.1.0b6
 Jarvis Line is up to date.
 ```
 
@@ -94,9 +94,22 @@ jarvis-line update check --source git --repo https://github.com/reitenji/jarvis-
 ```
 
 ```text
-Current version: 0.1.0b5
-Latest version: 0.1.0b5
+Current version: 0.1.0b6
+Latest version: 0.1.0b6
 Jarvis Line is up to date.
+```
+
+To check and install the latest GitHub release tag in one step:
+
+```bash
+jarvis-line update apply
+```
+
+```text
+Current version: 0.1.0b5
+Latest version: 0.1.0b6
+Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.1.0b6
+Next: run `jarvis-line --version` and `jarvis-line doctor`.
 ```
 
 ## `start`
