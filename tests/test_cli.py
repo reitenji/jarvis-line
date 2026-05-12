@@ -138,9 +138,12 @@ def test_command_allows_custom_keys(tmp_path, monkeypatch, capsys):
 
 
 def test_config_defaults_and_schema(capsys):
-    assert str(cli.DEFAULT_KOKORO_CONFIG["model_path"]).endswith(".jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx")
-    assert str(cli.DEFAULT_KOKORO_CONFIG["voices_path"]).endswith(".jarvis-line/tts/kokoro-models/voices-v1.0.bin")
-    assert str(cli.DEFAULT_KOKORO_CONFIG["temp_dir"]).endswith(".jarvis-line/tts/generated")
+    def as_posix(value):
+        return str(value).replace("\\", "/")
+
+    assert as_posix(cli.DEFAULT_KOKORO_CONFIG["model_path"]).endswith(".jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx")
+    assert as_posix(cli.DEFAULT_KOKORO_CONFIG["voices_path"]).endswith(".jarvis-line/tts/kokoro-models/voices-v1.0.bin")
+    assert as_posix(cli.DEFAULT_KOKORO_CONFIG["temp_dir"]).endswith(".jarvis-line/tts/generated")
 
     assert cli.config_defaults(argparse.Namespace(preset="system")) == 0
     defaults = capsys.readouterr().out
