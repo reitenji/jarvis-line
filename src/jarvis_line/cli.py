@@ -510,13 +510,52 @@ def fetch_latest_version(index_url: str, timeout: float = 5.0) -> str | None:
         return None
 
 
+def fetch_latest_git_version(repo: str, timeout: float = 10.0) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", "--tags", "--refs", repo],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+
+    versions = []
+    for line in proc.stdout.splitlines():
+        ref = line.rsplit("/", 1)[-1].strip()
+        if not ref:
+            continue
+        version = ref[1:] if ref.startswith("v") else ref
+        if re.match(r"^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?$", version):
+            versions.append(version)
+    if not versions:
+        return None
+    return max(versions, key=version_key)
+
+
 def update_check(args) -> int:
     cfg = load_effective_config()
-    index_url = str(getattr(args, "index_url", None) or cfg.get("update_index_url") or DEFAULT_KOKORO_CONFIG["update_index_url"])
-    latest = fetch_latest_version(index_url)
+    source = str(getattr(args, "source", None) or cfg.get("update_source") or "pypi").strip().lower()
+    if source == "git":
+        repo = getattr(args, "repo", None) or cfg.get("update_git_repo")
+        if not repo:
+            print("Could not check for updates.")
+            print_next("set `update_git_repo` or pass `--repo` for git-based update checks.")
+            return 1
+        latest = fetch_latest_git_version(str(repo))
+    else:
+        index_url = str(getattr(args, "index_url", None) or cfg.get("update_index_url") or DEFAULT_KOKORO_CONFIG["update_index_url"])
+        latest = fetch_latest_version(index_url)
     if not latest:
         print("Could not check for updates.")
-        print_next("check your network or set `update_index_url` to a reachable package index.")
+        if source == "git":
+            print_next("check your network, git authentication, or set `update_git_repo` to a reachable repository.")
+        else:
+            print_next("check your network or set `update_index_url` to a reachable package index.")
         return 1
     print("Current version:", __version__)
     print("Latest version:", latest)
@@ -586,7 +625,12 @@ def maybe_print_update_notice(cfg: dict[str, Any]) -> None:
     last = int(cfg.get("last_update_check_ts") or 0)
     if time.time() - last < interval:
         return
-    latest = fetch_latest_version(str(cfg.get("update_index_url") or DEFAULT_KOKORO_CONFIG["update_index_url"]), timeout=2.0)
+    source = str(cfg.get("update_source") or "pypi").strip().lower()
+    if source == "git":
+        repo = cfg.get("update_git_repo")
+        latest = fetch_latest_git_version(str(repo), timeout=2.0) if repo else None
+    else:
+        latest = fetch_latest_version(str(cfg.get("update_index_url") or DEFAULT_KOKORO_CONFIG["update_index_url"]), timeout=2.0)
     if not latest:
         return
     cfg["last_update_check_ts"] = int(time.time())
@@ -1691,7 +1735,9 @@ def build_parser() -> argparse.ArgumentParser:
     update = sub.add_parser("update", help="Check, install, or configure updates.")
     update_sub = update.add_subparsers(dest="update_command", required=True)
     update_check_parser = update_sub.add_parser("check")
+    update_check_parser.add_argument("--source", choices=("pypi", "git"), help="Check PyPI or git tags.")
     update_check_parser.add_argument("--index-url")
+    update_check_parser.add_argument("--repo", help="Git repository URL for --source git.")
     update_check_parser.set_defaults(func=update_check)
     update_install_parser = update_sub.add_parser("install")
     update_install_parser.add_argument("--source", choices=("pypi", "git"), help="Install from PyPI or a git repository.")

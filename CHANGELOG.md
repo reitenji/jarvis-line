@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0b5
+
+- Fixed git-based `jarvis-line update check` so GitHub tag installs can check the latest release without relying on PyPI.
+- Added `jarvis-line update check --source git --repo ...` support.
+- Updated update command documentation for GitHub tag-based installs.
+
 ## 0.1.0b4
 
 - Made `init` agent-agnostic by default and added explicit `--codex` hook setup.
