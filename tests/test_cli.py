@@ -53,7 +53,7 @@ def test_setup_default_warns_and_falls_back_to_system(tmp_path, monkeypatch, cap
     assert "Selected TTS: system" in out
 
 
-def test_init_project_runs_setup_hook_and_instructions(tmp_path, monkeypatch):
+def test_init_project_runs_setup_without_agent_hook_by_default(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
@@ -68,18 +68,62 @@ def test_init_project_runs_setup_hook_and_instructions(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "setup_default", fake_setup)
 
     rc = cli.init_project(argparse.Namespace(
-        language="en",
+        language="English",
         target="agents",
         path=None,
         apply_tts=False,
-        no_hook=False,
+        codex=False,
         no_instructions=False,
+        write_instructions=False,
         test=True,
     ))
 
     assert rc == 0
     assert calls == [("setup", True)]
+    assert not (tmp_path / "hooks.json").exists()
+    assert not (tmp_path / "AGENTS.md").exists()
+    assert 'jarvis-line instructions print agents --language "English"' in capsys.readouterr().out
+
+
+def test_init_project_installs_codex_hook_when_requested(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    monkeypatch.setattr(cli, "setup_default", lambda args: cli.save_json(cli.CONFIG_PATH, {"tts": "system"}) or 0)
+
+    rc = cli.init_project(argparse.Namespace(
+        language="English",
+        target="agents",
+        path=None,
+        apply_tts=False,
+        codex=True,
+        no_instructions=True,
+        write_instructions=False,
+        test=False,
+    ))
+
+    assert rc == 0
     assert "SessionStart" in cli.load_json(tmp_path / "hooks.json", {})["hooks"]
+
+
+def test_init_project_can_write_instructions_when_explicit(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    monkeypatch.setattr(cli, "setup_default", lambda args: cli.save_json(cli.CONFIG_PATH, {"tts": "system"}) or 0)
+
+    rc = cli.init_project(argparse.Namespace(
+        language="English",
+        target="agents",
+        path=None,
+        apply_tts=False,
+        codex=False,
+        no_instructions=False,
+        write_instructions=True,
+        test=False,
+    ))
+
+    assert rc == 0
     assert "Jarvis Line" in (tmp_path / "AGENTS.md").read_text()
 
 
@@ -94,6 +138,13 @@ def test_command_allows_custom_keys(tmp_path, monkeypatch, capsys):
 
 
 def test_config_defaults_and_schema(capsys):
+    def as_posix(value):
+        return str(value).replace("\\", "/")
+
+    assert as_posix(cli.DEFAULT_KOKORO_CONFIG["model_path"]).endswith(".jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx")
+    assert as_posix(cli.DEFAULT_KOKORO_CONFIG["voices_path"]).endswith(".jarvis-line/tts/kokoro-models/voices-v1.0.bin")
+    assert as_posix(cli.DEFAULT_KOKORO_CONFIG["temp_dir"]).endswith(".jarvis-line/tts/generated")
+
     assert cli.config_defaults(argparse.Namespace(preset="system")) == 0
     defaults = capsys.readouterr().out
     assert '"tts": "system"' in defaults
@@ -168,8 +219,8 @@ def test_top_level_help_is_product_friendly(capsys):
     assert exc.value.code == 0
     assert "Voice notifications for AI coding agents" in out
     assert "Quick start:" in out
-    assert "jarvis-line init --language en" in out
-    assert "support-bundle" in out
+    assert 'jarvis-line init --codex --language "English"' in out
+    assert "support-report" in out
 
 
 def test_help_command_prints_top_level_help(capsys):
@@ -184,9 +235,9 @@ def test_help_command_prints_top_level_help(capsys):
 
 def test_find_runtime_pids_matches_packaged_audio_worker(monkeypatch):
     monkeypatch.setattr(cli, "CODEX_HOME", cli.Path("/Users/me/.codex"))
-    monkeypatch.setattr(cli, "KOKORO_VENV", cli.Path("/Users/me/.codex/tts/kokoro-venv"))
+    monkeypatch.setattr(cli, "KOKORO_VENV", cli.Path("/Users/me/.jarvis-line/tts/kokoro-venv"))
     monkeypatch.setattr(cli, "process_lines", lambda: [
-        "101 /usr/bin/python /Users/me/.codex/tts/kokoro-venv/lib/python3.11/site-packages/jarvis_line/audio_worker.py",
+        "101 /usr/bin/python /Users/me/.jarvis-line/tts/kokoro-venv/lib/python3.11/site-packages/jarvis_line/audio_worker.py",
         "102 /usr/bin/python /Users/me/.gemini/hooks/jarvis_line_watcher.py --watch",
     ])
 
@@ -215,7 +266,7 @@ def test_instruction_replace_and_doctor(tmp_path, capsys):
 
     assert cli.instructions_install(argparse.Namespace(
         target="agents",
-        language="en",
+        language="English",
         path=str(path),
         sync_config=False,
         apply_tts=False,
@@ -304,25 +355,45 @@ def test_kokoro_ready_uses_configured_model_paths(tmp_path, monkeypatch):
 
 
 def test_instruction_snippet_language_modes():
-    english = cli.instruction_snippet("agents", "en")
-    user_lang = cli.instruction_snippet("agents", "user")
-    turkish = cli.instruction_snippet("agents", "tr")
+    english = cli.instruction_snippet("agents", "English")
+    legacy_english = cli.instruction_snippet("agents", "en")
+    turkish = cli.instruction_snippet("agents", "Turkish")
+    german = cli.instruction_snippet("agents", "German")
 
     assert "must be written in English" in english
-    assert "same language as the user" in user_lang
+    assert "must be written in English" in legacy_english
     assert "must be written in Turkish" in turkish
+    assert "must be written in German" in german
     assert "Jarvis line:" in english
     assert "Include exactly one `Jarvis line: ...` line in every final response." in english
     assert "optional `Jarvis line: ...` line in commentary" in english
     assert "Before sending any final response" in english
 
 
+def test_instruction_parser_accepts_custom_language_name():
+    parser = cli.build_parser()
+    args = parser.parse_args(["instructions", "print", "agents", "--language", "Brazilian Portuguese"])
+
+    assert args.language == "Brazilian Portuguese"
+
+
+@pytest.mark.parametrize("language", ["en", "tr", "user"])
+def test_instruction_parser_rejects_language_shortcuts(language, capsys):
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["instructions", "print", "agents", "--language", language])
+
+    assert exc.value.code == 2
+    assert "Use a full language name" in capsys.readouterr().err
+
+
 def test_instructions_install_is_idempotent(tmp_path):
     path = tmp_path / "AGENTS.md"
 
-    assert cli.instructions_install(argparse.Namespace(target="agents", language="en", path=str(path))) == 0
+    assert cli.instructions_install(argparse.Namespace(target="agents", language="English", path=str(path))) == 0
     first = path.read_text()
-    assert cli.instructions_install(argparse.Namespace(target="agents", language="en", path=str(path))) == 0
+    assert cli.instructions_install(argparse.Namespace(target="agents", language="English", path=str(path))) == 0
 
     assert path.read_text() == first
 
@@ -337,7 +408,7 @@ def test_redaction_masks_secret_and_home(monkeypatch):
     assert redacted["path"].startswith("~")
 
 
-def test_support_bundle_writes_redacted_zip(tmp_path, monkeypatch):
+def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cli, "LEGACY_CONFIG_PATH", tmp_path / "legacy.json")
     monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
@@ -349,22 +420,38 @@ def test_support_bundle_writes_redacted_zip(tmp_path, monkeypatch):
     cli.save_json(cli.STATE_PATH, {})
     cli.save_json(cli.QUEUE_PATH, {"jobs": []})
     cli.save_json(cli.LATEST_PATH, {"sessions": {}})
-    cli.WATCHER_LOG_PATH.write_text("1 queued-audio line=this is a long private message\n")
-    cli.AUDIO_WORKER_LOG_PATH.write_text("1 worker-start\n")
-    output = tmp_path / "bundle.zip"
+    cli.WATCHER_LOG_PATH.write_text("1 queued-audio token=SENSITIVEVALUE line=this is a long message\n")
+    cli.AUDIO_WORKER_LOG_PATH.write_text("1 worker-start password=SENSITIVEVALUE\n")
+    output = tmp_path / "issue.md"
 
-    assert cli.support_bundle(argparse.Namespace(output=str(output))) == 0
-    assert output.exists()
+    assert cli.support_report(argparse.Namespace(output=str(output), full=False, max_log_bytes=5_000_000, since=None)) == 0
+    text = output.read_text()
+
+    assert "## Jarvis Line Support Report" in text
+    assert "```json" in text
+    assert "```text" in text
+    assert "secret" not in text
+    assert "SENSITIVEVALUE" not in text
+    assert "[REDACTED]" in text
+
+
+def test_support_bundle_command_is_not_available():
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["support-bundle"])
+
+    assert exc.value.code == 2
 
 
 def test_language_sync_warns_for_turkish_kokoro(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     cli.save_json(tmp_path / "config.json", {"tts": "kokoro", "lang": "en-gb"})
 
-    cli.sync_language_config("tr", apply_tts=False)
+    cli.sync_language_config("Turkish", apply_tts=False)
     cfg = cli.load_json(tmp_path / "config.json", {})
 
-    assert cfg["line_language"] == "tr"
+    assert cfg["line_language"] == "Turkish"
     assert any("does not support Turkish" in warning for warning in cli.validate_config(cfg))
 
 
@@ -372,8 +459,8 @@ def test_language_sync_can_apply_tts_for_turkish(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     cli.save_json(tmp_path / "config.json", {"tts": "kokoro", "lang": "en-gb", "command": "echo {text}"})
 
-    cli.sync_language_config("tr", apply_tts=True)
+    cli.sync_language_config("Turkish", apply_tts=True)
     cfg = cli.load_json(tmp_path / "config.json", {})
 
-    assert cfg["line_language"] == "tr"
+    assert cfg["line_language"] == "Turkish"
     assert cfg["tts"] == "command"

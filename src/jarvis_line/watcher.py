@@ -18,12 +18,13 @@ from jarvis_line import kokoro_say as ks
 
 
 CODEX_HOME = Path.home() / ".codex"
+JARVIS_HOME = Path.home() / ".jarvis-line"
 SESSIONS_ROOT = CODEX_HOME / "sessions"
 STATE_PATH = CODEX_HOME / "hooks" / ".jarvis_line_state.json"
 LATEST_MESSAGES_PATH = CODEX_HOME / "hooks" / "jarvis_line_latest_messages.json"
 AUDIO_QUEUE_PATH = CODEX_HOME / "hooks" / "jarvis_line_audio_queue.json"
 LOG_PATH = CODEX_HOME / "hooks" / "jarvis_line_watcher.log"
-KOKORO_VENV = Path.home() / ".codex" / "tts" / "kokoro-venv"
+KOKORO_VENV = JARVIS_HOME / "tts" / "kokoro-venv"
 KOKORO_PY = KOKORO_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 WORKER_PATH = Path(__file__).resolve().with_name("audio_worker.py")
 LOCK_PATH = CODEX_HOME / "hooks" / ".jarvis_line.lock"

@@ -16,7 +16,9 @@ from jarvis_line import kokoro_say as ks
 
 
 CODEX_HOME = Path.home() / ".codex"
+JARVIS_HOME = Path.home() / ".jarvis-line"
 HOOKS_DIR = CODEX_HOME / "hooks"
+TTS_HOME = JARVIS_HOME / "tts"
 QUEUE_PATH = HOOKS_DIR / "jarvis_line_audio_queue.json"
 STATE_PATH = HOOKS_DIR / ".jarvis_line_state.json"
 LOG_PATH = HOOKS_DIR / "jarvis_line_audio_worker.log"
@@ -251,7 +253,7 @@ def speak_with_backend(line: str, cfg: dict[str, Any], backend: str) -> None:
                 if str(speaker["config"].get("fallback_playback_mode", "tempfile")).strip().lower() != "tempfile":
                     raise
 
-        temp_dir = Path(speaker["config"].get("temp_dir", str(CODEX_HOME / "tts" / "generated")))
+        temp_dir = Path(speaker["config"].get("temp_dir", str(TTS_HOME / "generated")))
         filename = f"kokoro_{int(time.time() * 1000)}.wav"
         out_path = temp_dir / filename
         ks.synthesize_to_file(speaker["engine"], line, voice, lang, speed, out_path)
@@ -318,7 +320,7 @@ def run_command_backend(
     env: dict[str, str],
 ) -> None:
     if mode == "file":
-        temp_dir = Path(cfg.get("temp_dir", str(CODEX_HOME / "tts" / "generated")))
+        temp_dir = Path(cfg.get("temp_dir", str(TTS_HOME / "generated")))
         temp_dir.mkdir(parents=True, exist_ok=True)
         suffix = str(cfg.get("command_output_suffix") or ".wav")
         output_path = temp_dir / f"jarvis_line_{int(time.time() * 1000)}{suffix}"
