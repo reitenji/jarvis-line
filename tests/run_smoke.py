@@ -49,27 +49,28 @@ def main() -> int:
         assert cli.config_defaults(argparse.Namespace(preset="kokoro")) == 0
         assert cli.config_schema(argparse.Namespace(preset="system")) == 0
         instruction_path = root / "AGENTS.md"
-        assert cli.instructions_install(argparse.Namespace(target="agents", language="en", path=str(instruction_path))) == 0
+        assert cli.instructions_install(argparse.Namespace(target="agents", language="English", path=str(instruction_path))) == 0
         assert "Jarvis line:" in instruction_path.read_text()
         original_setup_default = cli.setup_default
         cli.setup_default = lambda args: 0
         init_path = root / "INIT_AGENTS.md"
         assert cli.init_project(argparse.Namespace(
-            language="en",
+            language="English",
             target="agents",
             path=str(init_path),
             apply_tts=False,
-            no_hook=True,
+            codex=False,
             no_instructions=False,
+            write_instructions=False,
             test=False,
         )) == 0
         cli.setup_default = original_setup_default
-        assert "Jarvis line:" in init_path.read_text()
+        assert not init_path.exists()
         cli.sync_language_config("tr", apply_tts=True)
         assert cli.load_json(cli.CONFIG_PATH, {})["tts"] == "command"
-        bundle = root / "support.zip"
-        assert cli.support_bundle(argparse.Namespace(output=str(bundle))) == 0
-        assert bundle.exists()
+        report = root / "support.md"
+        assert cli.support_report(argparse.Namespace(output=str(report), full=False, max_log_bytes=5_000_000, since=None)) == 0
+        assert report.exists()
 
     print("smoke_ok")
     return 0

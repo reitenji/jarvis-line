@@ -3,12 +3,12 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import time
 import urllib.request
-import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from jarvis_line import __version__
 
 
 CODEX_HOME = Path.home() / ".codex"
+JARVIS_HOME = Path.home() / ".jarvis-line"
 HOOKS_DIR = CODEX_HOME / "hooks"
 CONFIG_PATH = HOOKS_DIR / "jarvis_line_config.json"
 CONFIG_PROFILES_PATH = HOOKS_DIR / "jarvis_line_profiles.json"
@@ -29,17 +30,18 @@ QUEUE_PATH = HOOKS_DIR / "jarvis_line_audio_queue.json"
 LATEST_PATH = HOOKS_DIR / "jarvis_line_latest_messages.json"
 WATCHER_LOG_PATH = HOOKS_DIR / "jarvis_line_watcher.log"
 AUDIO_WORKER_LOG_PATH = HOOKS_DIR / "jarvis_line_audio_worker.log"
-KOKORO_VENV = CODEX_HOME / "tts" / "kokoro-venv"
+TTS_HOME = JARVIS_HOME / "tts"
+KOKORO_VENV = TTS_HOME / "kokoro-venv"
 KOKORO_PY = KOKORO_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-KOKORO_MODEL = CODEX_HOME / "tts" / "kokoro-models" / "kokoro-v1.0.onnx"
-KOKORO_VOICES = CODEX_HOME / "tts" / "kokoro-models" / "voices-v1.0.bin"
+KOKORO_MODEL = TTS_HOME / "kokoro-models" / "kokoro-v1.0.onnx"
+KOKORO_VOICES = TTS_HOME / "kokoro-models" / "voices-v1.0.bin"
 
 
 DEFAULT_KOKORO_CONFIG = {
     "tts": "kokoro",
     "speak_mode": "final_only",
     "line_prefixes": ["Jarvis line:"],
-    "line_language": "en",
+    "line_language": "English",
     "max_spoken_chars": 240,
     "quiet_hours": None,
     "quiet_days": [],
@@ -69,7 +71,7 @@ DEFAULT_KOKORO_CONFIG = {
     "playback_mode": "stream",
     "fallback_playback_mode": "tempfile",
     "delete_after_play": True,
-    "temp_dir": str(CODEX_HOME / "tts" / "generated"),
+    "temp_dir": str(TTS_HOME / "generated"),
 }
 
 
@@ -211,7 +213,7 @@ CONFIG_FIELD_HELP = {
     "tts": {"type": "string", "description": "Selected TTS backend.", "values": sorted(BACKEND_CAPABILITIES.keys())},
     "speak_mode": {"type": "string", "description": "When Jarvis Line should speak.", "values": ["final_only", "commentary_and_final", "off"]},
     "line_prefixes": {"type": "array[string]", "description": "Accepted spoken-line prefixes."},
-    "line_language": {"type": "string", "description": "Expected language for generated Jarvis lines.", "values": sorted(LANGUAGE_PROFILES.keys()) if "LANGUAGE_PROFILES" in globals() else ["en", "tr", "user"]},
+    "line_language": {"type": "string", "description": "Expected language for generated Jarvis lines, for example English, Turkish, German, or Brazilian Portuguese."},
     "max_spoken_chars": {"type": "integer", "description": "Maximum spoken summary length."},
     "quiet_hours": {"type": "string|null", "description": "Optional quiet-hours range, for example 22:00-08:00."},
     "quiet_days": {"type": "array[string]", "description": "Optional days where speech is skipped, for example saturday,sunday."},
@@ -258,25 +260,45 @@ CONFIG_FIELD_HELP = {
 
 
 LANGUAGE_PROFILES = {
-    "en": {
-        "instruction_language": "en",
+    "English": {
+        "instruction_language": "English",
         "recommended_tts": "kokoro",
         "kokoro_lang": "en-gb",
         "note": "English Jarvis line with Kokoro English voice.",
     },
-    "user": {
-        "instruction_language": "user",
-        "recommended_tts": None,
-        "kokoro_lang": None,
-        "note": "Agent follows user language. Choose a TTS backend that supports the languages your users use.",
-    },
-    "tr": {
-        "instruction_language": "tr",
+    "Turkish": {
+        "instruction_language": "Turkish",
         "recommended_tts": "command",
         "kokoro_lang": None,
         "note": "Turkish is not supported by the current Kokoro ONNX language list; use command/Edge/OpenAI/custom TTS.",
     },
 }
+
+LANGUAGE_ALIASES = {
+    "english": "English",
+    "en": "English",
+    "turkish": "Turkish",
+    "tr": "Turkish",
+}
+
+
+def normalize_instruction_language(language: str) -> str:
+    text = str(language or "English").strip()
+    return LANGUAGE_ALIASES.get(text.lower(), text)
+
+
+def parse_language_arg(language: str) -> str:
+    text = str(language or "").strip()
+    if not text:
+        raise argparse.ArgumentTypeError('Use a full language name, for example "English".')
+    if text.lower() in {"en", "tr", "user", "user language", "same as user"}:
+        raise argparse.ArgumentTypeError('Use a full language name, for example "English", "Turkish", or "German".')
+    return text
+
+
+def language_display_name(language: str) -> str:
+    normalized = normalize_instruction_language(language)
+    return str(normalized).strip() or "English"
 
 
 def load_json(path: Path, default):
@@ -338,6 +360,11 @@ def redact_dict(data: dict[str, Any]) -> dict[str, Any]:
 def redact_log_line(line: str) -> str:
     home = str(Path.home())
     line = line.replace(home, "~")
+    line = re.sub(
+        r"(?i)\b(key|token|secret|password|authorization|api_key)=\S+",
+        lambda match: f"{match.group(1)}=[REDACTED]",
+        line,
+    )
     if " line=" in line:
         prefix, _, rest = line.partition(" line=")
         preview = rest[:80] + ("…" if len(rest) > 80 else "")
@@ -352,7 +379,7 @@ def tail_lines(path: Path, limit: int = 80) -> list[str]:
         return []
 
 
-def read_log_for_bundle(path: Path, full: bool = False, max_bytes: int = 5_000_000) -> tuple[list[str], dict[str, Any]]:
+def read_support_log(path: Path, full: bool = False, max_bytes: int = 5_000_000) -> tuple[list[str], dict[str, Any]]:
     meta = {"path": str(path).replace(str(Path.home()), "~"), "exists": path.exists(), "truncated": False}
     if not path.exists():
         return [], meta
@@ -435,12 +462,10 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         lang = str(cfg.get("lang") or "")
         if lang and lang not in ("en-us", "en-gb", "fr-fr", "it", "ja", "cmn"):
             warnings.append(f"kokoro lang {lang!r} is not in supported language list")
-    line_language = str(cfg.get("line_language") or "en")
-    if line_language == "tr" and backend == "kokoro":
+    line_language = normalize_instruction_language(str(cfg.get("line_language") or "English"))
+    if line_language == "Turkish" and backend == "kokoro":
         warnings.append("line_language is Turkish but kokoro does not support Turkish; use command/Edge/OpenAI/custom TTS")
-    if line_language == "user" and backend == "kokoro":
-        warnings.append("line_language follows the user, but kokoro only supports configured Kokoro languages")
-    if line_language == "en" and backend == "kokoro" and str(cfg.get("lang") or "") not in ("en-us", "en-gb"):
+    if line_language == "English" and backend == "kokoro" and str(cfg.get("lang") or "") not in ("en-us", "en-gb"):
         warnings.append("line_language is English but kokoro lang is not en-us/en-gb")
     return warnings
 
@@ -572,10 +597,16 @@ def maybe_print_update_notice(cfg: dict[str, Any]) -> None:
 
 
 def sync_language_config(language: str, apply_tts: bool = False) -> None:
-    profile = LANGUAGE_PROFILES.get(language, LANGUAGE_PROFILES["en"])
+    language = normalize_instruction_language(language)
+    profile = LANGUAGE_PROFILES.get(language, {
+        "instruction_language": language,
+        "recommended_tts": None,
+        "kokoro_lang": None,
+        "note": "Custom instruction language. Choose a matching TTS backend and voice.",
+    })
     cfg = load_effective_config()
     cfg["line_language"] = language
-    if language == "en" and selected_backend(cfg) == "kokoro":
+    if language == "English" and selected_backend(cfg) == "kokoro":
         cfg["lang"] = profile["kokoro_lang"]
     if apply_tts and profile.get("recommended_tts"):
         recommended = str(profile["recommended_tts"])
@@ -867,24 +898,33 @@ def init_project(args) -> int:
     if setup_rc != 0:
         return setup_rc
 
-    if not getattr(args, "no_hook", False):
+    if getattr(args, "codex", False):
         hook_rc = install_codex(argparse.Namespace())
         if hook_rc != 0:
             return hook_rc
 
-    if not getattr(args, "no_instructions", False):
+    target = getattr(args, "target", "agents")
+    language = getattr(args, "language", "English")
+    if getattr(args, "write_instructions", False) and not getattr(args, "no_instructions", False):
         instruction_rc = instructions_install(argparse.Namespace(
-            target=getattr(args, "target", "agents"),
-            language=getattr(args, "language", "en"),
+            target=target,
+            language=language,
             path=getattr(args, "path", None),
             sync_config=True,
             apply_tts=getattr(args, "apply_tts", False),
         ))
         if instruction_rc != 0:
             return instruction_rc
+    elif not getattr(args, "no_instructions", False):
+        sync_language_config(language, apply_tts=getattr(args, "apply_tts", False))
+        print("Jarvis Line instructions were not written automatically.")
+        print_next(f'choose agent and project/global scope, then run `jarvis-line instructions print {target} --language "{language}"` and paste the output into the instruction file your agent reads.')
 
     print("Jarvis Line init complete.")
-    print_next("run `jarvis-line doctor` to verify the install, or start using your agent.")
+    if getattr(args, "codex", False):
+        print_next("run `jarvis-line doctor` to verify the install, or start using Codex.")
+    else:
+        print_next("run `jarvis-line install codex` or `jarvis-line init --codex` if you want Codex hook integration.")
     return 0
 
 
@@ -1097,8 +1137,7 @@ def logs_tail(args) -> int:
     return 0
 
 
-def support_bundle(args) -> int:
-    output = Path(args.output or Path.cwd() / f"jarvis-line-support-{int(time.time())}.zip")
+def collect_support_data(args) -> dict[str, Any]:
     full_logs = bool(getattr(args, "full", False))
     since_seconds = parse_since_seconds(getattr(args, "since", None))
     max_log_bytes = int(getattr(args, "max_log_bytes", 5_000_000) or 5_000_000)
@@ -1121,7 +1160,7 @@ def support_bundle(args) -> int:
         "queue_jobs": len(queue.get("jobs") or []),
         "cached_sessions": len((latest.get("sessions") or {})),
         "config_warnings": validate_config(load_effective_config({})),
-        "bundle": {
+        "report": {
             "full_logs": full_logs,
             "max_log_bytes": max_log_bytes,
             "since": getattr(args, "since", None),
@@ -1150,33 +1189,72 @@ def support_bundle(args) -> int:
             if isinstance(value, dict)
         }
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    watcher_lines, watcher_meta = read_log_for_bundle(WATCHER_LOG_PATH, full=full_logs, max_bytes=max_log_bytes)
-    worker_lines, worker_meta = read_log_for_bundle(AUDIO_WORKER_LOG_PATH, full=full_logs, max_bytes=max_log_bytes)
+    watcher_lines, watcher_meta = read_support_log(WATCHER_LOG_PATH, full=full_logs, max_bytes=max_log_bytes)
+    worker_lines, worker_meta = read_support_log(AUDIO_WORKER_LOG_PATH, full=full_logs, max_bytes=max_log_bytes)
     watcher_lines = filter_lines_since(watcher_lines, since_seconds)
     worker_lines = filter_lines_since(worker_lines, since_seconds)
     summary["logs"] = {
         "watcher": watcher_meta,
         "audio_worker": worker_meta,
     }
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-        bundle.writestr("summary.json", json.dumps(summary, ensure_ascii=False, indent=2))
-        bundle.writestr("config.redacted.json", json.dumps(cfg, ensure_ascii=False, indent=2))
-        if getattr(args, "include_config_full", False):
-            bundle.writestr("config.full.redacted.json", json.dumps(redact_dict(load_effective_config({})), ensure_ascii=False, indent=2))
-        bundle.writestr("state.redacted.json", json.dumps(state, ensure_ascii=False, indent=2))
-        bundle.writestr("queue.summary.json", json.dumps(queue_summary, ensure_ascii=False, indent=2))
-        bundle.writestr("latest.summary.json", json.dumps(latest_summary, ensure_ascii=False, indent=2))
-        bundle.writestr(
-            "watcher.log.tail.txt",
-            "\n".join(redact_log_line(line) for line in watcher_lines),
-        )
-        bundle.writestr(
-            "audio_worker.log.tail.txt",
-            "\n".join(redact_log_line(line) for line in worker_lines),
-        )
-    print("Wrote support bundle:", output)
-    print_next("attach this zip to your issue instead of pasting raw logs.")
+    return {
+        "summary": summary,
+        "config": cfg,
+        "state": state,
+        "queue_summary": queue_summary,
+        "latest_summary": latest_summary,
+        "watcher_lines": [redact_log_line(line) for line in watcher_lines],
+        "worker_lines": [redact_log_line(line) for line in worker_lines],
+    }
+
+
+def support_report(args) -> int:
+    output = Path(args.output) if getattr(args, "output", None) else None
+    data = collect_support_data(args)
+    sections = [
+        "## Jarvis Line Support Report",
+        "",
+        "Review this report before posting it to a public issue.",
+        "",
+        "### Summary",
+        "```json",
+        json.dumps(data["summary"], ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "### Redacted Config",
+        "```json",
+        json.dumps(data["config"], ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "### Queue Summary",
+        "```json",
+        json.dumps(data["queue_summary"], ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "### Latest Message Summary",
+        "```json",
+        json.dumps(data["latest_summary"], ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "### Watcher Log",
+        "```text",
+        "\n".join(data["watcher_lines"]) or "(empty)",
+        "```",
+        "",
+        "### Audio Worker Log",
+        "```text",
+        "\n".join(data["worker_lines"]) or "(empty)",
+        "```",
+        "",
+    ]
+    text = "\n".join(sections)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text, encoding="utf-8")
+        print("Wrote support report:", output)
+        print_next("review this markdown, then paste the relevant parts into your issue.")
+    else:
+        print(text)
     return 0
 
 
@@ -1456,7 +1534,7 @@ INSTRUCTION_FILES = {
 HELP_DESCRIPTION = "Voice notifications for AI coding agents, powered by hook-driven TTS."
 
 HELP_EPILOG = """Quick start:
-  jarvis-line init --language en
+  jarvis-line init --codex --language "English"
   jarvis-line doctor
   jarvis-line tts test --text "Jarvis line test is ready."
 
@@ -1466,7 +1544,7 @@ Common commands:
   jarvis-line tts use system         Switch to platform system TTS
   jarvis-line kokoro status          Check Kokoro model/runtime readiness
   jarvis-line logs tail              Inspect watcher and audio worker logs
-  jarvis-line support-bundle         Create a redacted issue-report bundle
+  jarvis-line support-report         Create redacted issue-report markdown
   jarvis-line update check           Check whether an update is available
 
 More help:
@@ -1476,13 +1554,9 @@ More help:
 """
 
 
-def instruction_snippet(target: str = "agents", language: str = "en", style: str = "strict") -> str:
-    if language == "en":
-        language_rule = "Any `Jarvis line` must be written in English."
-    elif language == "tr":
-        language_rule = "Any `Jarvis line` must be written in Turkish."
-    else:
-        language_rule = "Write any `Jarvis line` in the same language as the user, unless the user asks otherwise."
+def instruction_snippet(target: str = "agents", language: str = "English", style: str = "strict") -> str:
+    language = normalize_instruction_language(language)
+    language_rule = f"Any `Jarvis line` must be written in {language_display_name(language)}."
     if style == "minimal":
         return f"""## Jarvis Line
 
@@ -1561,7 +1635,7 @@ def instructions_doctor(args) -> int:
     path = Path(args.path or Path.cwd() / filename)
     if not path.exists():
         print_check(False, "instruction file", str(path))
-        print_next("run `jarvis-line instructions install ...`.")
+        print_next("run `jarvis-line instructions print ...`, then paste the output into your instruction file.")
         return 1
     text = path.read_text(encoding="utf-8")
     has_section = "## Jarvis Line" in text
@@ -1574,7 +1648,7 @@ def instructions_doctor(args) -> int:
     if has_section and has_format and has_exactly:
         print_next("instructions look ready.")
         return 0
-    print_next("run `jarvis-line instructions install --replace`.")
+    print_next("run `jarvis-line instructions print ...`, then update the Jarvis Line section manually.")
     return 1
 
 
@@ -1597,12 +1671,13 @@ def build_parser() -> argparse.ArgumentParser:
     setup.set_defaults(func=lambda args: setup_default(args) if args.default else setup_wizard(args))
 
     init = sub.add_parser("init", help="One-command setup for a project.")
-    init.add_argument("--language", choices=tuple(LANGUAGE_PROFILES.keys()), default="en")
+    init.add_argument("--language", type=parse_language_arg, default="English")
     init.add_argument("--target", choices=tuple(INSTRUCTION_FILES.keys()), default="agents")
     init.add_argument("--path", help="Instruction file path. Defaults to the target's standard file in the current directory.")
     init.add_argument("--apply-tts", action="store_true", help="Also switch TTS preset when the selected language recommends it.")
-    init.add_argument("--no-hook", action="store_true", help="Do not install the Codex hook.")
+    init.add_argument("--codex", action="store_true", help="Install the Codex hook during init.")
     init.add_argument("--no-instructions", action="store_true", help="Do not install agent instructions.")
+    init.add_argument("--write-instructions", action="store_true", help="Write instructions into the target file. Default is to print the command so you can paste manually.")
     init.add_argument("--test", action="store_true", help="Play a short test phrase during setup.")
     init.set_defaults(func=init_project)
 
@@ -1664,13 +1739,12 @@ def build_parser() -> argparse.ArgumentParser:
     kokoro_config.add_argument("--lang")
     kokoro_config.set_defaults(func=kokoro_configure)
 
-    bundle = sub.add_parser("support-bundle", help="Create a redacted support bundle for bug reports.")
-    bundle.add_argument("--output")
-    bundle.add_argument("--full", action="store_true", help="Include full redacted logs instead of safe tails.")
-    bundle.add_argument("--max-log-bytes", type=int, default=5_000_000, help="Maximum bytes per log in --full mode.")
-    bundle.add_argument("--since", help="Only include log lines since this duration, for example 1h, 30m, or 300s.")
-    bundle.add_argument("--include-config-full", action="store_true", help="Include a full redacted config snapshot.")
-    bundle.set_defaults(func=support_bundle)
+    report = sub.add_parser("support-report", help="Create redacted Markdown for GitHub issues.")
+    report.add_argument("--output")
+    report.add_argument("--full", action="store_true", help="Include full redacted logs instead of safe tails.")
+    report.add_argument("--max-log-bytes", type=int, default=5_000_000, help="Maximum bytes per log in --full mode.")
+    report.add_argument("--since", help="Only include log lines since this duration, for example 1h, 30m, or 300s.")
+    report.set_defaults(func=support_report)
 
     install = sub.add_parser("install", help="Install hooks for supported agents.")
     install_sub = install.add_subparsers(dest="install_target", required=True)
@@ -1727,14 +1801,14 @@ def build_parser() -> argparse.ArgumentParser:
     instructions_sub = instructions.add_subparsers(dest="instructions_command", required=True)
     inst_print = instructions_sub.add_parser("print")
     inst_print.add_argument("target", choices=tuple(INSTRUCTION_FILES.keys()), nargs="?", default="agents")
-    inst_print.add_argument("--language", choices=tuple(LANGUAGE_PROFILES.keys()), default="en")
+    inst_print.add_argument("--language", type=parse_language_arg, default="English")
     inst_print.add_argument("--style", choices=("strict", "minimal"), default="strict")
     inst_print.add_argument("--sync-config", action="store_true")
     inst_print.add_argument("--apply-tts", action="store_true")
     inst_print.set_defaults(func=instructions_print)
     inst_install = instructions_sub.add_parser("install")
     inst_install.add_argument("target", choices=tuple(INSTRUCTION_FILES.keys()), nargs="?", default="agents")
-    inst_install.add_argument("--language", choices=tuple(LANGUAGE_PROFILES.keys()), default="en")
+    inst_install.add_argument("--language", type=parse_language_arg, default="English")
     inst_install.add_argument("--style", choices=("strict", "minimal"), default="strict")
     inst_install.add_argument("--no-sync-config", dest="sync_config", action="store_false")
     inst_install.add_argument("--apply-tts", action="store_true")

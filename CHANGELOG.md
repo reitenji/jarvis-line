@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0b4
+
+- Made `init` agent-agnostic by default and added explicit `--codex` hook setup.
+- Changed instruction setup to print reviewed Markdown instead of editing instruction files by default.
+- Moved Kokoro runtime/model defaults from `.codex` to `.jarvis-line`.
+- Replaced zip support bundles with reviewed Markdown support reports.
+- Split detailed command, TTS, config, and instruction documentation into focused `docs/` references.
+- Added full-language instruction names such as `"English"` and `"Turkish"` instead of short language codes.
+
 ## 0.1.0b3
 
 - Added product-friendly top-level CLI help and a `jarvis-line help` command.
