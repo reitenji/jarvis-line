@@ -274,6 +274,30 @@ jarvis-line tts use system
 
 This lets macOS choose its default system voice instead of forcing a specific voice.
 
+#### macOS Spoken Content Voices
+
+On macOS, the `system` backend uses the same default voice that macOS uses for Spoken Content when `system_voice` is `null`. This is the best option when you want Jarvis Line to speak a language that is different from your macOS UI language.
+
+To choose the macOS default speech language and voice:
+
+1. Open **System Settings**.
+2. Go to **Accessibility**.
+3. Open **Read & Speak** or **Spoken Content**.
+4. Set **System speech language** to the language you want Jarvis Line to speak.
+5. Set **System voice** to a natural voice for that language.
+6. Keep Jarvis Line on system TTS with no explicit voice override:
+
+```bash
+jarvis-line tts use system
+jarvis-line config set system_voice null
+jarvis-line config set system_rate null
+jarvis-line instructions install agents --language tr --replace
+```
+
+If your macOS UI is English, you can still choose a Turkish Spoken Content voice and set Jarvis Line's `line_language` to `tr`. These settings are independent.
+
+Avoid low-quality compact voices if you care about natural speech. For example, `Yelda` may sound robotic on some systems. Prefer the newer Siri or premium voices from macOS Spoken Content when they are available. Some of those voices may not appear in `say -v '?'`; leaving `system_voice` unset lets macOS use the selected Spoken Content voice.
+
 ### macOS `say`
 
 This preset exists for users who specifically want macOS `say` options.
