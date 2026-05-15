@@ -336,6 +336,37 @@ def print_next(message: str) -> None:
 
 
 SECRET_KEYWORDS = ("key", "token", "secret", "password", "authorization", "api")
+SECRET_VALUE_PATTERNS = (
+    # OpenAI, GitHub, AWS, Slack, and similar high-entropy bearer tokens.
+    re.compile(r"\b(?:sk-(?:proj-)?|gh[opsu]_|github_pat_|AKIA|ASIA|xox[baprs]-)[A-Za-z0-9_./+=-]{8,}\b"),
+    # JWTs commonly appear in Authorization headers and tool output.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    # Secret-looking key/value fragments embedded in logs or assistant text.
+    re.compile(
+        r"(?i)\b(api[_-]?key|authorization|bearer|password|secret|token)"
+        r"(\s*[:=]\s*|\s+)"
+        r"([^\s,;`'\"]{4,})"
+    ),
+)
+
+
+def redact_text(value: str, *, max_length: int | None = None) -> str:
+    home = str(Path.home())
+    text = value.replace(home, "~")
+    for pattern in SECRET_VALUE_PATTERNS:
+        def replacement(match: re.Match[str]) -> str:
+            if len(match.groups()) >= 3:
+                return f"{match.group(1)}{match.group(2)}[REDACTED]"
+            return "[REDACTED]"
+
+        text = pattern.sub(replacement, text)
+    if max_length is not None and len(text) > max_length:
+        return text[:max_length] + "…"
+    return text
+
+
+def redact_preview(value: Any, limit: int = 80) -> str:
+    return redact_text(str(value or ""), max_length=limit)
 
 
 def redact_value(key: str, value: Any) -> Any:
@@ -343,10 +374,7 @@ def redact_value(key: str, value: Any) -> Any:
     if any(word in lowered for word in SECRET_KEYWORDS):
         return "[REDACTED]"
     if isinstance(value, str):
-        home = str(Path.home())
-        value = value.replace(home, "~")
-        if len(value) > 500:
-            return value[:500] + "…"
+        return redact_text(value, max_length=500)
     if isinstance(value, list):
         return [redact_value(key, item) for item in value[:20]]
     if isinstance(value, dict):
@@ -359,18 +387,19 @@ def redact_dict(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def redact_log_line(line: str) -> str:
-    home = str(Path.home())
-    line = line.replace(home, "~")
-    line = re.sub(
-        r"(?i)\b(key|token|secret|password|authorization|api_key)=\S+",
-        lambda match: f"{match.group(1)}=[REDACTED]",
-        line,
-    )
+    line = redact_text(line)
     if " line=" in line:
         prefix, _, rest = line.partition(" line=")
         preview = rest[:80] + ("…" if len(rest) > 80 else "")
         return f"{prefix} line={preview}"
     return line[:500] + ("…" if len(line) > 500 else "")
+
+
+def markdown_code_block(content: str, info: str = "") -> list[str]:
+    max_backticks = max((len(match.group(0)) for match in re.finditer(r"`+", content)), default=0)
+    fence = "`" * max(3, max_backticks + 1)
+    opener = f"{fence}{info}" if info else fence
+    return [opener, content, fence]
 
 
 def tail_lines(path: Path, limit: int = 80) -> list[str]:
@@ -511,10 +540,16 @@ def fetch_latest_version(index_url: str, timeout: float = 5.0) -> str | None:
         return None
 
 
+def is_valid_git_repo_arg(repo: str) -> bool:
+    return bool(repo) and not repo.startswith("-")
+
+
 def fetch_latest_git_version(repo: str, timeout: float = 10.0) -> str | None:
+    if not is_valid_git_repo_arg(repo):
+        return None
     try:
         proc = subprocess.run(
-            ["git", "ls-remote", "--tags", "--refs", repo],
+            ["git", "ls-remote", "--tags", "--refs", "--", repo],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -581,6 +616,11 @@ def update_install_command(args, cfg: dict[str, Any], ref_override: str | None =
         if not repo:
             print("Git update requires --repo or config key update_git_repo.")
             print_next("set it with `jarvis-line update configure --source git --git-repo <url>`.")
+            return None
+        repo = str(repo)
+        if not is_valid_git_repo_arg(repo):
+            print("Git update requires a repository URL that does not start with '-'.")
+            print_next("set `update_git_repo` or pass `--repo` to a reachable repository URL.")
             return None
         if str(ref).strip().lower() == "latest":
             latest = fetch_latest_git_version(str(repo))
@@ -1271,20 +1311,20 @@ def collect_support_data(args) -> dict[str, Any]:
         "jobs": [
             {
                 "message_id": job.get("message_id"),
-                "session_key": str(job.get("session_key") or "").replace(str(Path.home()), "~"),
+                "session_key": redact_text(str(job.get("session_key") or "")),
                 "phase": job.get("phase"),
                 "enqueued_ts_ms": job.get("enqueued_ts_ms"),
-                "jarvis_line_preview": str(job.get("jarvis_line") or "")[:80],
+                "jarvis_line_preview": redact_preview(job.get("jarvis_line")),
             }
             for job in (queue.get("jobs") or [])
         ]
     }
     latest_summary = {
         "sessions": {
-            str(key).replace(str(Path.home()), "~"): {
+            redact_text(str(key)): {
                 "latest_phase": (value.get("latest") or {}).get("phase"),
                 "latest_final_id": (value.get("latest_final") or {}).get("message_id"),
-                "latest_final_preview": str((value.get("latest_final") or {}).get("jarvis_line") or "")[:80],
+                "latest_final_preview": redact_preview((value.get("latest_final") or {}).get("jarvis_line")),
             }
             for key, value in (latest.get("sessions") or {}).items()
             if isinstance(value, dict)
@@ -1318,34 +1358,22 @@ def support_report(args) -> int:
         "Review this report before posting it to a public issue.",
         "",
         "### Summary",
-        "```json",
-        json.dumps(data["summary"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["summary"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Redacted Config",
-        "```json",
-        json.dumps(data["config"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["config"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Queue Summary",
-        "```json",
-        json.dumps(data["queue_summary"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["queue_summary"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Latest Message Summary",
-        "```json",
-        json.dumps(data["latest_summary"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["latest_summary"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Watcher Log",
-        "```text",
-        "\n".join(data["watcher_lines"]) or "(empty)",
-        "```",
+        *markdown_code_block("\n".join(data["watcher_lines"]) or "(empty)", "text"),
         "",
         "### Audio Worker Log",
-        "```text",
-        "\n".join(data["worker_lines"]) or "(empty)",
-        "```",
+        *markdown_code_block("\n".join(data["worker_lines"]) or "(empty)", "text"),
         "",
     ]
     text = "\n".join(sections)

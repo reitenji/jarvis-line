@@ -209,9 +209,19 @@ def test_fetch_latest_git_version_uses_semver_tags(monkeypatch):
             "ddd\trefs/tags/v0.1.0",
         ])
 
-    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: Proc())
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)) or Proc())
 
     assert cli.fetch_latest_git_version("ssh://example/repo.git") == "0.1.0"
+    assert calls[0][0][0] == ["git", "ls-remote", "--tags", "--refs", "--", "ssh://example/repo.git"]
+
+
+def test_fetch_latest_git_version_rejects_option_like_repo(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    assert cli.fetch_latest_git_version("--upload-pack=/tmp/pwn.sh") is None
+    assert calls == []
 
 
 def test_update_apply_from_git_installs_latest_tag(tmp_path, monkeypatch, capsys):
@@ -318,6 +328,17 @@ def test_update_install_from_git_builds_pip_spec(tmp_path, monkeypatch):
 
     assert cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None)) == 0
     assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@main"
+
+
+def test_update_install_from_git_rejects_option_like_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(tmp_path / "config.json", {"update_source": "git", "update_git_repo": "--upload-pack=/tmp/pwn.sh", "update_git_ref": "main"})
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd: calls.append(cmd))
+
+    assert cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None)) == 1
+    assert "does not start with '-'" in capsys.readouterr().out
+    assert calls == []
 
 
 def test_top_level_help_is_product_friendly(capsys):
@@ -513,10 +534,13 @@ def test_redaction_masks_secret_and_home(monkeypatch):
     redacted = cli.redact_dict({
         "api_key": "secret",
         "path": str(cli.Path.home() / "x"),
+        "message": "Jarvis line: token sk-proj-abcdef1234567890",
     })
 
     assert redacted["api_key"] == "[REDACTED]"
     assert redacted["path"].startswith("~")
+    assert "sk-proj-abcdef1234567890" not in redacted["message"]
+    assert "[REDACTED]" in redacted["message"]
 
 
 def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
@@ -529,10 +553,22 @@ def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "AUDIO_WORKER_LOG_PATH", tmp_path / "worker.log")
     cli.save_json(cli.CONFIG_PATH, {"tts": "command", "api_key": "secret", "command": "echo {text}"})
     cli.save_json(cli.STATE_PATH, {})
-    cli.save_json(cli.QUEUE_PATH, {"jobs": []})
-    cli.save_json(cli.LATEST_PATH, {"sessions": {}})
-    cli.WATCHER_LOG_PATH.write_text("1 queued-audio token=SENSITIVEVALUE line=this is a long message\n")
-    cli.AUDIO_WORKER_LOG_PATH.write_text("1 worker-start password=SENSITIVEVALUE\n")
+    cli.save_json(cli.QUEUE_PATH, {"jobs": [{
+        "message_id": "m1",
+        "session_key": str(tmp_path / "session"),
+        "phase": "final",
+        "enqueued_ts_ms": 1,
+        "jarvis_line": "Jarvis line: deploy token sk-proj-queueSECRET1234567890",
+    }]})
+    cli.save_json(cli.LATEST_PATH, {"sessions": {str(tmp_path / "session"): {
+        "latest": {"phase": "final"},
+        "latest_final": {
+            "message_id": "m1",
+            "jarvis_line": "Jarvis line: password latestSECRET123456",
+        },
+    }}})
+    cli.WATCHER_LOG_PATH.write_text("1 queued-audio token=SENSITIVEVALUE line=Jarvis token sk-proj-logSECRET1234567890\n")
+    cli.AUDIO_WORKER_LOG_PATH.write_text("1 worker-start password=SENSITIVEVALUE line=secret workerSECRET123456\n")
     output = tmp_path / "issue.md"
 
     assert cli.support_report(argparse.Namespace(output=str(output), full=False, max_log_bytes=5_000_000, since=None)) == 0
@@ -541,9 +577,68 @@ def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
     assert "## Jarvis Line Support Report" in text
     assert "```json" in text
     assert "```text" in text
-    assert "secret" not in text
+    assert '"api_key": "[REDACTED]"' in text
     assert "SENSITIVEVALUE" not in text
+    assert "sk-proj-queueSECRET1234567890" not in text
+    assert "latestSECRET123456" not in text
+    assert "sk-proj-logSECRET1234567890" not in text
+    assert "workerSECRET123456" not in text
     assert "[REDACTED]" in text
+
+def test_support_report_uses_unambiguous_fences_for_log_backticks(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "LEGACY_CONFIG_PATH", tmp_path / "legacy.json")
+    monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(cli, "QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(cli, "LATEST_PATH", tmp_path / "latest.json")
+    monkeypatch.setattr(cli, "WATCHER_LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(cli, "AUDIO_WORKER_LOG_PATH", tmp_path / "worker.log")
+    cli.save_json(cli.CONFIG_PATH, {"tts": "system"})
+    cli.save_json(cli.STATE_PATH, {})
+    cli.save_json(cli.QUEUE_PATH, {"jobs": []})
+    cli.save_json(cli.LATEST_PATH, {"sessions": {}})
+    cli.WATCHER_LOG_PATH.write_text("1 notify-turn-complete file=/tmp/session\n```\n### injected\n```x.jsonl\n")
+    cli.AUDIO_WORKER_LOG_PATH.write_text("")
+    output = tmp_path / "issue.md"
+
+    assert cli.support_report(argparse.Namespace(output=str(output), full=False, max_log_bytes=5_000_000, since=None)) == 0
+    text = output.read_text()
+
+    assert "\n### Watcher Log\n````text\n1 notify-turn-complete file=/tmp/session\n```\n### injected\n```x.jsonl\n````\n" in text
+
+
+def test_filter_lines_since_accepts_fractional_timestamps(monkeypatch):
+    monkeypatch.setattr(cli.time, "time", lambda: 200.0)
+
+    lines = [
+        "139.999 old fractional",
+        "140 old integer",
+        "140.001 recent fractional",
+        "unparseable line should remain",
+    ]
+
+    assert cli.filter_lines_since(lines, 60) == [
+        "140 old integer",
+        "140.001 recent fractional",
+        "unparseable line should remain",
+    ]
+
+
+def test_filter_lines_since_accepts_fractional_timestamps(monkeypatch):
+    monkeypatch.setattr(cli.time, "time", lambda: 200.0)
+
+    lines = [
+        "139.999 old fractional",
+        "140 old integer",
+        "140.001 recent fractional",
+        "unparseable line should remain",
+    ]
+
+    assert cli.filter_lines_since(lines, 60) == [
+        "140 old integer",
+        "140.001 recent fractional",
+        "unparseable line should remain",
+    ]
 
 
 def test_filter_lines_since_accepts_fractional_timestamps(monkeypatch):
