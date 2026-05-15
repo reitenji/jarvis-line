@@ -247,7 +247,7 @@ def test_update_apply_from_git_installs_latest_tag(tmp_path, monkeypatch, capsys
     assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@v9.9.9"
 
 
-def test_update_apply_from_git_uses_configured_ref(tmp_path, monkeypatch, capsys):
+def test_update_apply_from_git_ignores_configured_ref_by_default(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     cli.save_json(tmp_path / "config.json", {"update_source": "git", "update_git_ref": "v0.1.0b1"})
     monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: cli.__version__)
@@ -262,8 +262,8 @@ def test_update_apply_from_git_uses_configured_ref(tmp_path, monkeypatch, capsys
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert "Latest version:" in out
-    assert calls[0][-1] == f"git+{cli.DEFAULT_GIT_REPO}@v0.1.0b1"
+    assert "Jarvis Line is up to date." in out
+    assert calls == []
 
 
 def test_update_apply_from_git_allows_explicit_ref(tmp_path, monkeypatch):

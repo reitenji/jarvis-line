@@ -657,7 +657,7 @@ def update_apply(args) -> int:
     source = str(getattr(args, "source", None) or cfg.get("update_source") or "git").strip().lower()
     if source == "git":
         repo = getattr(args, "repo", None) or cfg.get("update_git_repo") or DEFAULT_GIT_REPO
-        requested_ref = getattr(args, "ref", None) or cfg.get("update_git_ref") or "latest"
+        requested_ref = getattr(args, "ref", None) or "latest"
         latest = fetch_latest_git_version(str(repo))
         if not latest:
             print("Could not check for updates.")
@@ -1830,7 +1830,7 @@ def build_parser() -> argparse.ArgumentParser:
     update_apply_parser.add_argument("--package", help="PyPI package spec to install, defaults to jarvis-line.")
     update_apply_parser.add_argument("--index-url")
     update_apply_parser.add_argument("--repo", help="Git repository URL for --source git.")
-    update_apply_parser.add_argument("--ref", help="Git ref to install, defaults to configured update_git_ref or latest tag for git updates.")
+    update_apply_parser.add_argument("--ref", help="Git ref to install, defaults to the latest tag for git updates.")
     update_apply_parser.set_defaults(func=update_apply)
     update_install_parser = update_sub.add_parser("install")
     update_install_parser.add_argument("--source", choices=("pypi", "git"), help="Install from PyPI or a git repository.")
