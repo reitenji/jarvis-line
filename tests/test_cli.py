@@ -637,6 +637,23 @@ def test_filter_lines_since_accepts_fractional_timestamps(monkeypatch):
     ]
 
 
+def test_filter_lines_since_accepts_fractional_timestamps(monkeypatch):
+    monkeypatch.setattr(cli.time, "time", lambda: 200.0)
+
+    lines = [
+        "139.999 old fractional",
+        "140 old integer",
+        "140.001 recent fractional",
+        "unparseable line should remain",
+    ]
+
+    assert cli.filter_lines_since(lines, 60) == [
+        "140 old integer",
+        "140.001 recent fractional",
+        "unparseable line should remain",
+    ]
+
+
 def test_support_bundle_command_is_not_available():
     parser = cli.build_parser()
 
