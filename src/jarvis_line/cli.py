@@ -511,10 +511,16 @@ def fetch_latest_version(index_url: str, timeout: float = 5.0) -> str | None:
         return None
 
 
+def is_valid_git_repo_arg(repo: str) -> bool:
+    return bool(repo) and not repo.startswith("-")
+
+
 def fetch_latest_git_version(repo: str, timeout: float = 10.0) -> str | None:
+    if not is_valid_git_repo_arg(repo):
+        return None
     try:
         proc = subprocess.run(
-            ["git", "ls-remote", "--tags", "--refs", repo],
+            ["git", "ls-remote", "--tags", "--refs", "--", repo],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -581,6 +587,11 @@ def update_install_command(args, cfg: dict[str, Any], ref_override: str | None =
         if not repo:
             print("Git update requires --repo or config key update_git_repo.")
             print_next("set it with `jarvis-line update configure --source git --git-repo <url>`.")
+            return None
+        repo = str(repo)
+        if not is_valid_git_repo_arg(repo):
+            print("Git update requires a repository URL that does not start with '-'.")
+            print_next("set `update_git_repo` or pass `--repo` to a reachable repository URL.")
             return None
         if str(ref).strip().lower() == "latest":
             latest = fetch_latest_git_version(str(repo))

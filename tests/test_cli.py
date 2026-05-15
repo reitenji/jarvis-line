@@ -209,9 +209,19 @@ def test_fetch_latest_git_version_uses_semver_tags(monkeypatch):
             "ddd\trefs/tags/v0.1.0",
         ])
 
-    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: Proc())
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)) or Proc())
 
     assert cli.fetch_latest_git_version("ssh://example/repo.git") == "0.1.0"
+    assert calls[0][0][0] == ["git", "ls-remote", "--tags", "--refs", "--", "ssh://example/repo.git"]
+
+
+def test_fetch_latest_git_version_rejects_option_like_repo(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    assert cli.fetch_latest_git_version("--upload-pack=/tmp/pwn.sh") is None
+    assert calls == []
 
 
 def test_update_apply_from_git_installs_latest_tag(tmp_path, monkeypatch, capsys):
@@ -314,6 +324,17 @@ def test_update_install_from_git_builds_pip_spec(tmp_path, monkeypatch):
 
     assert cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None)) == 0
     assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@main"
+
+
+def test_update_install_from_git_rejects_option_like_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(tmp_path / "config.json", {"update_source": "git", "update_git_repo": "--upload-pack=/tmp/pwn.sh", "update_git_ref": "main"})
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd: calls.append(cmd))
+
+    assert cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None)) == 1
+    assert "does not start with '-'" in capsys.readouterr().out
+    assert calls == []
 
 
 def test_top_level_help_is_product_friendly(capsys):
