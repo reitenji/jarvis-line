@@ -431,7 +431,7 @@ def filter_lines_since(lines: list[str], seconds: int | None) -> list[str]:
     for line in lines:
         first = str(line).split(maxsplit=1)[0] if line else ""
         try:
-            if int(first) >= cutoff:
+            if float(first) >= cutoff:
                 kept.append(line)
         except Exception:
             kept.append(line)
