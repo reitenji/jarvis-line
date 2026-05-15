@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0b7
+
+- Redacted secret-like values from support reports before they are pasted into issues.
+- Hardened support report Markdown fences against log content that contains backticks.
+- Prevented git option injection in update checks and installs.
+- Kept `jarvis-line update apply` on the latest tag by default while still allowing explicit `--ref` installs.
+
 ## 0.1.0b6
 
 - Added `jarvis-line update apply` for one-command update checks and installs.
