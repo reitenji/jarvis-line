@@ -1830,7 +1830,7 @@ def build_parser() -> argparse.ArgumentParser:
     update_apply_parser.add_argument("--package", help="PyPI package spec to install, defaults to jarvis-line.")
     update_apply_parser.add_argument("--index-url")
     update_apply_parser.add_argument("--repo", help="Git repository URL for --source git.")
-    update_apply_parser.add_argument("--ref", help="Git ref to install, defaults to latest tag for git updates.")
+    update_apply_parser.add_argument("--ref", help="Git ref to install, defaults to the latest tag for git updates.")
     update_apply_parser.set_defaults(func=update_apply)
     update_install_parser = update_sub.add_parser("install")
     update_install_parser.add_argument("--source", choices=("pypi", "git"), help="Install from PyPI or a git repository.")
