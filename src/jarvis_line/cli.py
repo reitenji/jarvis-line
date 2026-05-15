@@ -336,6 +336,37 @@ def print_next(message: str) -> None:
 
 
 SECRET_KEYWORDS = ("key", "token", "secret", "password", "authorization", "api")
+SECRET_VALUE_PATTERNS = (
+    # OpenAI, GitHub, AWS, Slack, and similar high-entropy bearer tokens.
+    re.compile(r"\b(?:sk-(?:proj-)?|gh[opsu]_|github_pat_|AKIA|ASIA|xox[baprs]-)[A-Za-z0-9_./+=-]{8,}\b"),
+    # JWTs commonly appear in Authorization headers and tool output.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    # Secret-looking key/value fragments embedded in logs or assistant text.
+    re.compile(
+        r"(?i)\b(api[_-]?key|authorization|bearer|password|secret|token)"
+        r"(\s*[:=]\s*|\s+)"
+        r"([^\s,;`'\"]{4,})"
+    ),
+)
+
+
+def redact_text(value: str, *, max_length: int | None = None) -> str:
+    home = str(Path.home())
+    text = value.replace(home, "~")
+    for pattern in SECRET_VALUE_PATTERNS:
+        def replacement(match: re.Match[str]) -> str:
+            if len(match.groups()) >= 3:
+                return f"{match.group(1)}{match.group(2)}[REDACTED]"
+            return "[REDACTED]"
+
+        text = pattern.sub(replacement, text)
+    if max_length is not None and len(text) > max_length:
+        return text[:max_length] + "…"
+    return text
+
+
+def redact_preview(value: Any, limit: int = 80) -> str:
+    return redact_text(str(value or ""), max_length=limit)
 
 
 def redact_value(key: str, value: Any) -> Any:
@@ -343,10 +374,7 @@ def redact_value(key: str, value: Any) -> Any:
     if any(word in lowered for word in SECRET_KEYWORDS):
         return "[REDACTED]"
     if isinstance(value, str):
-        home = str(Path.home())
-        value = value.replace(home, "~")
-        if len(value) > 500:
-            return value[:500] + "…"
+        return redact_text(value, max_length=500)
     if isinstance(value, list):
         return [redact_value(key, item) for item in value[:20]]
     if isinstance(value, dict):
@@ -359,13 +387,7 @@ def redact_dict(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def redact_log_line(line: str) -> str:
-    home = str(Path.home())
-    line = line.replace(home, "~")
-    line = re.sub(
-        r"(?i)\b(key|token|secret|password|authorization|api_key)=\S+",
-        lambda match: f"{match.group(1)}=[REDACTED]",
-        line,
-    )
+    line = redact_text(line)
     if " line=" in line:
         prefix, _, rest = line.partition(" line=")
         preview = rest[:80] + ("…" if len(rest) > 80 else "")
@@ -431,7 +453,7 @@ def filter_lines_since(lines: list[str], seconds: int | None) -> list[str]:
     for line in lines:
         first = str(line).split(maxsplit=1)[0] if line else ""
         try:
-            if int(first) >= cutoff:
+            if float(first) >= cutoff:
                 kept.append(line)
         except Exception:
             kept.append(line)
@@ -1271,20 +1293,20 @@ def collect_support_data(args) -> dict[str, Any]:
         "jobs": [
             {
                 "message_id": job.get("message_id"),
-                "session_key": str(job.get("session_key") or "").replace(str(Path.home()), "~"),
+                "session_key": redact_text(str(job.get("session_key") or "")),
                 "phase": job.get("phase"),
                 "enqueued_ts_ms": job.get("enqueued_ts_ms"),
-                "jarvis_line_preview": str(job.get("jarvis_line") or "")[:80],
+                "jarvis_line_preview": redact_preview(job.get("jarvis_line")),
             }
             for job in (queue.get("jobs") or [])
         ]
     }
     latest_summary = {
         "sessions": {
-            str(key).replace(str(Path.home()), "~"): {
+            redact_text(str(key)): {
                 "latest_phase": (value.get("latest") or {}).get("phase"),
                 "latest_final_id": (value.get("latest_final") or {}).get("message_id"),
-                "latest_final_preview": str((value.get("latest_final") or {}).get("jarvis_line") or "")[:80],
+                "latest_final_preview": redact_preview((value.get("latest_final") or {}).get("jarvis_line")),
             }
             for key, value in (latest.get("sessions") or {}).items()
             if isinstance(value, dict)
