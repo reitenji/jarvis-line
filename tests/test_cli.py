@@ -542,6 +542,28 @@ def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
     assert "[REDACTED]" in text
 
 
+def test_support_report_uses_unambiguous_fences_for_log_backticks(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "LEGACY_CONFIG_PATH", tmp_path / "legacy.json")
+    monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(cli, "QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(cli, "LATEST_PATH", tmp_path / "latest.json")
+    monkeypatch.setattr(cli, "WATCHER_LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(cli, "AUDIO_WORKER_LOG_PATH", tmp_path / "worker.log")
+    cli.save_json(cli.CONFIG_PATH, {"tts": "system"})
+    cli.save_json(cli.STATE_PATH, {})
+    cli.save_json(cli.QUEUE_PATH, {"jobs": []})
+    cli.save_json(cli.LATEST_PATH, {"sessions": {}})
+    cli.WATCHER_LOG_PATH.write_text("1 notify-turn-complete file=/tmp/session\n```\n### injected\n```x.jsonl\n")
+    cli.AUDIO_WORKER_LOG_PATH.write_text("")
+    output = tmp_path / "issue.md"
+
+    assert cli.support_report(argparse.Namespace(output=str(output), full=False, max_log_bytes=5_000_000, since=None)) == 0
+    text = output.read_text()
+
+    assert "\n### Watcher Log\n````text\n1 notify-turn-complete file=/tmp/session\n```\n### injected\n```x.jsonl\n````\n" in text
+
+
 def test_filter_lines_since_accepts_fractional_timestamps(monkeypatch):
     monkeypatch.setattr(cli.time, "time", lambda: 200.0)
 

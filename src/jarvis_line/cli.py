@@ -373,6 +373,13 @@ def redact_log_line(line: str) -> str:
     return line[:500] + ("…" if len(line) > 500 else "")
 
 
+def markdown_code_block(content: str, info: str = "") -> list[str]:
+    max_backticks = max((len(match.group(0)) for match in re.finditer(r"`+", content)), default=0)
+    fence = "`" * max(3, max_backticks + 1)
+    opener = f"{fence}{info}" if info else fence
+    return [opener, content, fence]
+
+
 def tail_lines(path: Path, limit: int = 80) -> list[str]:
     try:
         return path.read_text(encoding="utf-8", errors="ignore").splitlines()[-limit:]
@@ -1318,34 +1325,22 @@ def support_report(args) -> int:
         "Review this report before posting it to a public issue.",
         "",
         "### Summary",
-        "```json",
-        json.dumps(data["summary"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["summary"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Redacted Config",
-        "```json",
-        json.dumps(data["config"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["config"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Queue Summary",
-        "```json",
-        json.dumps(data["queue_summary"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["queue_summary"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Latest Message Summary",
-        "```json",
-        json.dumps(data["latest_summary"], ensure_ascii=False, indent=2),
-        "```",
+        *markdown_code_block(json.dumps(data["latest_summary"], ensure_ascii=False, indent=2), "json"),
         "",
         "### Watcher Log",
-        "```text",
-        "\n".join(data["watcher_lines"]) or "(empty)",
-        "```",
+        *markdown_code_block("\n".join(data["watcher_lines"]) or "(empty)", "text"),
         "",
         "### Audio Worker Log",
-        "```text",
-        "\n".join(data["worker_lines"]) or "(empty)",
-        "```",
+        *markdown_code_block("\n".join(data["worker_lines"]) or "(empty)", "text"),
         "",
     ]
     text = "\n".join(sections)
