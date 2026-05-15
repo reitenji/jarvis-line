@@ -509,10 +509,13 @@ def test_redaction_masks_secret_and_home(monkeypatch):
     redacted = cli.redact_dict({
         "api_key": "secret",
         "path": str(cli.Path.home() / "x"),
+        "message": "Jarvis line: token sk-proj-abcdef1234567890",
     })
 
     assert redacted["api_key"] == "[REDACTED]"
     assert redacted["path"].startswith("~")
+    assert "sk-proj-abcdef1234567890" not in redacted["message"]
+    assert "[REDACTED]" in redacted["message"]
 
 
 def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
@@ -525,10 +528,22 @@ def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "AUDIO_WORKER_LOG_PATH", tmp_path / "worker.log")
     cli.save_json(cli.CONFIG_PATH, {"tts": "command", "api_key": "secret", "command": "echo {text}"})
     cli.save_json(cli.STATE_PATH, {})
-    cli.save_json(cli.QUEUE_PATH, {"jobs": []})
-    cli.save_json(cli.LATEST_PATH, {"sessions": {}})
-    cli.WATCHER_LOG_PATH.write_text("1 queued-audio token=SENSITIVEVALUE line=this is a long message\n")
-    cli.AUDIO_WORKER_LOG_PATH.write_text("1 worker-start password=SENSITIVEVALUE\n")
+    cli.save_json(cli.QUEUE_PATH, {"jobs": [{
+        "message_id": "m1",
+        "session_key": str(tmp_path / "session"),
+        "phase": "final",
+        "enqueued_ts_ms": 1,
+        "jarvis_line": "Jarvis line: deploy token sk-proj-queueSECRET1234567890",
+    }]})
+    cli.save_json(cli.LATEST_PATH, {"sessions": {str(tmp_path / "session"): {
+        "latest": {"phase": "final"},
+        "latest_final": {
+            "message_id": "m1",
+            "jarvis_line": "Jarvis line: password latestSECRET123456",
+        },
+    }}})
+    cli.WATCHER_LOG_PATH.write_text("1 queued-audio token=SENSITIVEVALUE line=Jarvis token sk-proj-logSECRET1234567890\n")
+    cli.AUDIO_WORKER_LOG_PATH.write_text("1 worker-start password=SENSITIVEVALUE line=secret workerSECRET123456\n")
     output = tmp_path / "issue.md"
 
     assert cli.support_report(argparse.Namespace(output=str(output), full=False, max_log_bytes=5_000_000, since=None)) == 0
@@ -537,10 +552,13 @@ def test_support_report_writes_issue_markdown(tmp_path, monkeypatch):
     assert "## Jarvis Line Support Report" in text
     assert "```json" in text
     assert "```text" in text
-    assert "secret" not in text
+    assert '"api_key": "[REDACTED]"' in text
     assert "SENSITIVEVALUE" not in text
+    assert "sk-proj-queueSECRET1234567890" not in text
+    assert "latestSECRET123456" not in text
+    assert "sk-proj-logSECRET1234567890" not in text
+    assert "workerSECRET123456" not in text
     assert "[REDACTED]" in text
-
 
 def test_support_report_uses_unambiguous_fences_for_log_backticks(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
