@@ -544,6 +544,18 @@ def is_valid_git_repo_arg(repo: str) -> bool:
     return bool(repo) and not repo.startswith("-")
 
 
+SEMVER_TAG_RE = re.compile(r"^v?(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)$")
+
+
+def latest_git_tag_ref(version: str) -> str:
+    tag = str(version).strip()
+    if tag.startswith("refs/tags/"):
+        return tag
+    if not tag.startswith("v"):
+        tag = f"v{tag}"
+    return f"refs/tags/{tag}"
+
+
 def fetch_latest_git_version(repo: str, timeout: float = 10.0) -> str | None:
     if not is_valid_git_repo_arg(repo):
         return None
@@ -565,9 +577,9 @@ def fetch_latest_git_version(repo: str, timeout: float = 10.0) -> str | None:
         ref = line.rsplit("/", 1)[-1].strip()
         if not ref:
             continue
-        version = ref[1:] if ref.startswith("v") else ref
-        if re.match(r"^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?$", version):
-            versions.append(version)
+        match = SEMVER_TAG_RE.match(ref)
+        if match:
+            versions.append(match.group(1))
     if not versions:
         return None
     return max(versions, key=version_key)
@@ -628,7 +640,7 @@ def update_install_command(args, cfg: dict[str, Any], ref_override: str | None =
                 print("Could not resolve latest git tag.")
                 print_next("check your network, git authentication, or pass `--ref vX.Y.Z`.")
                 return None
-            ref = f"v{latest}"
+            ref = latest_git_tag_ref(latest)
         package = f"git+{repo}@{ref}"
     else:
         package = getattr(args, "package", None) or "jarvis-line"
@@ -663,7 +675,7 @@ def update_apply(args) -> int:
             print("Could not check for updates.")
             print_next("check your network, git authentication, or set `update_git_repo` to a reachable repository.")
             return 1
-        ref = f"v{latest}" if str(requested_ref).strip().lower() == "latest" else str(requested_ref)
+        ref = latest_git_tag_ref(latest) if str(requested_ref).strip().lower() == "latest" else str(requested_ref)
         print("Current version:", __version__)
         print("Latest version:", latest)
         cfg["last_update_check_ts"] = int(time.time())
