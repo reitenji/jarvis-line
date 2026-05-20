@@ -65,7 +65,7 @@ Jarvis line: The requested change is implemented and verified.
 The default instruction is strict on purpose:
 
 - every final response must include exactly one `Jarvis line: ...`
-- progress/commentary messages may include one, but do not have to
+- meaningful progress/commentary messages should include one
 - normal user-facing text stays in the user's language
 - the spoken Jarvis line follows the selected instruction language
 - secrets, raw logs, code, and long file contents are forbidden in spoken lines
@@ -92,7 +92,8 @@ Every final assistant response must include exactly one spoken status line using
 Rules:
 - Any `Jarvis line` must be written in English.
 - Include exactly one `Jarvis line: ...` line in every final response.
-- You may include an optional `Jarvis line: ...` line in commentary/progress messages.
+- Include one `Jarvis line: ...` line in meaningful commentary/progress updates, such as starting work, changing approach, hitting a blocker, or verifying results.
+- Do not include more than one `Jarvis line: ...` line in a single commentary/progress message.
 - Keep each Jarvis line to one short natural sentence.
 - Use Jarvis lines only for status, completion, or the next action.
 - Do not include secrets, private data, raw logs, code, or long file contents in the Jarvis line.

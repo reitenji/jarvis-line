@@ -368,12 +368,33 @@ def test_help_command_prints_top_level_help(capsys):
 def test_find_runtime_pids_matches_packaged_audio_worker(monkeypatch):
     monkeypatch.setattr(cli, "CODEX_HOME", cli.Path("/Users/me/.codex"))
     monkeypatch.setattr(cli, "KOKORO_VENV", cli.Path("/Users/me/.jarvis-line/tts/kokoro-venv"))
+    monkeypatch.setattr(cli, "PACKAGE_DIR", cli.Path("/Users/me/projects/jarvis-line/src/jarvis_line"))
     monkeypatch.setattr(cli, "process_lines", lambda: [
         "101 /usr/bin/python /Users/me/.jarvis-line/tts/kokoro-venv/lib/python3.11/site-packages/jarvis_line/audio_worker.py",
+        "102 /usr/bin/python /Users/me/projects/jarvis-line/src/jarvis_line/audio_worker.py",
+        "103 /usr/bin/python /tmp/not-ours/jarvis_line/audio_worker.py",
         "102 /usr/bin/python /Users/me/.gemini/hooks/jarvis_line_watcher.py --watch",
     ])
 
-    assert cli.find_runtime_pids("audio_worker") == [101]
+    assert cli.find_runtime_pids("audio_worker") == [101, 102]
+
+
+def test_runtime_stop_marks_runtime_stopped(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
+    cli.save_json(tmp_path / "state.json", {
+        "__watcher__": {"pid": 201},
+        "__audio_worker__": {"pid": 202},
+    })
+    monkeypatch.setattr(cli, "find_runtime_pids", lambda kind: [])
+    killed = []
+    monkeypatch.setattr(cli, "terminate_pid", lambda pid: killed.append(pid))
+
+    assert cli.runtime_stop(argparse.Namespace()) == 0
+
+    state = cli.load_json(tmp_path / "state.json", {})
+    assert state["__runtime__"]["stopped"] is True
+    assert sorted(killed) == [201, 202]
+    assert "Stopped Jarvis Line runtime." in capsys.readouterr().out
 
 
 def test_profiles_and_prefix_helpers(tmp_path, monkeypatch, capsys):
@@ -498,7 +519,8 @@ def test_instruction_snippet_language_modes():
     assert "must be written in German" in german
     assert "Jarvis line:" in english
     assert "Include exactly one `Jarvis line: ...` line in every final response." in english
-    assert "optional `Jarvis line: ...` line in commentary" in english
+    assert "meaningful commentary/progress updates" in english
+    assert "Do not include more than one `Jarvis line: ...` line in a single commentary/progress message." in english
     assert "Before sending any final response" in english
 
 

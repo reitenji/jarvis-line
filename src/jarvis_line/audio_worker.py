@@ -418,12 +418,15 @@ def run_worker() -> int:
             append_log("job-skip empty-line")
             continue
         append_log(f"job-speak phase={phase} queue_delay_ms={queue_delay_ms} session={session_key} line={line}")
+        update_worker_heartbeat()
         started = time.perf_counter()
         try:
             speak_line(line)
             append_log(f"job-done phase={phase} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
         except Exception as exc:
             append_log(f"job-error reason={exc.__class__.__name__}")
+        finally:
+            update_worker_heartbeat()
 
 
 if __name__ == "__main__":

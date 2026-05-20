@@ -44,6 +44,7 @@ jarvis-line config set speech_enabled false
 | `tts` | `kokoro` | Selected TTS backend |
 | `speak_mode` | `final_only` | Speak final responses only, commentary and final, or off |
 | `line_prefixes` | `["Jarvis line:"]` | Prefixes accepted as spoken lines |
+| `speak_without_prefix` | `false` | Optional fallback: speak a short derived status from assistant messages that do not contain a prefix |
 | `line_language` | `English` | Expected language for spoken lines |
 | `max_spoken_chars` | `240` | Maximum spoken summary length |
 | `quiet_hours` | `null` | Optional time range where speech is skipped |
@@ -82,6 +83,7 @@ Fresh setup starts from this shape:
   "tts": "kokoro",
   "speak_mode": "final_only",
   "line_prefixes": ["Jarvis line:"],
+  "speak_without_prefix": false,
   "line_language": "English",
   "max_spoken_chars": 240,
   "quiet_hours": null,
@@ -93,7 +95,7 @@ Fresh setup starts from this shape:
   "volume": 0.7,
   "play_by_default": true,
   "final_trigger_mode": "notify",
-  "playback_mode": "stream",
+  "playback_mode": "tempfile",
   "fallback_playback_mode": "tempfile",
   "delete_after_play": true,
   "temp_dir": "~/.jarvis-line/tts/generated"
@@ -109,6 +111,7 @@ If Kokoro is not ready, or if the user chooses not to use Kokoro, `system` is th
   "tts": "system",
   "speak_mode": "final_only",
   "line_prefixes": ["Jarvis line:"],
+  "speak_without_prefix": false,
   "line_language": "English",
   "max_spoken_chars": 240,
   "quiet_hours": null,
@@ -142,6 +145,7 @@ Example quieter config:
   "tts": "system",
   "speak_mode": "final_only",
   "line_prefixes": ["Jarvis line:"],
+  "speak_without_prefix": false,
   "line_language": "English",
   "max_spoken_chars": 160,
   "quiet_hours": "22:00-08:00",

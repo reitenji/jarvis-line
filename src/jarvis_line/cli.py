@@ -42,6 +42,7 @@ DEFAULT_KOKORO_CONFIG = {
     "tts": "kokoro",
     "speak_mode": "final_only",
     "line_prefixes": ["Jarvis line:"],
+    "speak_without_prefix": False,
     "line_language": "English",
     "max_spoken_chars": 240,
     "quiet_hours": None,
@@ -69,7 +70,7 @@ DEFAULT_KOKORO_CONFIG = {
     "volume": 0.7,
     "play_by_default": True,
     "final_trigger_mode": "notify",
-    "playback_mode": "stream",
+    "playback_mode": "tempfile",
     "fallback_playback_mode": "tempfile",
     "delete_after_play": True,
     "temp_dir": str(TTS_HOME / "generated"),
@@ -110,6 +111,7 @@ COMMON_CONFIG_KEYS = {
     "tts",
     "speak_mode",
     "line_prefixes",
+    "speak_without_prefix",
     "line_language",
     "max_spoken_chars",
     "quiet_hours",
@@ -214,6 +216,7 @@ CONFIG_FIELD_HELP = {
     "tts": {"type": "string", "description": "Selected TTS backend.", "values": sorted(BACKEND_CAPABILITIES.keys())},
     "speak_mode": {"type": "string", "description": "When Jarvis Line should speak.", "values": ["final_only", "commentary_and_final", "off"]},
     "line_prefixes": {"type": "array[string]", "description": "Accepted spoken-line prefixes."},
+    "speak_without_prefix": {"type": "boolean", "description": "Speak a short derived status from assistant messages even when no explicit Jarvis line is present."},
     "line_language": {"type": "string", "description": "Expected language for generated Jarvis lines, for example English, Turkish, German, or Brazilian Portuguese."},
     "max_spoken_chars": {"type": "integer", "description": "Maximum spoken summary length."},
     "quiet_hours": {"type": "string|null", "description": "Optional quiet-hours range, for example 22:00-08:00."},
@@ -946,13 +949,16 @@ def find_runtime_pids(kind: str) -> list[int]:
             "jarvis_line/audio_worker.py",
             "jarvis_line.audio_worker",
         )
-    codex_home = normalized_path_text(CODEX_HOME)
-    kokoro_venv = normalized_path_text(KOKORO_VENV)
+    allowed_roots = (
+        normalized_path_text(CODEX_HOME),
+        normalized_path_text(KOKORO_VENV),
+        normalized_path_text(PACKAGE_DIR),
+    )
     for line in process_lines():
         normalized_line = normalized_path_text(line)
         if not any(marker in normalized_line for marker in markers):
             continue
-        if codex_home not in normalized_line and kokoro_venv not in normalized_line:
+        if not any(root and root in normalized_line for root in allowed_roots):
             continue
         parts = line.strip().split()
         if not parts:
@@ -974,6 +980,12 @@ def terminate_pid(pid: int) -> None:
             subprocess.run(["taskkill", "/PID", str(pid), "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
             os.kill(pid, 15)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if not pid_alive(pid):
+                    return
+                time.sleep(0.05)
+            os.kill(pid, 9)
     except Exception:
         pass
 
@@ -999,6 +1011,12 @@ def launch_runtime(args, selected: str) -> int:
     if not WATCHER_PATH.exists() or not WORKER_PATH.exists():
         print("Jarvis Line hook scripts are missing.")
         return 1
+
+    state = load_json(STATE_PATH, {})
+    runtime = state.setdefault("__runtime__", {})
+    runtime["stopped"] = False
+    runtime["updated_ts_ms"] = int(time.time() * 1000)
+    save_json(STATE_PATH, state)
 
     proc = subprocess.run(watcher_command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
     print(f"Selected TTS: {selected}")
@@ -1231,6 +1249,10 @@ def runtime_start(args) -> int:
 
 def runtime_stop(_args) -> int:
     state = load_json(STATE_PATH, {})
+    runtime = state.setdefault("__runtime__", {})
+    runtime["stopped"] = True
+    runtime["updated_ts_ms"] = int(time.time() * 1000)
+    save_json(STATE_PATH, state)
     watcher = state.get("__watcher__", {}) if isinstance(state, dict) else {}
     worker = state.get("__audio_worker__", {}) if isinstance(state, dict) else {}
     pids = {
@@ -1709,7 +1731,8 @@ Every final assistant response must include exactly one spoken status line using
 Rules:
 - {language_rule}
 - Include exactly one `Jarvis line: ...` line in every final response.
-- You may include an optional `Jarvis line: ...` line in commentary/progress messages.
+- Include one `Jarvis line: ...` line in meaningful commentary/progress updates, such as starting work, changing approach, hitting a blocker, or verifying results.
+- Do not include more than one `Jarvis line: ...` line in a single commentary/progress message.
 - Keep each Jarvis line to one short natural sentence.
 - Use Jarvis lines only for status, completion, or the next action.
 - Do not include secrets, private data, raw logs, code, or long file contents in the Jarvis line.
