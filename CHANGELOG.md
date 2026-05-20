@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0b8
+
+- Fixed Jarvis Line speech with newer Codex session history entries where assistant output can appear inside Codex agent history payloads.
+- Added direct notify payload handling for final `Jarvis line` messages so speech is less dependent on session file scanning.
+
 ## 0.1.0b7
 
 - Redacted secret-like values from support reports before they are pasted into issues.

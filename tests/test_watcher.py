@@ -23,6 +23,52 @@ def test_speak_mode_final_only(monkeypatch):
     assert watcher.speak_mode_allows("commentary") is False
 
 
+def test_codex_history_user_payload_is_treated_as_latest_final(monkeypatch):
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
+    payload = {
+        "type": "message",
+        "role": "user",
+        "content": [{
+            "type": "input_text",
+            "text": (
+                "The following is the Codex agent history added since your last approval assessment.\n\n"
+                "Done.\n\n"
+                "Jarvis line: Audio is working again.\n\n"
+                "::git-stage{cwd=\"/tmp/repo\"}"
+            ),
+        }],
+    }
+
+    extracted = watcher.assistant_payload_from_event({"type": "response_item", "payload": payload})
+
+    assert extracted is not None
+    assert extracted["role"] == "assistant"
+    assert extracted["phase"] == "final_answer"
+    assert watcher.extract_jarvis_line(extracted["content"]) == "Audio is working again."
+
+
+def test_regular_user_payload_with_jarvis_line_is_ignored(monkeypatch):
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
+    payload = {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "Jarvis line: do not speak user prompts"}],
+    }
+
+    assert watcher.assistant_payload_from_event({"type": "response_item", "payload": payload}) == payload
+
+
+def test_notify_payload_can_carry_final_jarvis_line(monkeypatch):
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
+    payload = watcher.assistant_payload_from_notify_event({
+        "last_agent_message": "Done.\n\nJarvis line: Notify payload is ready.",
+    })
+
+    assert payload is not None
+    assert payload["phase"] == "final_answer"
+    assert watcher.extract_jarvis_line(payload["content"]) == "Notify payload is ready."
+
+
 def test_queue_replaces_latest_final(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")

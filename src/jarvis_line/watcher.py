@@ -367,6 +367,9 @@ def assistant_payload_from_event(event: dict[str, Any]) -> dict[str, Any] | None
     if event.get("type") == "response_item":
         payload = event.get("payload") or {}
         if isinstance(payload, dict):
+            history_payload = assistant_payload_from_codex_history(payload)
+            if history_payload:
+                return history_payload
             return payload
     payload = event.get("payload") or {}
     if isinstance(payload, dict) and payload.get("type") == "agent_message":
@@ -376,11 +379,49 @@ def assistant_payload_from_event(event: dict[str, Any]) -> dict[str, Any] | None
             "phase": payload.get("phase") or event.get("phase") or "commentary",
             "content": payload.get("message") or payload.get("content") or payload.get("text") or "",
         }
+    if isinstance(payload, dict):
+        history_payload = assistant_payload_from_codex_history(payload)
+        if history_payload:
+            return history_payload
     for key in ("message", "item"):
         payload = event.get(key) or {}
         if isinstance(payload, dict) and (payload.get("role") == "assistant" or payload.get("type") == "message"):
             return payload
     return None
+
+
+def assistant_payload_from_codex_history(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("role") != "user" and payload.get("type") != "user_message":
+        return None
+    parts = []
+    for key in ("content", "text", "message"):
+        parts.extend(collect_text(payload.get(key)))
+    text = "\n".join(parts).strip()
+    if not text or "Codex agent history" not in text:
+        return None
+    if not extract_jarvis_line(text):
+        return None
+    return {
+        "type": "message",
+        "role": "assistant",
+        "phase": "final_answer",
+        "content": text,
+    }
+
+
+def assistant_payload_from_notify_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    parts = []
+    for key in ("last_agent_message", "agent_message", "message", "content", "text"):
+        parts.extend(collect_text(event.get(key)))
+    text = "\n".join(parts).strip()
+    if not text or not extract_jarvis_line(text):
+        return None
+    return {
+        "type": "message",
+        "role": "assistant",
+        "phase": event.get("phase") or event.get("message_phase") or "final_answer",
+        "content": text,
+    }
 
 
 def phase_from_payload(payload: dict[str, Any]) -> str:
@@ -802,6 +843,16 @@ def notify_trigger(arg_payload: str = "") -> int:
 
     append_log(f"notify-turn-complete file={target}")
     session_key = str(target.resolve())
+
+    payload = assistant_payload_from_notify_event(event)
+    if payload and payload_is_assistant_message(payload):
+        phase, text = assistant_text_from_payload(payload)
+        jarvis_line = extract_jarvis_line(text)
+        if jarvis_line and is_final_phase(phase):
+            remember_latest_message(session_key, phase, text, jarvis_line)
+            if queue_jarvis_line(session_key, phase, jarvis_line, text):
+                return 0
+
     deadline = time.time() + NOTIFY_RETRY_SECONDS
     while time.time() < deadline:
         status = speak_latest_final_from_cache(session_key)
