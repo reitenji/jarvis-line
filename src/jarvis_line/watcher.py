@@ -27,6 +27,7 @@ LOG_PATH = CODEX_HOME / "hooks" / "jarvis_line_watcher.log"
 KOKORO_VENV = JARVIS_HOME / "tts" / "kokoro-venv"
 KOKORO_PY = KOKORO_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 WORKER_PATH = Path(__file__).resolve().with_name("audio_worker.py")
+PACKAGE_DIR = Path(__file__).resolve().parent
 LOCK_PATH = CODEX_HOME / "hooks" / ".jarvis_line.lock"
 DEFAULT_LINE_PREFIXES = ["Jarvis line:"]
 COMMENTARY_DEBOUNCE_SECONDS = 20
@@ -39,7 +40,7 @@ NOTIFY_POLL_SECONDS = 0.1
 LOG_ROTATE_BYTES = 2 * 1024 * 1024
 WATCHER_HEARTBEAT_SECONDS = 5.0
 WATCHER_STALE_SECONDS = 30
-AUDIO_WORKER_STALE_SECONDS = 30
+AUDIO_WORKER_STALE_SECONDS = 120
 AUDIO_QUEUE_STALE_SECONDS = 90
 AUDIO_QUEUE_MAX_JOBS = 8
 
@@ -245,6 +246,12 @@ def terminate_pid(pid: int) -> None:
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         else:
             os.kill(pid, signal.SIGTERM)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if not pid_alive(pid):
+                    return
+                time.sleep(0.05)
+            os.kill(pid, signal.SIGKILL)
     except OSError:
         pass
 
@@ -288,6 +295,11 @@ def normalized_path_text(value: object) -> str:
 def find_audio_worker_pids() -> list[int]:
     pids = []
     this_pid = os.getpid()
+    allowed_roots = (
+        normalized_path_text(CODEX_HOME),
+        normalized_path_text(KOKORO_VENV),
+        normalized_path_text(PACKAGE_DIR),
+    )
     for line in process_lines():
         normalized_line = normalized_path_text(line)
         if (
@@ -296,7 +308,7 @@ def find_audio_worker_pids() -> list[int]:
             and "jarvis_line_audio_worker.py" not in normalized_line
         ):
             continue
-        if normalized_path_text(CODEX_HOME) not in normalized_line and normalized_path_text(KOKORO_VENV) not in normalized_line:
+        if not any(root and root in normalized_line for root in allowed_roots):
             continue
         parts = line.strip().split()
         if not parts:
@@ -318,30 +330,99 @@ def terminate_stale_audio_workers(keep_pid: int | None = None) -> None:
         append_log(f"stale-audio-worker-killed pid={pid}")
 
 
+def current_thread_id() -> str:
+    return str(os.environ.get("CODEX_THREAD_ID") or "").strip()
+
+
+def active_thread_ids(state: dict[str, Any] | None = None) -> list[str]:
+    state = state if state is not None else load_json(STATE_PATH, {})
+    runtime = state.get("__runtime__") if isinstance(state, dict) else {}
+    raw_ids = (runtime or {}).get("active_thread_ids") or {}
+    if isinstance(raw_ids, dict):
+        ids = [str(key).strip() for key in raw_ids.keys()]
+    elif isinstance(raw_ids, list):
+        ids = [str(value).strip() for value in raw_ids]
+    else:
+        ids = []
+    env_id = current_thread_id()
+    if env_id:
+        ids.append(env_id)
+    seen = set()
+    result = []
+    for thread_id in ids:
+        if not thread_id or thread_id in seen:
+            continue
+        seen.add(thread_id)
+        result.append(thread_id)
+    return result
+
+
+def record_active_thread_id(thread_id: str | None = None) -> None:
+    thread_id = str(thread_id or current_thread_id() or "").strip()
+    if not thread_id:
+        return
+    now_ms = int(time.time() * 1000)
+
+    def mutate(state):
+        runtime = state.setdefault("__runtime__", {})
+        active = runtime.setdefault("active_thread_ids", {})
+        if not isinstance(active, dict):
+            active = {}
+            runtime["active_thread_ids"] = active
+        active[thread_id] = now_ms
+        stale_before = now_ms - (SESSION_SCAN_WINDOW_SECONDS * 1000)
+        for key in list(active.keys()):
+            if int(active.get(key) or 0) < stale_before:
+                active.pop(key, None)
+
+    update_json(STATE_PATH, {}, mutate)
+
+
+def session_candidates_for_thread_ids(thread_ids: list[str]) -> list[Path]:
+    paths: list[Path] = []
+    if not SESSIONS_ROOT.exists():
+        return paths
+    for thread_id in thread_ids:
+        safe_id = re.sub(r"[^A-Za-z0-9-]", "", thread_id)
+        if not safe_id:
+            continue
+        paths.extend(SESSIONS_ROOT.rglob(f"*{safe_id}*.jsonl"))
+    unique = {}
+    for path in paths:
+        try:
+            unique[str(path.resolve())] = path
+        except OSError:
+            continue
+    result = list(unique.values())
+    result.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return result
+
+
 def current_session_candidates() -> list[Path]:
     if not SESSIONS_ROOT.exists():
         return []
+    thread_candidates = session_candidates_for_thread_ids(active_thread_ids())
+
     now = time.time()
     paths = []
-    scan_roots: list[Path] = []
-    today = datetime.now().date()
-    for offset in range(2):
-        day = today - timedelta(days=offset)
-        day_root = SESSIONS_ROOT / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}"
-        if day_root.exists():
-            scan_roots.append(day_root)
-    if not scan_roots:
-        scan_roots.append(SESSIONS_ROOT)
-
-    for root in scan_roots:
-        iterator = root.glob("*.jsonl") if root != SESSIONS_ROOT else root.rglob("*.jsonl")
-        for path in iterator:
-            try:
-                if now - path.stat().st_mtime <= SESSION_SCAN_WINDOW_SECONDS:
-                    paths.append(path)
-            except OSError:
-                continue
+    for path in SESSIONS_ROOT.rglob("*.jsonl"):
+        try:
+            if now - path.stat().st_mtime <= SESSION_SCAN_WINDOW_SECONDS:
+                paths.append(path)
+        except OSError:
+            continue
+    paths.extend(thread_candidates)
+    unique = {}
+    for path in paths:
+        try:
+            unique[str(path.resolve())] = path
+        except OSError:
+            continue
+    paths = list(unique.values())
     paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    if thread_candidates:
+        thread_keys = {str(path.resolve()) for path in thread_candidates}
+        paths.sort(key=lambda p: (str(p.resolve()) not in thread_keys, -p.stat().st_mtime))
     return paths
 
 
@@ -367,11 +448,17 @@ def assistant_payload_from_event(event: dict[str, Any]) -> dict[str, Any] | None
     if event.get("type") == "response_item":
         payload = event.get("payload") or {}
         if isinstance(payload, dict):
-            history_payload = assistant_payload_from_codex_history(payload)
-            if history_payload:
-                return history_payload
             return payload
     payload = event.get("payload") or {}
+    if isinstance(payload, dict) and payload.get("type") == "task_complete":
+        text = str(payload.get("last_agent_message") or "").strip()
+        if text and extract_jarvis_line(text):
+            return {
+                "type": "message",
+                "role": "assistant",
+                "phase": "final_answer",
+                "content": text,
+            }
     if isinstance(payload, dict) and payload.get("type") == "agent_message":
         return {
             "type": "message",
@@ -379,34 +466,11 @@ def assistant_payload_from_event(event: dict[str, Any]) -> dict[str, Any] | None
             "phase": payload.get("phase") or event.get("phase") or "commentary",
             "content": payload.get("message") or payload.get("content") or payload.get("text") or "",
         }
-    if isinstance(payload, dict):
-        history_payload = assistant_payload_from_codex_history(payload)
-        if history_payload:
-            return history_payload
     for key in ("message", "item"):
         payload = event.get(key) or {}
         if isinstance(payload, dict) and (payload.get("role") == "assistant" or payload.get("type") == "message"):
             return payload
     return None
-
-
-def assistant_payload_from_codex_history(payload: dict[str, Any]) -> dict[str, Any] | None:
-    if payload.get("role") != "user" and payload.get("type") != "user_message":
-        return None
-    parts = []
-    for key in ("content", "text", "message"):
-        parts.extend(collect_text(payload.get(key)))
-    text = "\n".join(parts).strip()
-    if not text or "Codex agent history" not in text:
-        return None
-    if not extract_jarvis_line(text):
-        return None
-    return {
-        "type": "message",
-        "role": "assistant",
-        "phase": "final_answer",
-        "content": text,
-    }
 
 
 def assistant_payload_from_notify_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -476,7 +540,11 @@ def remember_latest_message(session_key: str, phase: str, text: str, jarvis_line
     update_json(LATEST_MESSAGES_PATH, {}, mutate)
 
 
-def latest_cached_message(session_key: str | None = None, final_only: bool = True) -> dict[str, Any] | None:
+def latest_cached_message(
+    session_key: str | None = None,
+    final_only: bool = True,
+    min_updated_ts_ms: int = 0,
+) -> dict[str, Any] | None:
     cache = load_json(LATEST_MESSAGES_PATH, {})
     sessions = cache.get("sessions") or {}
     key = session_key or cache.get("active_session_key")
@@ -485,6 +553,8 @@ def latest_cached_message(session_key: str | None = None, final_only: bool = Tru
     session_cache = sessions.get(key) or {}
     entry = session_cache.get("latest_final" if final_only else "latest")
     if not isinstance(entry, dict):
+        return None
+    if min_updated_ts_ms and int(entry.get("updated_ts_ms") or 0) < min_updated_ts_ms:
         return None
     return entry
 
@@ -543,6 +613,9 @@ def audio_worker_is_healthy(state: dict[str, Any] | None = None) -> bool:
 
 
 def launch_audio_worker() -> None:
+    if runtime_config().get("speech_enabled") is False:
+        append_log("audio-worker-skip speech-disabled")
+        return
     state = load_json(STATE_PATH, {})
     if audio_worker_is_healthy(state):
         pid = int(((state.get("__audio_worker__") or {}) if isinstance(state, dict) else {}).get("pid") or 0)
@@ -660,15 +733,14 @@ def read_recent_lines(path: Path, max_bytes: int = RECENT_BYTES) -> list[str]:
 def maybe_speak_from_payload(payload: dict[str, Any], session_key: str) -> bool:
     if not payload_is_assistant_message(payload):
         return False
+    cfg = runtime_config()
     phase, text = assistant_text_from_payload(payload)
     jarvis_line = extract_jarvis_line(text)
+    if not jarvis_line and cfg.get("speak_without_prefix", False):
+        jarvis_line = derive_spoken_line(text, cfg)
     if not jarvis_line:
         return False
     remember_latest_message(session_key, phase, text, jarvis_line)
-    cfg = runtime_config()
-    final_trigger_mode = str(cfg.get("final_trigger_mode", "notify")).strip().lower()
-    if final_trigger_mode == "notify" and is_final_phase(phase):
-        return False
     if queue_jarvis_line(session_key, phase, jarvis_line, text):
         return True
     return False
@@ -700,8 +772,8 @@ def speak_latest_final_from_session(path: Path) -> str:
     return "missing"
 
 
-def speak_latest_final_from_cache(session_key: str | None = None) -> str:
-    entry = latest_cached_message(session_key, final_only=True)
+def speak_latest_final_from_cache(session_key: str | None = None, min_updated_ts_ms: int = 0) -> str:
+    entry = latest_cached_message(session_key, final_only=True, min_updated_ts_ms=min_updated_ts_ms)
     if not entry:
         return "missing"
     cached_session = str(entry.get("session_key") or session_key or "")
@@ -725,6 +797,34 @@ def extract_jarvis_line(text: str) -> str | None:
     return trim_spoken_text(matches[-1].strip())
 
 
+def derive_spoken_line(text: str, cfg: dict[str, Any] | None = None) -> str | None:
+    cfg = cfg if cfg is not None else runtime_config()
+    cleaned = re.sub(r"```.*?```", " ", str(text or ""), flags=re.S)
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    cleaned = re.sub(r"https?://\S+", " ", cleaned)
+    candidates = []
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("::", "{", "}", "[", "]")):
+            continue
+        line = re.sub(r"^[-*•]\s+", "", line)
+        line = re.sub(r"^\d+[.)]\s+", "", line)
+        if not line or line.lower().startswith(("skills used:", "jarvis line:")):
+            continue
+        candidates.append(line)
+        if len(" ".join(candidates)) >= 80:
+            break
+    if not candidates:
+        return None
+    spoken = " ".join(candidates)
+    sentence_match = re.match(r"^(.+?[.!?])(?:\s|$)", spoken)
+    if sentence_match:
+        spoken = sentence_match.group(1)
+    return trim_spoken_text(spoken, cfg)
+
+
 def should_speak(session_key: str, phase: str, jarvis_line: str) -> bool:
     def mutate(state):
         session_state = state.setdefault(session_key, {})
@@ -744,7 +844,7 @@ def should_speak(session_key: str, phase: str, jarvis_line: str) -> bool:
         session_state["last_ts_ms"] = now_ms
         stale_before = now_ms - (SESSION_SCAN_WINDOW_SECONDS * 1000)
         for key in list(state.keys()):
-            if key == "__watcher__":
+            if str(key).startswith("__"):
                 continue
             if int((state.get(key, {}) or {}).get("last_ts_ms") or 0) < stale_before:
                 state.pop(key, None)
@@ -768,16 +868,21 @@ def load_notify_event(arg_payload: str = "") -> dict[str, Any]:
     event_data: dict[str, Any] = {}
 
     raw_arg = str(arg_payload or "").strip()
+    loaded_from_arg = False
     if raw_arg.startswith("{"):
         try:
             parsed = json.loads(raw_arg)
             if isinstance(parsed, dict):
                 event_data.update(parsed)
+                loaded_from_arg = True
         except Exception:
             pass
 
-    if not sys.stdin.isatty():
-        raw_stdin = sys.stdin.read().strip()
+    if not loaded_from_arg and not sys.stdin.isatty():
+        try:
+            raw_stdin = sys.stdin.read().strip()
+        except OSError:
+            raw_stdin = ""
         if raw_stdin:
             try:
                 parsed = json.loads(raw_stdin)
@@ -825,13 +930,47 @@ def is_turn_complete_notify(event: dict[str, Any]) -> bool:
     return event_key in ("agent-turn-complete", "assistant-turn-complete", "turn-complete") or notif_type == "turn_complete"
 
 
+def runtime_is_stopped(state: dict[str, Any] | None = None) -> bool:
+    state = state if state is not None else load_json(STATE_PATH, {})
+    runtime = state.get("__runtime__") if isinstance(state, dict) else {}
+    return bool((runtime or {}).get("stopped"))
+
+
 def notify_trigger(arg_payload: str = "") -> int:
+    started_ms = int(time.time() * 1000)
     event = load_notify_event(arg_payload)
     if not is_turn_complete_notify(event):
         append_log("notify-skip unsupported-event")
         return 0
+    record_active_thread_id()
 
     state = load_json(STATE_PATH, {})
+    if runtime_is_stopped(state):
+        append_log("notify-skip runtime-stopped")
+        return 0
+    if runtime_config().get("speech_enabled") is False:
+        append_log("notify-skip speech-disabled")
+        return 0
+
+    payload = assistant_payload_from_notify_event(event)
+    if not payload or not payload_is_assistant_message(payload):
+        deadline = time.time() + NOTIFY_RETRY_SECONDS
+        min_updated_ts_ms = started_ms - 30000
+        while time.time() < deadline:
+            status = speak_latest_final_from_cache(min_updated_ts_ms=min_updated_ts_ms)
+            if status in ("spoken", "duplicate"):
+                append_log(f"notify-cache-{status}")
+                return 0
+            time.sleep(NOTIFY_POLL_SECONDS)
+        append_log("notify-skip no-recent-final-payload")
+        return 0
+
+    phase, text = assistant_text_from_payload(payload)
+    jarvis_line = extract_jarvis_line(text)
+    if not jarvis_line or not is_final_phase(phase):
+        append_log("notify-skip no-recent-final-payload")
+        return 0
+
     if not watcher_is_healthy(state):
         append_log("notify-watchdog unhealthy-launch")
         launch_watcher()
@@ -844,28 +983,8 @@ def notify_trigger(arg_payload: str = "") -> int:
     append_log(f"notify-turn-complete file={target}")
     session_key = str(target.resolve())
 
-    payload = assistant_payload_from_notify_event(event)
-    if payload and payload_is_assistant_message(payload):
-        phase, text = assistant_text_from_payload(payload)
-        jarvis_line = extract_jarvis_line(text)
-        if jarvis_line and is_final_phase(phase):
-            remember_latest_message(session_key, phase, text, jarvis_line)
-            if queue_jarvis_line(session_key, phase, jarvis_line, text):
-                return 0
-
-    deadline = time.time() + NOTIFY_RETRY_SECONDS
-    while time.time() < deadline:
-        status = speak_latest_final_from_cache(session_key)
-        if status in ("spoken", "duplicate"):
-            return 0
-        time.sleep(NOTIFY_POLL_SECONDS)
-
-    append_log("notify-cache-miss fallback=session-scan")
-    fallback_status = speak_latest_final_from_session(target)
-    if fallback_status in ("spoken", "duplicate"):
-        return 0
-
-    append_log("notify-pending no-final-jarvis-line")
+    remember_latest_message(session_key, phase, text, jarvis_line)
+    queue_jarvis_line(session_key, phase, jarvis_line, text)
     return 0
 
 
@@ -949,12 +1068,16 @@ def watch_sessions(read_existing: bool = False) -> int:
 
 
 def launch_watcher() -> int:
+    record_active_thread_id()
     candidates = current_session_candidates()
     if not candidates:
         append_log("launch-skip no-session-file")
         return 0
 
     state = load_json(STATE_PATH, {})
+    if runtime_is_stopped(state):
+        append_log("launch-skip runtime-stopped")
+        return 0
     watcher = state.get("__watcher__", {})
     pid = int(watcher.get("pid") or 0)
     watched_mode = str(watcher.get("mode") or "")

@@ -28,6 +28,7 @@ def test_system_voice_settings_are_supported():
 
 def test_setup_default_warns_and_falls_back_to_system(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
     watcher = tmp_path / "watcher.py"
     worker = tmp_path / "audio_worker.py"
     watcher.write_text("")
@@ -244,7 +245,7 @@ def test_update_apply_from_git_installs_latest_tag(tmp_path, monkeypatch, capsys
 
     assert rc == 0
     assert "Latest version: 9.9.9" in out
-    assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@v9.9.9"
+    assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@refs/tags/v9.9.9"
 
 
 def test_update_apply_from_git_ignores_configured_ref_by_default(tmp_path, monkeypatch, capsys):
@@ -313,7 +314,7 @@ def test_update_install_from_git_resolves_latest_ref(tmp_path, monkeypatch):
     rc = cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None))
 
     assert rc == 0
-    assert calls[0][-1] == f"git+{cli.DEFAULT_GIT_REPO}@v9.9.9"
+    assert calls[0][-1] == f"git+{cli.DEFAULT_GIT_REPO}@refs/tags/v9.9.9"
 
 
 def test_update_install_from_git_builds_pip_spec(tmp_path, monkeypatch):
@@ -368,12 +369,33 @@ def test_help_command_prints_top_level_help(capsys):
 def test_find_runtime_pids_matches_packaged_audio_worker(monkeypatch):
     monkeypatch.setattr(cli, "CODEX_HOME", cli.Path("/Users/me/.codex"))
     monkeypatch.setattr(cli, "KOKORO_VENV", cli.Path("/Users/me/.jarvis-line/tts/kokoro-venv"))
+    monkeypatch.setattr(cli, "PACKAGE_DIR", cli.Path("/Users/me/projects/jarvis-line/src/jarvis_line"))
     monkeypatch.setattr(cli, "process_lines", lambda: [
         "101 /usr/bin/python /Users/me/.jarvis-line/tts/kokoro-venv/lib/python3.11/site-packages/jarvis_line/audio_worker.py",
+        "102 /usr/bin/python /Users/me/projects/jarvis-line/src/jarvis_line/audio_worker.py",
+        "103 /usr/bin/python /tmp/not-ours/jarvis_line/audio_worker.py",
         "102 /usr/bin/python /Users/me/.gemini/hooks/jarvis_line_watcher.py --watch",
     ])
 
-    assert cli.find_runtime_pids("audio_worker") == [101]
+    assert cli.find_runtime_pids("audio_worker") == [101, 102]
+
+
+def test_runtime_stop_marks_runtime_stopped(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
+    cli.save_json(tmp_path / "state.json", {
+        "__watcher__": {"pid": 201},
+        "__audio_worker__": {"pid": 202},
+    })
+    monkeypatch.setattr(cli, "find_runtime_pids", lambda kind: [])
+    killed = []
+    monkeypatch.setattr(cli, "terminate_pid", lambda pid: killed.append(pid))
+
+    assert cli.runtime_stop(argparse.Namespace()) == 0
+
+    state = cli.load_json(tmp_path / "state.json", {})
+    assert state["__runtime__"]["stopped"] is True
+    assert sorted(killed) == [201, 202]
+    assert "Stopped Jarvis Line runtime." in capsys.readouterr().out
 
 
 def test_profiles_and_prefix_helpers(tmp_path, monkeypatch, capsys):
@@ -498,7 +520,8 @@ def test_instruction_snippet_language_modes():
     assert "must be written in German" in german
     assert "Jarvis line:" in english
     assert "Include exactly one `Jarvis line: ...` line in every final response." in english
-    assert "optional `Jarvis line: ...` line in commentary" in english
+    assert "meaningful commentary/progress updates" in english
+    assert "Do not include more than one `Jarvis line: ...` line in a single commentary/progress message." in english
     assert "Before sending any final response" in english
 
 
@@ -520,8 +543,9 @@ def test_instruction_parser_rejects_language_shortcuts(language, capsys):
     assert "Use a full language name" in capsys.readouterr().err
 
 
-def test_instructions_install_is_idempotent(tmp_path):
+def test_instructions_install_is_idempotent(tmp_path, monkeypatch):
     path = tmp_path / "AGENTS.md"
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
 
     assert cli.instructions_install(argparse.Namespace(target="agents", language="English", path=str(path))) == 0
     first = path.read_text()

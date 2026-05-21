@@ -27,7 +27,7 @@ Kokoro config supports:
 - `playback_mode`
 - `fallback_playback_mode`
 
-Jarvis Line tries live streaming first. Temporary audio files are only used if streaming fails.
+Jarvis Line defaults to temporary-file playback for Kokoro because the platform audio player is more reliable across macOS output-device setups. Files are deleted after playback by default. Advanced users can switch `playback_mode` to `stream` for lower-latency live playback.
 
 Kokoro model files are not bundled with Jarvis Line. By default Jarvis Line expects:
 
