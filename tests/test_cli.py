@@ -244,7 +244,7 @@ def test_update_apply_from_git_installs_latest_tag(tmp_path, monkeypatch, capsys
 
     assert rc == 0
     assert "Latest version: 9.9.9" in out
-    assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@v9.9.9"
+    assert calls[0][-1] == "git+ssh://git@github.com-personal/me/jarvis-line.git@refs/tags/v9.9.9"
 
 
 def test_update_apply_from_git_ignores_configured_ref_by_default(tmp_path, monkeypatch, capsys):
@@ -313,7 +313,7 @@ def test_update_install_from_git_resolves_latest_ref(tmp_path, monkeypatch):
     rc = cli.update_install(argparse.Namespace(source=None, pre=False, package=None, repo=None, ref=None))
 
     assert rc == 0
-    assert calls[0][-1] == f"git+{cli.DEFAULT_GIT_REPO}@v9.9.9"
+    assert calls[0][-1] == f"git+{cli.DEFAULT_GIT_REPO}@refs/tags/v9.9.9"
 
 
 def test_update_install_from_git_builds_pip_spec(tmp_path, monkeypatch):
