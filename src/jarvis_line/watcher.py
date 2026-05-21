@@ -868,16 +868,21 @@ def load_notify_event(arg_payload: str = "") -> dict[str, Any]:
     event_data: dict[str, Any] = {}
 
     raw_arg = str(arg_payload or "").strip()
+    loaded_from_arg = False
     if raw_arg.startswith("{"):
         try:
             parsed = json.loads(raw_arg)
             if isinstance(parsed, dict):
                 event_data.update(parsed)
+                loaded_from_arg = True
         except Exception:
             pass
 
-    if not sys.stdin.isatty():
-        raw_stdin = sys.stdin.read().strip()
+    if not loaded_from_arg and not sys.stdin.isatty():
+        try:
+            raw_stdin = sys.stdin.read().strip()
+        except OSError:
+            raw_stdin = ""
         if raw_stdin:
             try:
                 parsed = json.loads(raw_stdin)

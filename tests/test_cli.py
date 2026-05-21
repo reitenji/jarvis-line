@@ -28,6 +28,7 @@ def test_system_voice_settings_are_supported():
 
 def test_setup_default_warns_and_falls_back_to_system(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
     watcher = tmp_path / "watcher.py"
     worker = tmp_path / "audio_worker.py"
     watcher.write_text("")
@@ -542,8 +543,9 @@ def test_instruction_parser_rejects_language_shortcuts(language, capsys):
     assert "Use a full language name" in capsys.readouterr().err
 
 
-def test_instructions_install_is_idempotent(tmp_path):
+def test_instructions_install_is_idempotent(tmp_path, monkeypatch):
     path = tmp_path / "AGENTS.md"
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
 
     assert cli.instructions_install(argparse.Namespace(target="agents", language="English", path=str(path))) == 0
     first = path.read_text()

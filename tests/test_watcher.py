@@ -265,6 +265,7 @@ def test_find_audio_worker_pids_matches_packaged_worker(monkeypatch):
 
 def test_notify_does_not_launch_when_runtime_stopped(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
     monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
     watcher.save_json(tmp_path / "state.json", {"__runtime__": {"stopped": True}})
     launched = []
@@ -279,6 +280,7 @@ def test_notify_does_not_launch_when_runtime_stopped(tmp_path, monkeypatch):
 
 def test_notify_does_not_launch_when_speech_disabled(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
     monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
     monkeypatch.setattr(watcher, "runtime_config", lambda: {"speech_enabled": False})
     launched = []
@@ -293,6 +295,7 @@ def test_notify_does_not_launch_when_speech_disabled(tmp_path, monkeypatch):
 
 def test_notify_without_final_payload_uses_only_recent_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
     monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
     monkeypatch.setattr(watcher, "runtime_config", lambda: {"speech_enabled": True})
     monkeypatch.setattr(watcher, "watcher_is_healthy", lambda state=None: True)
@@ -313,6 +316,7 @@ def test_notify_without_final_payload_uses_only_recent_cache(tmp_path, monkeypat
 
 def test_notify_without_final_payload_speaks_recent_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
     monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
     monkeypatch.setattr(watcher, "LATEST_MESSAGES_PATH", tmp_path / "latest.json")
     monkeypatch.setattr(watcher, "runtime_config", lambda: {"speech_enabled": True})
@@ -346,6 +350,7 @@ def test_notify_with_final_payload_queues_only_that_payload(tmp_path, monkeypatc
     session = tmp_path / "session.jsonl"
     session.write_text("")
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
     monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
     monkeypatch.setattr(watcher, "LATEST_MESSAGES_PATH", tmp_path / "latest.json")
     monkeypatch.setattr(watcher, "runtime_config", lambda: {"speech_enabled": True})

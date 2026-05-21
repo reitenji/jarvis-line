@@ -111,8 +111,8 @@ def save_json_unlocked(path: Path, data) -> None:
         raise
 
 
-def update_json(path: Path, default, mutator, lock_path: Path = LOCK_PATH) -> Any:
-    with file_lock(lock_path):
+def update_json(path: Path, default, mutator, lock_path: Path | None = None) -> Any:
+    with file_lock(lock_path or LOCK_PATH):
         data = load_json(path, default)
         result = mutator(data)
         save_json_unlocked(path, data)
