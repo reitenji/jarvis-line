@@ -51,7 +51,7 @@ Use Jarvis Line if you:
 - want control over which TTS engine reads agent summaries
 - want spoken text to be explicit, safe, and intentionally written by the agent
 
-Jarvis Line is not a full transcript narrator. It is designed for short spoken agent summaries: optional progress/commentary lines while work is happening, and a final status line when the task is done.
+Jarvis Line is not a full transcript narrator. It is designed for short spoken agent summaries: progress/commentary lines at meaningful moments while work is happening, and a final status line when the task is done.
 
 ## How It Works
 
