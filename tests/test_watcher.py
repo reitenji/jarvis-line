@@ -17,6 +17,17 @@ def test_custom_prefix_and_trim(monkeypatch):
     assert watcher.extract_jarvis_line("Done\nFriday line: Hello from Friday") == "Hello from…"
 
 
+def test_inline_jarvis_line_is_extracted(monkeypatch):
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
+
+    text = (
+        "Projelerim ekranı arka planda oluşmuş. "
+        "Jarvis line: The projects list screen exists, and I am generating the project detail view."
+    )
+
+    assert watcher.extract_jarvis_line(text) == "The projects list screen exists, and I am generating the project detail view."
+
+
 def test_speak_mode_final_only(monkeypatch):
     monkeypatch.setattr(watcher, "runtime_config", lambda: {"speak_mode": "final_only"})
 
