@@ -176,13 +176,13 @@ def test_update_check_from_git_reports_latest_tag(tmp_path, monkeypatch, capsys)
         "update_source": "git",
         "update_git_repo": "ssh://git@github.com-personal/me/jarvis-line.git",
     })
-    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.1.0b9")
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.1.1")
 
     rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
     out = capsys.readouterr().out
 
     assert rc == 10
-    assert "Latest version: 0.1.0b9" in out
+    assert "Latest version: 0.1.1" in out
     assert "Update available" in out
 
 
