@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jarvis-line"
-version = "0.1.0b8"
+version = "0.1.0"
 description = "Speak short assistant status lines from Codex/Claude sessions."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "Jarvis Line contributors" }]
 keywords = ["codex", "agents", "tts", "text-to-speech", "developer-tools"]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
