@@ -151,6 +151,42 @@ def update_worker_heartbeat() -> None:
     update_json(STATE_PATH, {}, mutate)
 
 
+def current_rss_mb() -> float | None:
+    if os.name == "nt":
+        return None
+    try:
+        out = subprocess.check_output(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return int(out) / 1024 if out else None
+    except Exception:
+        return None
+
+
+def configured_positive_float(cfg: dict[str, Any], key: str, default: float) -> float:
+    try:
+        value = float(cfg.get(key, default))
+    except Exception:
+        return default
+    return value if value > 0 else 0.0
+
+
+def worker_idle_exit_seconds(cfg: dict[str, Any] | None = None) -> float:
+    return configured_positive_float(cfg or ks.load_config(), "audio_worker_idle_exit_seconds", 300.0)
+
+
+def worker_max_rss_mb(cfg: dict[str, Any] | None = None) -> float:
+    return configured_positive_float(cfg or ks.load_config(), "audio_worker_max_rss_mb", 768.0)
+
+
+def rss_limit_exceeded(cfg: dict[str, Any] | None = None) -> tuple[bool, float | None, float]:
+    limit_mb = worker_max_rss_mb(cfg)
+    rss_mb = current_rss_mb()
+    return bool(limit_mb and rss_mb is not None and rss_mb > limit_mb), rss_mb, limit_mb
+
+
 def ensure_speaker(preload_voice: bool = False):
     cfg = ks.load_config()
     global _SPEAKER
@@ -398,6 +434,7 @@ def run_worker() -> int:
     update_worker_heartbeat()
     warm_tts_if_configured()
     last_heartbeat = 0.0
+    idle_since = time.time()
     while True:
         now = time.time()
         if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
@@ -406,9 +443,14 @@ def run_worker() -> int:
 
         job = dequeue_audio_job()
         if not job:
+            idle_exit_seconds = worker_idle_exit_seconds()
+            if idle_exit_seconds and now - idle_since >= idle_exit_seconds:
+                append_log(f"worker-idle-exit idle_seconds={now - idle_since:.0f}")
+                return 0
             time.sleep(IDLE_SLEEP_SECONDS)
             continue
 
+        idle_since = time.time()
         line = str(job.get("jarvis_line") or "").strip()
         phase = str(job.get("phase") or "")
         session_key = str(job.get("session_key") or "")
@@ -420,6 +462,7 @@ def run_worker() -> int:
         append_log(f"job-speak phase={phase} queue_delay_ms={queue_delay_ms} session={session_key} line={line}")
         update_worker_heartbeat()
         started = time.perf_counter()
+        should_exit = False
         try:
             speak_line(line)
             append_log(f"job-done phase={phase} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
@@ -427,6 +470,13 @@ def run_worker() -> int:
             append_log(f"job-error reason={exc.__class__.__name__}")
         finally:
             update_worker_heartbeat()
+            exceeded, rss_mb, limit_mb = rss_limit_exceeded()
+            if exceeded:
+                append_log(f"worker-rss-exit rss_mb={rss_mb:.0f} limit_mb={limit_mb:.0f}")
+                should_exit = True
+            idle_since = time.time()
+        if should_exit:
+            return 0
 
 
 if __name__ == "__main__":

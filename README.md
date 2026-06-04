@@ -193,6 +193,8 @@ jarvis-line config set max_spoken_chars 240
 jarvis-line config set volume 0.7
 jarvis-line config set message_template "Jarvis says: {line}"
 jarvis-line config set fallback_tts system
+jarvis-line config set audio_worker_idle_exit_seconds 300
+jarvis-line config set audio_worker_max_rss_mb 768
 jarvis-line config set speech_enabled false
 ```
 
