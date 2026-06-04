@@ -53,8 +53,8 @@ jarvis-line config set speech_enabled false
 | `fallback_tts` | `null` | Fallback backend if the selected TTS fails |
 | `max_queue_size` | `8` | Maximum queued audio jobs |
 | `dedupe_window_seconds` | `null` | Optional duplicate suppression override |
-| `audio_worker_idle_exit_seconds` | `300` | Seconds the audio worker may stay idle before exiting to release TTS memory |
-| `audio_worker_max_rss_mb` | `768` | Maximum audio worker RSS in MB before the worker exits after a job |
+| `audio_worker_idle_exit_seconds` | `60` | Seconds the audio worker may stay idle before exiting to release TTS memory |
+| `audio_worker_max_rss_mb` | `512` | Maximum audio worker RSS in MB before the worker exits after a job |
 | `speech_enabled` | `true` | Global/project switch for speech |
 | `volume` | `0.7` | Playback volume where supported |
 | `final_trigger_mode` | `notify` | Trigger strategy for final responses |
@@ -89,8 +89,8 @@ Fresh setup starts from this shape:
   "line_language": "English",
   "max_spoken_chars": 240,
   "quiet_hours": null,
-  "audio_worker_idle_exit_seconds": 300,
-  "audio_worker_max_rss_mb": 768,
+  "audio_worker_idle_exit_seconds": 60,
+  "audio_worker_max_rss_mb": 512,
   "model_path": "~/.jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx",
   "voices_path": "~/.jarvis-line/tts/kokoro-models/voices-v1.0.bin",
   "voice": "bm_george:70,bm_lewis:30",
