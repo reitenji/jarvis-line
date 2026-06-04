@@ -17,7 +17,7 @@ It is built for long-running agent work: test loops, code reviews, refactors, de
 Install Jarvis Line from the GitHub release tag, initialize it, then make sure your agent instruction language matches the TTS voice language.
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.1.0b6"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.1.0"
 jarvis-line init --codex --language "English"
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
@@ -193,6 +193,8 @@ jarvis-line config set max_spoken_chars 240
 jarvis-line config set volume 0.7
 jarvis-line config set message_template "Jarvis says: {line}"
 jarvis-line config set fallback_tts system
+jarvis-line config set audio_worker_idle_exit_seconds 300
+jarvis-line config set audio_worker_max_rss_mb 768
 jarvis-line config set speech_enabled false
 ```
 
@@ -313,7 +315,7 @@ python3 -m compileall -q src/jarvis_line
 
 ## Contributing
 
-Jarvis Line uses a simple beta-friendly branch flow:
+Jarvis Line uses a simple release branch flow:
 
 ```text
 feature/* or fix/*
@@ -324,7 +326,7 @@ feature/* or fix/*
 
 Branch roles:
 
-- `main`: release-ready code only. Public installs should prefer version tags such as `v0.1.0b6`.
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.1.0`.
 - `develop`: integration branch for reviewed changes before release.
 - `feature/*`: new features.
 - `fix/*`: bug fixes.
@@ -336,7 +338,7 @@ Contribution flow:
 3. For bugs, paste a reviewed redacted support report when possible.
 4. After review and CI, changes merge into `develop`.
 5. Release preparation happens by opening a `develop -> main` pull request.
-6. Releases are cut from `main` with a version tag and GitHub pre-release/release.
+6. Releases are cut from `main` with a version tag and GitHub Release.
 
 Recommended support report for bug reports:
 
@@ -344,11 +346,11 @@ Recommended support report for bug reports:
 jarvis-line support-report --output ./jarvis-line-issue.md
 ```
 
-## Beta Status
+## Release Status
 
-Jarvis Line is prepared as a `0.1.0b6` beta package.
+Jarvis Line is prepared as a `0.1.0` release package.
 
-Beta-ready project pieces:
+Release-ready project pieces:
 
 - Python package scaffold
 - CLI entry point
@@ -367,13 +369,13 @@ Beta-ready project pieces:
 - issue template that requests a reviewed redacted support report
 - system TTS fallback for users who do not want Kokoro
 
-Beta caveat:
+Release caveat:
 
 - Kokoro model files are not bundled; users must place them locally or configure custom paths.
 
 ## Validation Status
 
-The current beta has been exercised locally on macOS with the Jarvis Line CLI, Codex hook flow, queue handling, Kokoro configuration checks, system TTS fallback, instruction generation, support reports, unit tests, and smoke tests.
+The current release has been exercised locally on macOS with the Jarvis Line CLI, Codex hook flow, queue handling, Kokoro configuration checks, system TTS fallback, instruction generation, support reports, unit tests, and smoke tests.
 
 Some combinations are implemented but still need more real-world validation:
 
