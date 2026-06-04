@@ -145,6 +145,8 @@ def test_config_defaults_and_schema(capsys):
     assert as_posix(cli.DEFAULT_KOKORO_CONFIG["model_path"]).endswith(".jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx")
     assert as_posix(cli.DEFAULT_KOKORO_CONFIG["voices_path"]).endswith(".jarvis-line/tts/kokoro-models/voices-v1.0.bin")
     assert as_posix(cli.DEFAULT_KOKORO_CONFIG["temp_dir"]).endswith(".jarvis-line/tts/generated")
+    assert cli.DEFAULT_KOKORO_CONFIG["audio_worker_idle_exit_seconds"] == 60
+    assert cli.DEFAULT_KOKORO_CONFIG["audio_worker_max_rss_mb"] == 512
 
     assert cli.config_defaults(argparse.Namespace(preset="system")) == 0
     defaults = capsys.readouterr().out
@@ -176,13 +178,13 @@ def test_update_check_from_git_reports_latest_tag(tmp_path, monkeypatch, capsys)
         "update_source": "git",
         "update_git_repo": "ssh://git@github.com-personal/me/jarvis-line.git",
     })
-    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.1.1")
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.1.2")
 
     rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
     out = capsys.readouterr().out
 
     assert rc == 10
-    assert "Latest version: 0.1.1" in out
+    assert "Latest version: 0.1.2" in out
     assert "Update available" in out
 
 
@@ -445,7 +447,11 @@ def test_status_smoke(tmp_path, monkeypatch, capsys):
     cli.save_json(tmp_path / "latest.json", {"sessions": {}})
 
     assert cli.status(argparse.Namespace()) == 0
-    assert "Jarvis Line status" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Jarvis Line status" in out
+    assert "audio_worker_rss_mb:" in out
+    assert "audio_worker_idle_exit_seconds: 60" in out
+    assert "audio_worker_max_rss_mb: 512" in out
 
 
 def test_install_uninstall_codex_uses_package_command(tmp_path, monkeypatch):

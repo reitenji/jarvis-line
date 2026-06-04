@@ -52,8 +52,8 @@ DEFAULT_KOKORO_CONFIG = {
     "fallback_tts": None,
     "warm_tts": True,
     "warm_tts_text": "Ready.",
-    "audio_worker_idle_exit_seconds": 300,
-    "audio_worker_max_rss_mb": 768,
+    "audio_worker_idle_exit_seconds": 60,
+    "audio_worker_max_rss_mb": 512,
     "message_template": "{line}",
     "assistant_name": "Jarvis",
     "speech_enabled": True,
@@ -934,6 +934,16 @@ def pid_alive(pid: int) -> bool:
         return False
 
 
+def process_rss_mb(pid: int) -> float | None:
+    if not pid or not pid_alive(pid) or platform.system() == "Windows":
+        return None
+    try:
+        out = subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
+        return round(int(out) / 1024, 1) if out else None
+    except Exception:
+        return None
+
+
 def process_lines() -> list[str]:
     if platform.system() == "Windows":
         commands = [
@@ -1251,10 +1261,15 @@ def status(_args) -> int:
     latest = load_json(LATEST_PATH, {"sessions": {}})
     watcher = state.get("__watcher__", {}) if isinstance(state, dict) else {}
     worker = state.get("__audio_worker__", {}) if isinstance(state, dict) else {}
+    worker_pid = int(worker.get("pid") or 0)
+    worker_rss = process_rss_mb(worker_pid)
     print("Jarvis Line status")
     print("tts:", selected_backend(cfg))
     print("watcher:", "running" if pid_alive(int(watcher.get("pid") or 0)) else "stopped", watcher.get("pid"))
-    print("audio_worker:", "running" if pid_alive(int(worker.get("pid") or 0)) else "stopped", worker.get("pid"))
+    print("audio_worker:", "running" if pid_alive(worker_pid) else "stopped", worker.get("pid"))
+    print("audio_worker_rss_mb:", worker_rss if worker_rss is not None else "n/a")
+    print("audio_worker_idle_exit_seconds:", cfg.get("audio_worker_idle_exit_seconds", DEFAULT_KOKORO_CONFIG["audio_worker_idle_exit_seconds"]))
+    print("audio_worker_max_rss_mb:", cfg.get("audio_worker_max_rss_mb", DEFAULT_KOKORO_CONFIG["audio_worker_max_rss_mb"]))
     print("queue_jobs:", len(queue.get("jobs") or []))
     print("cached_sessions:", len((latest.get("sessions") or {})))
     print("speak_mode:", cfg.get("speak_mode", "final_only"))
