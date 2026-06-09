@@ -193,6 +193,77 @@ def test_process_line_ignores_codex_history_final_in_notify_mode(tmp_path, monke
     assert queued == []
 
 
+def test_recover_latest_recent_line_speaks_newly_discovered_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LATEST_MESSAGES_PATH", tmp_path / "latest.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {
+            "line_prefixes": ["Jarvis line:"],
+            "speak_mode": "commentary_and_final",
+        },
+    )
+    queued = []
+    monkeypatch.setattr(
+        watcher,
+        "queue_jarvis_line",
+        lambda session_key, phase, line, text="": queued.append((session_key, phase, line)) or True,
+    )
+    session = tmp_path / "session.jsonl"
+    session.write_text("\n".join([
+        json.dumps({
+            "timestamp": "2026-06-09T09:00:00.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "phase": "commentary",
+                "content": [{"type": "output_text", "text": "Old.\nJarvis line: Old line."}],
+            },
+        }),
+        json.dumps({
+            "timestamp": "2026-06-09T09:14:00.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "phase": "commentary",
+                "content": [{"type": "output_text", "text": "Fresh.\nJarvis line: Fresh line."}],
+            },
+        }),
+    ]) + "\n")
+
+    recovered = watcher.recover_latest_recent_line(session, "session-1", 1780996200000)
+
+    assert recovered is True
+    assert queued == [("session-1", "commentary", "Fresh line.")]
+
+
+def test_recover_latest_recent_line_skips_old_session_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
+    queued = []
+    monkeypatch.setattr(watcher, "queue_jarvis_line", lambda *args, **kwargs: queued.append(args) or True)
+    session = tmp_path / "session.jsonl"
+    session.write_text(json.dumps({
+        "timestamp": "2026-06-09T09:00:00.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{"type": "output_text", "text": "Old.\nJarvis line: Old line."}],
+        },
+    }) + "\n")
+
+    recovered = watcher.recover_latest_recent_line(session, "session-1", 1780996200000)
+
+    assert recovered is False
+    assert queued == []
+
+
 def test_current_session_candidates_prefers_active_thread_id(tmp_path, monkeypatch):
     sessions_root = tmp_path / "sessions"
     active = sessions_root / "2026" / "05" / "11" / "rollout-2026-05-11T08-44-08-019e1590-7384-76a3-bb84-363d7045f9e5.jsonl"
