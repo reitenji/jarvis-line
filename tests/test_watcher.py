@@ -274,6 +274,31 @@ def test_find_audio_worker_pids_matches_packaged_worker(monkeypatch):
     assert watcher.find_audio_worker_pids() == [201, 202]
 
 
+def test_pid_alive_rejects_zombie_process(monkeypatch):
+    monkeypatch.setattr(watcher.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(watcher.os, "name", "posix")
+    monkeypatch.setattr(watcher.subprocess, "check_output", lambda *args, **kwargs: "Z+")
+
+    assert watcher.pid_alive(123) is False
+
+
+def test_audio_worker_health_rejects_zombie_process(monkeypatch):
+    monkeypatch.setattr(watcher.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(watcher.os, "name", "posix")
+    monkeypatch.setattr(watcher.subprocess, "check_output", lambda *args, **kwargs: "Z")
+
+    state = {"__audio_worker__": {"pid": 123, "heartbeat_ts_ms": int(watcher.time.time() * 1000)}}
+
+    assert watcher.audio_worker_is_healthy(state) is False
+
+
+def test_audio_queue_has_jobs(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    watcher.save_json(tmp_path / "queue.json", {"jobs": [{"jarvis_line": "pending"}]})
+
+    assert watcher.audio_queue_has_jobs() is True
+
+
 def test_notify_does_not_launch_when_runtime_stopped(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")

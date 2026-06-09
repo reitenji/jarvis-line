@@ -454,6 +454,46 @@ def test_status_smoke(tmp_path, monkeypatch, capsys):
     assert "audio_worker_max_rss_mb: 512" in out
 
 
+def test_doctor_allows_idle_audio_worker_when_queue_empty(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    monkeypatch.setattr(cli, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(cli, "QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(cli, "LATEST_PATH", tmp_path / "latest.json")
+    watcher = tmp_path / "watcher.py"
+    worker = tmp_path / "audio_worker.py"
+    watcher.write_text("")
+    worker.write_text("")
+    monkeypatch.setattr(cli, "WATCHER_PATH", watcher)
+    monkeypatch.setattr(cli, "WORKER_PATH", worker)
+    cli.save_json(cli.CONFIG_PATH, {"tts": "system", "audio_worker_idle_exit_seconds": 60})
+    cli.save_json(cli.HOOKS_JSON, {"hooks": {}})
+    cli.save_json(cli.STATE_PATH, {
+        "__watcher__": {"pid": 101},
+        "__audio_worker__": {"pid": 202},
+    })
+    cli.save_json(cli.QUEUE_PATH, {"jobs": []})
+    cli.save_json(cli.LATEST_PATH, {"sessions": {}})
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "system_tts_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "pid_alive", lambda pid: pid == 101)
+    monkeypatch.setattr(cli, "maybe_print_update_notice", lambda cfg: None)
+
+    assert cli.doctor(argparse.Namespace(fix=False, json_output=False)) == 0
+    out = capsys.readouterr().out
+
+    assert "[OK] audio worker process - idle/stopped pid=202 queue_jobs=0" in out
+    assert "Jarvis Line is healthy." in out
+
+
+def test_pid_alive_rejects_zombie_process(monkeypatch):
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(cli.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(cli.subprocess, "check_output", lambda *args, **kwargs: "Z")
+
+    assert cli.pid_alive(123) is False
+
+
 def test_install_uninstall_codex_uses_package_command(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
     monkeypatch.setattr(cli, "KOKORO_PY", tmp_path / "python")

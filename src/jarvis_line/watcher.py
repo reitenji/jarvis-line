@@ -216,11 +216,35 @@ def update_json(path: Path, default, mutator) -> Any:
 
 
 def pid_alive(pid: int) -> bool:
+    if not pid:
+        return False
     try:
         os.kill(pid, 0)
-        return True
     except OSError:
         return False
+    if os.name != "nt":
+        try:
+            stat = subprocess.check_output(["ps", "-o", "stat=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
+            if stat.startswith("Z"):
+                return False
+        except Exception:
+            pass
+    return True
+
+
+def reap_child_processes() -> None:
+    if os.name == "nt" or not hasattr(os, "waitpid"):
+        return
+    while True:
+        try:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        except OSError:
+            return
+        if pid <= 0:
+            return
+        append_log(f"child-reaped pid={pid}")
 
 
 def process_lines() -> list[str]:
@@ -612,10 +636,16 @@ def audio_worker_is_healthy(state: dict[str, Any] | None = None) -> bool:
     return True
 
 
+def audio_queue_has_jobs() -> bool:
+    queue = load_json(AUDIO_QUEUE_PATH, {"jobs": []})
+    return bool((queue or {}).get("jobs") or [])
+
+
 def launch_audio_worker() -> None:
     if runtime_config().get("speech_enabled") is False:
         append_log("audio-worker-skip speech-disabled")
         return
+    reap_child_processes()
     state = load_json(STATE_PATH, {})
     if audio_worker_is_healthy(state):
         pid = int(((state.get("__audio_worker__") or {}) if isinstance(state, dict) else {}).get("pid") or 0)
@@ -1014,7 +1044,11 @@ def watch_sessions(read_existing: bool = False) -> int:
     while True:
         now = time.time()
         if now - last_heartbeat >= WATCHER_HEARTBEAT_SECONDS:
+            reap_child_processes()
             update_watcher_heartbeat()
+            if audio_queue_has_jobs() and not audio_worker_is_healthy():
+                append_log("audio-worker-relaunch pending-queue")
+                launch_audio_worker()
             last_heartbeat = now
 
         if now - last_refresh >= SESSION_DISCOVERY_INTERVAL_SECONDS:

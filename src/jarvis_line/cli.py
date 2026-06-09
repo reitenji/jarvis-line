@@ -929,9 +929,16 @@ def pid_alive(pid: int) -> bool:
         return False
     try:
         os.kill(pid, 0)
-        return True
     except OSError:
         return False
+    if platform.system() != "Windows":
+        try:
+            stat = subprocess.check_output(["ps", "-o", "stat=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
+            if stat.startswith("Z"):
+                return False
+        except Exception:
+            pass
+    return True
 
 
 def process_rss_mb(pid: int) -> float | None:
@@ -1194,12 +1201,18 @@ def tts_test(args) -> int:
 def doctor(_args) -> int:
     cfg = load_effective_config({})
     state = load_json(STATE_PATH, {})
+    queue = load_json(QUEUE_PATH, {"jobs": []})
     watcher = state.get("__watcher__", {}) if isinstance(state, dict) else {}
     worker = state.get("__audio_worker__", {}) if isinstance(state, dict) else {}
+    jobs = queue.get("jobs", []) if isinstance(queue, dict) else []
+    queue_jobs = len(jobs) if isinstance(jobs, list) else 0
     ready, reason = kokoro_ready()
     system_ready, system_reason = system_tts_ready()
     watcher_ok = pid_alive(int(watcher.get("pid") or 0))
     worker_ok = pid_alive(int(worker.get("pid") or 0))
+    idle_exit_seconds = float(cfg.get("audio_worker_idle_exit_seconds") or 0)
+    worker_idle_ok = not worker_ok and queue_jobs == 0 and idle_exit_seconds > 0
+    worker_health_ok = worker_ok or worker_idle_ok
     warnings = validate_config(cfg)
     if getattr(_args, "json_output", False):
         print(json.dumps({
@@ -1210,8 +1223,14 @@ def doctor(_args) -> int:
             "kokoro": {"ok": ready, "detail": reason},
             "system_tts": {"ok": system_ready, "detail": system_reason},
             "watcher": {"ok": watcher_ok, "pid": watcher.get("pid")},
-            "audio_worker": {"ok": worker_ok, "pid": worker.get("pid")},
+            "audio_worker": {
+                "ok": worker_health_ok,
+                "running": worker_ok,
+                "idle_ok": worker_idle_ok,
+                "pid": worker.get("pid"),
+            },
             "queue": QUEUE_PATH.exists(),
+            "queue_jobs": queue_jobs,
             "latest_cache": LATEST_PATH.exists(),
             "selected_tts": selected_backend(cfg),
             "warnings": warnings,
@@ -1229,15 +1248,20 @@ def doctor(_args) -> int:
     if system == "Linux":
         linux_ok, linux_detail = linux_player_ready()
         print_check(linux_ok, "Linux tempfile player", linux_detail)
-    if getattr(_args, "fix", False) and (not watcher_ok or not worker_ok):
+    if getattr(_args, "fix", False) and (not watcher_ok or (not worker_ok and queue_jobs > 0)):
         subprocess.run(watcher_command(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
         state = load_json(STATE_PATH, {})
         watcher = state.get("__watcher__", {}) if isinstance(state, dict) else {}
         worker = state.get("__audio_worker__", {}) if isinstance(state, dict) else {}
         watcher_ok = pid_alive(int(watcher.get("pid") or 0))
         worker_ok = pid_alive(int(worker.get("pid") or 0))
+        worker_idle_ok = not worker_ok and queue_jobs == 0 and idle_exit_seconds > 0
+        worker_health_ok = worker_ok or worker_idle_ok
     print_check(watcher_ok, "watcher process", f"pid={watcher.get('pid')}")
-    print_check(worker_ok, "audio worker process", f"pid={worker.get('pid')}")
+    if worker_idle_ok:
+        print_check(True, "audio worker process", f"idle/stopped pid={worker.get('pid')} queue_jobs=0")
+    else:
+        print_check(worker_ok, "audio worker process", f"pid={worker.get('pid')} queue_jobs={queue_jobs}")
     print_check(QUEUE_PATH.exists(), "audio queue", str(QUEUE_PATH))
     print_check(LATEST_PATH.exists(), "latest message cache", str(LATEST_PATH))
     print("Selected TTS:", selected_backend(cfg))
@@ -1246,7 +1270,7 @@ def doctor(_args) -> int:
         for warning in warnings:
             print(f"- {warning}")
         print_next("fix warnings with `jarvis-line config set ...` or switch TTS presets.")
-    elif not watcher_ok or not worker_ok:
+    elif not watcher_ok or not worker_health_ok:
         print_next("run `jarvis-line doctor --fix` to restart the runtime.")
     else:
         print_next("Jarvis Line is healthy. Use `jarvis-line tts test` to test speech.")
