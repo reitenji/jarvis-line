@@ -43,6 +43,7 @@ WATCHER_STALE_SECONDS = 30
 AUDIO_WORKER_STALE_SECONDS = 120
 AUDIO_QUEUE_STALE_SECONDS = 90
 AUDIO_QUEUE_MAX_JOBS = 8
+SESSION_RECOVERY_WINDOW_SECONDS = 5 * 60
 
 
 try:
@@ -894,6 +895,36 @@ def process_line(raw_line: str, session_key: str) -> None:
         maybe_speak_from_payload(payload, session_key)
 
 
+def event_timestamp_ms(event: dict[str, Any]) -> int:
+    raw = str(event.get("timestamp") or "").strip()
+    if not raw:
+        return 0
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return int(datetime.fromisoformat(raw).timestamp() * 1000)
+    except Exception:
+        return 0
+
+
+def recover_latest_recent_line(path: Path, session_key: str, min_ts_ms: int) -> bool:
+    for raw_line in reversed(read_recent_lines(path)):
+        try:
+            event = json.loads(raw_line)
+        except Exception:
+            continue
+        if not isinstance(event, dict):
+            continue
+        ts_ms = event_timestamp_ms(event)
+        if ts_ms and ts_ms < min_ts_ms:
+            return False
+        payload = assistant_payload_from_event(event)
+        if not payload:
+            continue
+        return maybe_speak_from_payload(payload, session_key)
+    return False
+
+
 def load_notify_event(arg_payload: str = "") -> dict[str, Any]:
     event_data: dict[str, Any] = {}
 
@@ -1040,6 +1071,7 @@ def watch_sessions(read_existing: bool = False) -> int:
     handles: dict[str, Any] = {}
     last_refresh = 0.0
     last_heartbeat = 0.0
+    recovery_min_ts_ms = int((time.time() - SESSION_RECOVERY_WINDOW_SECONDS) * 1000)
 
     while True:
         now = time.time()
@@ -1062,6 +1094,8 @@ def watch_sessions(read_existing: bool = False) -> int:
                 try:
                     f = path.open("r", encoding="utf-8", errors="ignore")
                     if not read_existing:
+                        if recover_latest_recent_line(path, key, recovery_min_ts_ms):
+                            append_log(f"watch-recover file={key}")
                         f.seek(0, os.SEEK_END)
                     handles[key] = f
                     append_log(f"watch-add file={key}")
