@@ -368,10 +368,38 @@ Release-ready project pieces:
 - instruction replace/doctor/style commands
 - issue template that requests a reviewed redacted support report
 - system TTS fallback for users who do not want Kokoro
+- experimental macOS menu bar manager app
 
 Release caveat:
 
 - Kokoro model files are not bundled; users must place them locally or configure custom paths.
+
+## macOS Manager App
+
+An experimental macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
+It keeps the CLI as the core engine and provides native controls for status,
+start/stop/restart, repair, test voice, hook install, config, and logs.
+
+```bash
+cd apps/macos/JarvisLine
+swift run JarvisLine
+```
+
+To create a clickable app bundle:
+
+```bash
+cd apps/macos/JarvisLine
+./scripts/package-app.sh
+open "dist/Jarvis Line.app"
+```
+
+To create a local DMG:
+
+```bash
+cd apps/macos/JarvisLine
+./scripts/package-dmg.sh
+open "dist/JarvisLine-macOS.dmg"
+```
 
 ## Validation Status
 
