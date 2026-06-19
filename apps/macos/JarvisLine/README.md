@@ -20,9 +20,11 @@ cd apps/macos/JarvisLine
 open "dist/Jarvis Line.app"
 ```
 
-The app starts as a menu bar utility. Look for the waveform icon in the macOS
-menu bar. The quick panel stays focused on runtime status and frequent actions;
-use the Settings button to open the full configuration window.
+The app starts as a regular macOS app with a Dock icon and a status icon in the
+macOS menu bar. Look for the waveform icon in the menu bar for the quick panel.
+The quick panel stays focused on runtime status and frequent actions; use the
+Settings button, the app menu, or Command+, to open the full configuration
+window.
 
 The local bundle uses the selected Variant 6 icon.
 
@@ -48,6 +50,7 @@ will close older running copies from build or DMG staging folders.
 - Runtime status: watcher, audio worker, queue, TTS, speak mode
 - Visible app and CLI version in the header
 - Controls: start, stop, restart, repair, test voice
+- Regular Dock and app-menu behavior while keeping the menu bar status icon
 - Separate Settings window: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and update source
 - Quick access: config file, watcher log, audio worker log
 - Hook install appears only when the Codex hook is not already installed
