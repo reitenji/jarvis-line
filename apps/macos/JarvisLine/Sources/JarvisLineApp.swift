@@ -142,8 +142,7 @@ final class JarvisLineModel: ObservableObject {
 
     var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local"
-        return "App \(version) (\(build))"
+        return "App v\(version)"
     }
 
     var statusIcon: String {
@@ -561,7 +560,6 @@ struct JarvisLinePanel: View {
                     updateSettings
                 }
                 validationSummary
-                settingsActions
                 diagnosticsPanel
             }
             .padding(16)
@@ -787,28 +785,34 @@ struct JarvisLinePanel: View {
         value.count > 42 ? String(value.prefix(42)) + "..." : value
     }
 
-    private var settingsActions: some View {
+    private var settingsActionBar: some View {
         HStack(spacing: 8) {
             Button {
                 Task { await model.loadConfig() }
             } label: {
                 Label("Reload", systemImage: "arrow.clockwise")
             }
+            .disabled(model.isBusy)
+
             Spacer()
+
             Button {
                 Task { await model.saveConfig(restart: false) }
             } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
+            .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
+
             Button {
                 Task { await model.saveConfig(restart: true) }
             } label: {
                 Label("Save + Restart", systemImage: "arrow.triangle.2.circlepath")
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
         }
         .buttonStyle(.bordered)
         .tint(JarvisTheme.cyan)
-        .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
     }
 
     @ViewBuilder
@@ -842,21 +846,28 @@ struct JarvisLinePanel: View {
         }
     }
 
+    @ViewBuilder
     private var footer: some View {
+        if mode == .quick {
+            quickFooter
+        } else {
+            settingsFooter
+        }
+    }
+
+    private var quickFooter: some View {
         HStack {
             Text("Jarvis Line Manager")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(JarvisTheme.subtleText)
             Spacer()
-            if mode == .quick {
-                Button {
-                    SettingsWindowController.shared.show(model: model)
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .buttonStyle(.link)
-                .foregroundStyle(JarvisTheme.cyan)
+            Button {
+                SettingsWindowController.shared.show(model: model)
+            } label: {
+                Label("Settings", systemImage: "gearshape")
             }
+            .buttonStyle(.link)
+            .foregroundStyle(JarvisTheme.cyan)
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
@@ -866,6 +877,15 @@ struct JarvisLinePanel: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(JarvisTheme.panelBase.opacity(0.92))
+    }
+
+    private var settingsFooter: some View {
+        VStack(spacing: 0) {
+            settingsActionBar
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+        }
+        .background(JarvisTheme.panelBase.opacity(0.96))
     }
 
     private var panelBackground: some View {
