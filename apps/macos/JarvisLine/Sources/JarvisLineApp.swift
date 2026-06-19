@@ -68,15 +68,6 @@ struct JarvisLineApp: App {
             Image(systemName: model.statusIcon)
         }
         .menuBarExtraStyle(.window)
-
-        Window("Jarvis Line", id: "settings") {
-            JarvisLinePanel(model: model, mode: .settingsWindow)
-                .frame(minWidth: 700, minHeight: 660)
-                .task {
-                    await model.refresh()
-                }
-        }
-        .defaultSize(width: 760, height: 720)
     }
 }
 
@@ -90,6 +81,7 @@ final class JarvisLineModel: ObservableObject {
     @Published var lastOutput = ""
     @Published var isBusy = false
     @Published var errorMessage: String?
+    @Published var codexHookInstalled = false
 
     private let cli = JarvisLineCLI()
     private let configStore = JarvisConfigStore()
@@ -119,6 +111,7 @@ final class JarvisLineModel: ObservableObject {
             let doctorOutput = try await cli.run(["doctor"])
             status = RuntimeStatus.parse(statusOutput)
             doctorText = doctorOutput
+            codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             lastOutput = statusOutput
         }
     }
@@ -170,6 +163,7 @@ final class JarvisLineModel: ObservableObject {
             }
             let doctorOutput = try await cli.run(["doctor"])
             doctorText = doctorOutput
+            codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
         }
         await refresh()
     }
@@ -210,9 +204,44 @@ final class JarvisLineModel: ObservableObject {
     }
 }
 
+@MainActor
+final class SettingsWindowController: NSObject, NSWindowDelegate {
+    static let shared = SettingsWindowController()
+    private var window: NSWindow?
+
+    func show(model: JarvisLineModel) {
+        if let window {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let rootView = JarvisLinePanel(model: model, mode: .settingsWindow)
+            .frame(minWidth: 700, minHeight: 660)
+            .task {
+                await model.refresh()
+            }
+        let hostingController = NSHostingController(rootView: rootView)
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Jarvis Line Settings"
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 760, height: 720))
+        window.minSize = NSSize(width: 700, height: 660)
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        self.window = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        window = nil
+    }
+}
+
 struct JarvisLinePanel: View {
     @ObservedObject var model: JarvisLineModel
-    @Environment(\.openWindow) private var openWindow
     let mode: PanelMode
 
     var body: some View {
@@ -399,7 +428,9 @@ struct JarvisLinePanel: View {
                 }
                 HStack(spacing: 8) {
                     CommandButton(title: "Repair", icon: "wrench.and.screwdriver") { Task { await model.repair() } }
-                    CommandButton(title: "Install Hook", icon: "link.badge.plus") { Task { await model.installCodexHook() } }
+                    if !model.codexHookInstalled {
+                        CommandButton(title: "Install Hook", icon: "link.badge.plus") { Task { await model.installCodexHook() } }
+                    }
                 }
             }
             .disabled(model.isBusy)
@@ -729,7 +760,7 @@ struct JarvisLinePanel: View {
             Spacer()
             if mode == .quick {
                 Button {
-                    openWindow(id: "settings")
+                    SettingsWindowController.shared.show(model: model)
                 } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
@@ -876,6 +907,25 @@ struct RuntimeStatus {
             queueJobs: Int(values["queue_jobs"] ?? "0") ?? 0,
             speakMode: values["speak_mode"] ?? "unknown"
         )
+    }
+}
+
+struct DoctorStatus {
+    var codexHookInstalled: Bool
+
+    static let empty = DoctorStatus(codexHookInstalled: false)
+
+    static func parse(_ output: String) -> DoctorStatus {
+        for line in output.split(separator: "\n") {
+            let text = String(line)
+            if text.contains("[OK] Codex hooks.json") {
+                return DoctorStatus(codexHookInstalled: true)
+            }
+            if text.contains("Codex hooks.json") && !text.contains("[OK]") {
+                return DoctorStatus(codexHookInstalled: false)
+            }
+        }
+        return .empty
     }
 }
 
