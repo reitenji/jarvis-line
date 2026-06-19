@@ -1,6 +1,30 @@
 import Foundation
 
 struct JarvisConfigDraft {
+    static let ttsOptions = ["kokoro", "system", "macos", "command"]
+    static let speakModeOptions = ["final_only", "commentary_and_final", "off"]
+    static let lineLanguageOptions = ["English", "Turkish", "French", "Italian", "Japanese", "Chinese"]
+    static let quietHourOptions = ["", "22:00-08:00", "20:00-08:00", "18:00-09:00"]
+    static let maxSpokenCharsOptions = [120, 180, 240, 300]
+    static let maxQueueSizeOptions = [4, 8, 16]
+    static let fallbackOptions = ["none", "system", "macos", "command"]
+    static let warmTextOptions = ["Ready.", "Jarvis ready.", "Speech ready."]
+    static let kokoroVoiceOptions = [
+        "bm_george:70,bm_lewis:30",
+        "bm_george",
+        "bm_lewis",
+    ]
+    static let kokoroLangOptions = ["en-gb", "en-us", "fr-fr", "it", "ja", "cmn"]
+    static let speedOptions = [0.9, 1.0, 1.08, 1.2]
+    static let systemRateOptions = [160, 180, 200, 220, 240]
+    static let updateSourceOptions = ["git", "pypi"]
+    static let updateIntervalOptions = [6, 12, 24, 48, 168]
+    static let updateRepoOptions = [
+        "https://github.com/reitenji/jarvis-line.git",
+        "ssh://git@github.com-personal/reitenji/jarvis-line.git",
+    ]
+    static let updateRefOptions = ["latest", "main", "develop"]
+
     var tts: String
     var speakMode: String
     var speechEnabled: Bool
@@ -29,68 +53,60 @@ struct JarvisConfigDraft {
     var blockingIssues: [String] {
         var issues: [String] = []
 
-        if !["kokoro", "system", "macos", "command"].contains(tts) {
+        if !Self.ttsOptions.contains(tts) {
             issues.append("Choose a supported TTS backend.")
         }
-        if !["final_only", "commentary_and_final", "off"].contains(speakMode) {
+        if !Self.speakModeOptions.contains(speakMode) {
             issues.append("Choose a supported speak mode.")
         }
-        if !["none", "system", "macos", "command"].contains(fallbackTTS) {
+        if !Self.fallbackOptions.contains(fallbackTTS) {
             issues.append("Choose a supported fallback TTS.")
         }
         if fallbackTTS != "none" && fallbackTTS == tts {
             issues.append("Fallback TTS must be different from the primary TTS.")
         }
 
-        let language = lineLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shorthandLanguages = ["en", "tr", "user", "user language", "same as user"]
-        if language.isEmpty {
-            issues.append("Line language is required.")
-        } else if shorthandLanguages.contains(language.lowercased()) {
-            issues.append("Use a full language name, for example English or Turkish.")
-        } else if language.range(of: #"^[A-Za-z][A-Za-z -]{2,}$"#, options: .regularExpression) == nil {
-            issues.append("Line language must be a full language name using letters, spaces, or hyphens.")
+        if !Self.lineLanguageOptions.contains(lineLanguage) {
+            issues.append("Choose a supported line language.")
         }
 
-        if assistantName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            issues.append("Assistant name is required.")
+        if assistantName != "Jarvis" {
+            issues.append("Assistant name is fixed to Jarvis in the app.")
         }
-        if assistantName.count > 32 {
-            issues.append("Assistant name must be 32 characters or shorter.")
-        }
-        if !quietHours.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            quietHours.range(of: #"^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$"#, options: .regularExpression) == nil {
-            issues.append("Quiet hours must use HH:MM-HH:MM, for example 22:00-08:00.")
+        if !Self.quietHourOptions.contains(quietHours) {
+            issues.append("Choose a quiet-hours preset.")
         }
 
-        if !(60...500).contains(maxSpokenChars) {
-            issues.append("Max spoken chars must be between 60 and 500.")
+        if !Self.maxSpokenCharsOptions.contains(maxSpokenChars) {
+            issues.append("Choose a supported spoken length preset.")
         }
-        if !(1...50).contains(maxQueueSize) {
-            issues.append("Max queue size must be between 1 and 50.")
+        if !Self.maxQueueSizeOptions.contains(maxQueueSize) {
+            issues.append("Choose a supported queue size preset.")
         }
         if !(0...1).contains(volume) {
             issues.append("Volume must be between 0.00 and 1.00.")
         }
 
         if tts == "kokoro" {
-            let allowedLangs = ["en-us", "en-gb", "fr-fr", "it", "ja", "cmn"]
-            if !allowedLangs.contains(lang) {
+            if !Self.warmTextOptions.contains(warmTTSText) {
+                issues.append("Choose a supported warm-up text preset.")
+            }
+            if !Self.kokoroLangOptions.contains(lang) {
                 issues.append("Kokoro language must be one of en-us, en-gb, fr-fr, it, ja, or cmn.")
             }
             if !kokoroLanguageMatchesLineLanguage {
                 issues.append("Kokoro language code must match the selected line language.")
             }
-            if voice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                issues.append("Kokoro voice is required.")
+            if !Self.kokoroVoiceOptions.contains(voice) {
+                issues.append("Choose a supported Kokoro voice preset.")
             }
-            if !(0.6...1.5).contains(speed) {
-                issues.append("Kokoro speed must be between 0.60 and 1.50.")
+            if !Self.speedOptions.contains(where: { abs($0 - speed) < 0.001 }) {
+                issues.append("Choose a supported Kokoro speed preset.")
             }
         }
 
-        if (tts == "system" || tts == "macos") && !(80...360).contains(systemRate) {
-            issues.append("System voice rate must be between 80 and 360.")
+        if (tts == "system" || tts == "macos") && !Self.systemRateOptions.contains(systemRate) {
+            issues.append("Choose a supported system voice rate preset.")
         }
 
         if tts == "command" {
@@ -106,7 +122,7 @@ struct JarvisConfigDraft {
             }
         }
 
-        if !["git", "pypi"].contains(updateSource) {
+        if !Self.updateSourceOptions.contains(updateSource) {
             issues.append("Choose a supported update source.")
         }
         if updateSource == "git" {
@@ -118,10 +134,12 @@ struct JarvisConfigDraft {
             }
             if !Self.isSafeGitRef(updateGitRef) {
                 issues.append("Git update ref must be a safe branch, tag, or latest.")
+            } else if !Self.updateRefOptions.contains(updateGitRef) && !Self.isVersionTag(updateGitRef) {
+                issues.append("Git update ref must be latest, main, develop, or a version tag.")
             }
         }
-        if !(1...168).contains(updateCheckIntervalHours) {
-            issues.append("Update check interval must be between 1 and 168 hours.")
+        if !Self.updateIntervalOptions.contains(updateCheckIntervalHours) {
+            issues.append("Choose a supported update interval preset.")
         }
 
         return issues
@@ -309,6 +327,10 @@ struct JarvisConfigDraft {
         }
         let forbidden = CharacterSet(charactersIn: #"~^:?*[\\"#)
         return text.rangeOfCharacter(from: forbidden) == nil
+    }
+
+    private static func isVersionTag(_ value: String) -> Bool {
+        value.range(of: #"^v[0-9]+\.[0-9]+\.[0-9]+([ab][0-9]+|rc[0-9]+)?$"#, options: .regularExpression) != nil
     }
 
     private static func string(_ value: Any?, _ fallback: String) -> String {
