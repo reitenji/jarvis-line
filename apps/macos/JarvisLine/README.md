@@ -51,6 +51,7 @@ will close older running copies from build or DMG staging folders.
 - Separate Settings window: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and update source
 - Quick access: config file, watcher log, audio worker log
 - Hook install appears only when the Codex hook is not already installed
+- Custom dark Jarvis Line theme derived from the app icon palette
 
 The Settings window edits common config values without requiring users to open
 the JSON file. Unknown/custom config keys are preserved on save. The app favors

@@ -388,7 +388,8 @@ window, so casual users do not need to edit
 config keys while saving runtime, TTS, and update preferences. The Settings
 window uses controlled pickers and presets where possible, shows the installed
 CLI/app version in the header, and validates unsafe or incompatible choices
-before saving.
+before saving. The macOS app uses a custom dark theme derived from the Jarvis
+Line icon palette instead of the default macOS utility look.
 
 ```bash
 cd apps/macos/JarvisLine

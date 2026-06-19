@@ -227,6 +227,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 760, height: 720))
         window.minSize = NSSize(width: 700, height: 660)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1)
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -252,6 +256,8 @@ struct JarvisLinePanel: View {
                 settingsWindowBody
             }
         }
+        .preferredColorScheme(.dark)
+        .tint(JarvisTheme.cyan)
         .background(panelBackground)
     }
 
@@ -286,7 +292,7 @@ struct JarvisLinePanel: View {
                 }
                 Text(model.status.summary)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JarvisTheme.mutedText)
                 HStack(spacing: 6) {
                     versionChip(model.cliVersion.replacingOccurrences(of: "jarvis-line ", with: "CLI "))
                     versionChip(model.appVersion)
@@ -313,22 +319,38 @@ struct JarvisLinePanel: View {
         .background(
             LinearGradient(
                 colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color.accentColor.opacity(0.08),
+                    JarvisTheme.panelTop,
+                    JarvisTheme.panelBase,
+                    JarvisTheme.cyan.opacity(0.12),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         )
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            JarvisTheme.gold.opacity(0.42),
+                            JarvisTheme.cyan.opacity(0.58),
+                            JarvisTheme.gold.opacity(0.24),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 1)
+        }
     }
 
     private var appMark: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.regularMaterial)
+                .fill(JarvisTheme.surfaceRaised)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                        .stroke(JarvisTheme.gold.opacity(0.42), lineWidth: 1)
                 )
             if let image = NSImage(named: "AppIcon") {
                 Image(nsImage: image)
@@ -338,9 +360,10 @@ struct JarvisLinePanel: View {
             } else {
                 Image(systemName: model.statusIcon)
                     .font(.system(size: 27, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(JarvisTheme.cyan)
             }
         }
+        .shadow(color: JarvisTheme.cyan.opacity(0.18), radius: 12, x: 0, y: 0)
         .frame(width: 54, height: 54)
     }
 
@@ -348,22 +371,26 @@ struct JarvisLinePanel: View {
         Label(model.status.watcherState == "running" ? "Live" : "Stopped", systemImage: model.status.watcherState == "running" ? "checkmark.circle.fill" : "pause.circle")
             .font(.system(size: 11, weight: .semibold))
             .labelStyle(.titleAndIcon)
-            .foregroundStyle(model.status.watcherState == "running" ? .green : .secondary)
+            .foregroundStyle(model.status.watcherState == "running" ? JarvisTheme.cyan : JarvisTheme.mutedText)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background((model.status.watcherState == "running" ? Color.green : Color.secondary).opacity(0.12))
+            .background((model.status.watcherState == "running" ? JarvisTheme.cyan : JarvisTheme.mutedText).opacity(0.14))
             .clipShape(Capsule())
     }
 
     private func versionChip(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(JarvisTheme.goldSoft)
             .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(Color.primary.opacity(0.05))
+            .background(JarvisTheme.gold.opacity(0.11))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(JarvisTheme.gold.opacity(0.18), lineWidth: 1)
+            )
     }
 
     private var quickView: some View {
@@ -391,16 +418,17 @@ struct JarvisLinePanel: View {
         HStack(spacing: 14) {
             Image(systemName: model.statusIcon)
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(model.status.watcherState == "running" ? .green : .secondary)
+                .foregroundStyle(model.status.watcherState == "running" ? JarvisTheme.cyan : JarvisTheme.mutedText)
                 .frame(width: 40, height: 40)
-                .background((model.status.watcherState == "running" ? Color.green : Color.secondary).opacity(0.10))
+                .background((model.status.watcherState == "running" ? JarvisTheme.cyan : JarvisTheme.mutedText).opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 Text(model.status.watcherState == "running" ? "Voice pipeline is active" : "Voice pipeline needs attention")
                     .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.primaryText)
                 Text("TTS \(display(model.status.tts)) · \(display(model.status.speakMode)) · queue \(model.status.queueJobs)")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JarvisTheme.mutedText)
             }
             Spacer()
             Button {
@@ -410,6 +438,7 @@ struct JarvisLinePanel: View {
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.borderedProminent)
+            .tint(JarvisTheme.cyan)
             .disabled(model.isBusy)
         }
         .padding(12)
@@ -501,6 +530,7 @@ struct JarvisLinePanel: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 
     private var ttsSettings: some View {
@@ -531,19 +561,21 @@ struct JarvisLinePanel: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
             HStack(spacing: 10) {
                 Image(systemName: "speaker.wave.1")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JarvisTheme.goldSoft)
                 Slider(value: $model.config.volume, in: 0...1)
                 Text(String(format: "%.2f", model.config.volume))
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .frame(width: 34, alignment: .trailing)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JarvisTheme.mutedText)
             }
             .padding(10)
-            .background(Color.primary.opacity(0.035))
+            .background(JarvisTheme.surfaceRaised)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(sectionStroke)
 
             backendOptions
         }
@@ -601,6 +633,7 @@ struct JarvisLinePanel: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
         }
     }
 
@@ -630,6 +663,7 @@ struct JarvisLinePanel: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 
     @ViewBuilder
@@ -650,11 +684,11 @@ struct JarvisLinePanel: View {
             .font(.system(size: 12))
             .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(issues.isEmpty ? Color.primary.opacity(0.035) : Color.red.opacity(0.08))
+            .background(issues.isEmpty ? JarvisTheme.cyan.opacity(0.08) : JarvisTheme.error.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(issues.isEmpty ? Color.primary.opacity(0.06) : Color.red.opacity(0.20), lineWidth: 1)
+                    .stroke(issues.isEmpty ? JarvisTheme.cyan.opacity(0.22) : JarvisTheme.error.opacity(0.34), lineWidth: 1)
             )
         }
     }
@@ -722,6 +756,7 @@ struct JarvisLinePanel: View {
             }
         }
         .buttonStyle(.bordered)
+        .tint(JarvisTheme.cyan)
         .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
     }
 
@@ -731,7 +766,7 @@ struct JarvisLinePanel: View {
             PanelSection(title: "Diagnostics", icon: "exclamationmark.triangle") {
                 Text(error)
                     .font(.system(size: 12))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(JarvisTheme.error)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -740,14 +775,18 @@ struct JarvisLinePanel: View {
                 ScrollView {
                     Text(model.doctorText)
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JarvisTheme.mutedText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
                 .frame(height: mode == .settingsWindow ? 132 : 108)
                 .padding(9)
-                .background(Color(nsColor: .textBackgroundColor))
+                .background(JarvisTheme.console)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(JarvisTheme.cyan.opacity(0.14), lineWidth: 1)
+                )
             }
         }
     }
@@ -756,7 +795,7 @@ struct JarvisLinePanel: View {
         HStack {
             Text("Jarvis Line Manager")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(JarvisTheme.subtleText)
             Spacer()
             if mode == .quick {
                 Button {
@@ -765,28 +804,56 @@ struct JarvisLinePanel: View {
                     Label("Settings", systemImage: "gearshape")
                 }
                 .buttonStyle(.link)
+                .foregroundStyle(JarvisTheme.cyan)
             }
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.link)
+            .foregroundStyle(JarvisTheme.goldSoft)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
+        .background(JarvisTheme.panelBase.opacity(0.92))
     }
 
     private var panelBackground: some View {
-        Color(nsColor: .windowBackgroundColor)
-            .overlay(Color.primary.opacity(0.015))
+        LinearGradient(
+            colors: [
+                JarvisTheme.panelTop,
+                JarvisTheme.panelBase,
+                JarvisTheme.panelBottom,
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var sectionFill: some ShapeStyle {
-        .regularMaterial
+        LinearGradient(
+            colors: [
+                JarvisTheme.surfaceRaised,
+                JarvisTheme.surface,
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var sectionStroke: some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+            .stroke(
+                LinearGradient(
+                    colors: [
+                        JarvisTheme.gold.opacity(0.22),
+                        JarvisTheme.cyan.opacity(0.18),
+                        JarvisTheme.border,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
     }
 
     private func display(_ value: String) -> String {
@@ -799,6 +866,24 @@ enum PanelMode {
     case settingsWindow
 }
 
+enum JarvisTheme {
+    static let panelTop = Color(red: 0.07, green: 0.09, blue: 0.12)
+    static let panelBase = Color(red: 0.05, green: 0.06, blue: 0.08)
+    static let panelBottom = Color(red: 0.02, green: 0.03, blue: 0.04)
+    static let surface = Color(red: 0.09, green: 0.12, blue: 0.16)
+    static let surfaceRaised = Color(red: 0.14, green: 0.16, blue: 0.19)
+    static let console = Color(red: 0.03, green: 0.04, blue: 0.05)
+    static let cyan = Color(red: 0.32, green: 0.75, blue: 0.94)
+    static let cyanDeep = Color(red: 0.06, green: 0.39, blue: 0.66)
+    static let gold = Color(red: 0.71, green: 0.61, blue: 0.49)
+    static let goldSoft = Color(red: 0.90, green: 0.86, blue: 0.77)
+    static let primaryText = Color(red: 0.94, green: 0.96, blue: 0.98)
+    static let mutedText = Color(red: 0.68, green: 0.73, blue: 0.79)
+    static let subtleText = Color(red: 0.48, green: 0.54, blue: 0.61)
+    static let border = Color(red: 0.25, green: 0.29, blue: 0.35)
+    static let error = Color(red: 1.00, green: 0.45, blue: 0.40)
+}
+
 private struct StatusLine: View {
     let title: String
     let value: String
@@ -808,14 +893,15 @@ private struct StatusLine: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JarvisTheme.cyan.opacity(0.82))
                 .frame(width: 16)
             Text(title)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JarvisTheme.mutedText)
             Spacer()
             Text(value)
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(JarvisTheme.primaryText)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
@@ -832,16 +918,36 @@ private struct PanelSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: icon)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JarvisTheme.goldSoft)
             content
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial)
+        .background(
+            LinearGradient(
+                colors: [
+                    JarvisTheme.surfaceRaised,
+                    JarvisTheme.surface,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            JarvisTheme.gold.opacity(0.20),
+                            JarvisTheme.cyan.opacity(0.16),
+                            JarvisTheme.border,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         )
     }
 }
@@ -855,10 +961,26 @@ private struct CommandButton: View {
         Button(action: action) {
             Label(title, systemImage: icon)
                 .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(JarvisTheme.primaryText)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+                .padding(.vertical, 7)
+                .background(
+                    LinearGradient(
+                        colors: [
+                            JarvisTheme.surfaceRaised,
+                            JarvisTheme.cyanDeep.opacity(0.40),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(JarvisTheme.cyan.opacity(0.24), lineWidth: 1)
+                )
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
     }
 }
 
