@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.applicationIconImage = icon
         }
         SingleInstanceGuard.enforce()
+        DispatchQueue.main.async {
+            self.pruneMainMenu()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -21,6 +24,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.showSettingsWindow?()
         }
         return true
+    }
+
+    private func pruneMainMenu() {
+        guard let mainMenu = NSApplication.shared.mainMenu else {
+            return
+        }
+
+        for item in mainMenu.items.reversed() where ["File", "Edit", "View", "Window", "Help"].contains(item.title) {
+            mainMenu.removeItem(item)
+        }
     }
 }
 
@@ -285,6 +298,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+struct WindowDragRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = DraggableHeaderView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.clear.cgColor
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+    }
+}
+
+final class DraggableHeaderView: NSView {
+    override var mouseDownCanMoveWindow: Bool {
+        true
+    }
+}
+
 struct JarvisLinePanel: View {
     @ObservedObject var model: JarvisLineModel
     let mode: PanelMode
@@ -382,6 +413,16 @@ struct JarvisLinePanel: View {
                     )
                 )
                 .frame(height: 1)
+        }
+        .overlay {
+            if mode == .settingsWindow {
+                HStack(spacing: 0) {
+                    WindowDragRegion()
+                    Color.clear
+                        .frame(width: 58)
+                        .allowsHitTesting(false)
+                }
+            }
         }
     }
 
@@ -686,21 +727,9 @@ struct JarvisLinePanel: View {
                     Text(value == 168 ? "Weekly" : "\(value) hours").tag(value)
                 }
             }
-            Picker("Source", selection: $model.config.updateSource) {
-                Text("Git").tag("git")
-                Text("PyPI").tag("pypi")
-            }
-            if model.config.updateSource == "git" {
-                Picker("Git repo", selection: $model.config.updateGitRepo) {
-                    ForEach(options(JarvisConfigDraft.updateRepoOptions, preserving: model.config.updateGitRepo), id: \.self) { value in
-                        Text(repoLabel(value)).tag(value)
-                    }
-                }
-                Picker("Git ref", selection: $model.config.updateGitRef) {
-                    ForEach(options(JarvisConfigDraft.updateRefOptions, preserving: model.config.updateGitRef), id: \.self) { value in
-                        Text(refLabel(value)).tag(value)
-                    }
-                }
+            LabeledContent("Source") {
+                Text("Official GitHub")
+                    .foregroundStyle(JarvisTheme.mutedText)
             }
         }
         .formStyle(.grouped)
@@ -750,25 +779,6 @@ struct JarvisLinePanel: View {
         case "it": return "Italian"
         case "ja": return "Japanese"
         case "cmn": return "Mandarin"
-        default: return value
-        }
-    }
-
-    private func repoLabel(_ value: String) -> String {
-        if value == "https://github.com/reitenji/jarvis-line.git" {
-            return "Official GitHub"
-        }
-        if value == "ssh://git@github.com-personal/reitenji/jarvis-line.git" {
-            return "Personal SSH"
-        }
-        return "Current custom repo"
-    }
-
-    private func refLabel(_ value: String) -> String {
-        switch value {
-        case "latest": return "Latest release"
-        case "main": return "main"
-        case "develop": return "develop"
         default: return value
         }
     }
