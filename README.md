@@ -1,4 +1,16 @@
-# Jarvis Line
+<p align="center">
+  <img src="apps/macos/JarvisLine/Resources/AppIcon.png" width="144" alt="Jarvis Line app icon">
+</p>
+
+<h1 align="center">Jarvis Line</h1>
+
+<p align="center">
+  <strong>Voice notifications for AI coding agents, powered by hook-driven TTS.</strong>
+</p>
+
+<p align="center">
+  Speak short agent status lines from Codex, Claude, Gemini, and other coding-agent sessions.
+</p>
 
 Hear what your coding agent just finished without reading the whole session.
 
@@ -378,7 +390,18 @@ Release caveat:
 
 An experimental macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
 It keeps the CLI as the core engine and provides native controls for status,
-start/stop/restart, repair, test voice, hook install, config, and logs.
+start/stop/restart, repair, test voice, hook install, settings, config file
+access, and logs.
+
+The menu bar panel is intentionally small: it shows current runtime health and
+fast day-to-day actions. Common config changes open in a separate Settings
+window, so casual users do not need to edit
+`~/.codex/hooks/jarvis_line_config.json` by hand. It preserves unknown/custom
+config keys while saving runtime, TTS, and update preferences. The Settings
+window uses controlled pickers and presets where possible, shows the installed
+CLI/app version in the header, and validates unsafe or incompatible choices
+before saving. The macOS app uses a custom dark theme derived from the Jarvis
+Line icon palette instead of the default macOS utility look.
 
 ```bash
 cd apps/macos/JarvisLine
