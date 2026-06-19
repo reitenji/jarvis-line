@@ -45,16 +45,16 @@ will close older running copies from build or DMG staging folders.
 ## Current MVP
 
 - Runtime status: watcher, audio worker, queue, TTS, speak mode
+- Visible app and CLI version in the header
 - Controls: start, stop, restart, repair, test voice
-- Settings tab: speech, speak mode, TTS backend, voice/rate/speed, volume, queue, and update source
+- Settings tab: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and update source
 - Quick access: config file, watcher log, audio worker log
 - Hook install/repair through `jarvis-line install codex`
 
 The Settings tab edits common config values without requiring users to open the
-JSON file. Unknown/custom config keys are preserved on save. The app blocks
-invalid combinations before writing config, including mismatched Kokoro
-language settings, invalid quiet-hours ranges, unsafe git update refs, and
-command TTS entries without `{text}` / `{text_json}`.
+JSON file. Unknown/custom config keys are preserved on save. The app favors
+pickers and presets over free text, then blocks invalid combinations before
+writing config.
 
 ## Packaging Later
 

@@ -384,9 +384,9 @@ access, and logs.
 The app includes a Settings tab for common config changes, so casual users do
 not need to edit `~/.codex/hooks/jarvis_line_config.json` by hand. It preserves
 unknown/custom config keys while saving runtime, TTS, and update preferences.
-The Settings tab validates unsafe or incompatible choices before saving, such
-as mismatched Kokoro language settings, invalid quiet-hours ranges, unsafe git
-update refs, or command TTS entries without `{text}` / `{text_json}`.
+The Settings tab uses controlled pickers and presets where possible, shows the
+installed CLI/app version in the header, and validates unsafe or incompatible
+choices before saving.
 
 ```bash
 cd apps/macos/JarvisLine
