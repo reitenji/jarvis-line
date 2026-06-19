@@ -3,6 +3,9 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let icon = NSImage(named: "AppIcon") {
+            NSApplication.shared.applicationIconImage = icon
+        }
         SingleInstanceGuard.enforce()
     }
 }
@@ -352,7 +355,7 @@ struct JarvisLinePanel: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(JarvisTheme.gold.opacity(0.42), lineWidth: 1)
                 )
-            if let image = NSImage(named: "AppIcon") {
+            if let image = NSImage(named: "BrandMark") ?? NSImage(named: "AppIcon") {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
