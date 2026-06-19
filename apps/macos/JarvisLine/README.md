@@ -52,6 +52,8 @@ will close older running copies from build or DMG staging folders.
 - Quick access: config file, watcher log, audio worker log
 - Hook install appears only when the Codex hook is not already installed
 - Custom dark Jarvis Line theme derived from the app icon palette
+- A simplified high-resolution alpha app icon for Finder, Dock, and packaged DMG installs
+- A separate detailed brand mark inside the app panel
 
 The Settings window edits common config values without requiring users to open
 the JSON file. Unknown/custom config keys are preserved on save. The app favors
