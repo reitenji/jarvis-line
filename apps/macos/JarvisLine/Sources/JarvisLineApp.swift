@@ -1,8 +1,60 @@
 import AppKit
 import SwiftUI
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        SingleInstanceGuard.enforce()
+    }
+}
+
+enum SingleInstanceGuard {
+    static func enforce() {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+            return
+        }
+
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let currentPath = URL(fileURLWithPath: Bundle.main.bundlePath).standardizedFileURL.path
+        let otherApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter { $0.processIdentifier != currentPID }
+
+        guard !otherApps.isEmpty else {
+            return
+        }
+
+        if isPreferredInstallPath(currentPath) {
+            otherApps.forEach { $0.terminate() }
+            return
+        }
+
+        let preferredApp = otherApps.first { app in
+            guard let path = app.bundleURL?.standardizedFileURL.path else {
+                return false
+            }
+            return isPreferredInstallPath(path)
+        } ?? otherApps.first
+
+        preferredApp?.activate(options: [])
+        NSApplication.shared.terminate(nil)
+    }
+
+    private static func isPreferredInstallPath(_ path: String) -> Bool {
+        if path.hasPrefix("/Applications/") {
+            return true
+        }
+
+        let userApplicationsPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Applications")
+            .standardizedFileURL
+            .path + "/"
+
+        return path.hasPrefix(userApplicationsPath)
+    }
+}
+
 @main
 struct JarvisLineApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = JarvisLineModel()
 
     var body: some Scene {
