@@ -17,13 +17,7 @@ struct JarvisConfigDraft {
     static let kokoroLangOptions = ["en-gb", "en-us", "fr-fr", "it", "ja", "cmn"]
     static let speedOptions = [0.9, 1.0, 1.08, 1.2]
     static let systemRateOptions = [160, 180, 200, 220, 240]
-    static let updateSourceOptions = ["git", "pypi"]
     static let updateIntervalOptions = [6, 12, 24, 48, 168]
-    static let updateRepoOptions = [
-        "https://github.com/reitenji/jarvis-line.git",
-        "ssh://git@github.com-personal/reitenji/jarvis-line.git",
-    ]
-    static let updateRefOptions = ["latest", "main", "develop"]
 
     var tts: String
     var speakMode: String
@@ -122,22 +116,6 @@ struct JarvisConfigDraft {
             }
         }
 
-        if !Self.updateSourceOptions.contains(updateSource) {
-            issues.append("Choose a supported update source.")
-        }
-        if updateSource == "git" {
-            let repo = updateGitRepo.trimmingCharacters(in: .whitespacesAndNewlines)
-            if repo.isEmpty {
-                issues.append("Git update repo is required.")
-            } else if !Self.isSafeGitRepo(repo) {
-                issues.append("Git update repo must be an https, ssh, or git@ GitHub-style URL.")
-            }
-            if !Self.isSafeGitRef(updateGitRef) {
-                issues.append("Git update ref must be a safe branch, tag, or latest.")
-            } else if !Self.updateRefOptions.contains(updateGitRef) && !Self.isVersionTag(updateGitRef) {
-                issues.append("Git update ref must be latest, main, develop, or a version tag.")
-            }
-        }
         if !Self.updateIntervalOptions.contains(updateCheckIntervalHours) {
             issues.append("Choose a supported update interval preset.")
         }
@@ -289,9 +267,9 @@ struct JarvisConfigDraft {
         updated["command"] = command.trimmedNilOrValue
         updated["update_check_enabled"] = updateCheckEnabled
         updated["update_check_interval_hours"] = updateCheckIntervalHours
-        updated["update_source"] = updateSource
-        updated["update_git_repo"] = updateGitRepo.trimmedOrDefault("https://github.com/reitenji/jarvis-line.git")
-        updated["update_git_ref"] = updateGitRef.trimmedOrDefault("latest")
+        updated["update_source"] = "git"
+        updated["update_git_repo"] = "https://github.com/reitenji/jarvis-line.git"
+        updated["update_git_ref"] = "latest"
         return updated
     }
 
@@ -310,27 +288,6 @@ struct JarvisConfigDraft {
         default:
             return false
         }
-    }
-
-    private static func isSafeGitRepo(_ value: String) -> Bool {
-        if value.hasPrefix("-") || value.contains(" ") || value.contains("\n") || value.contains("\r") {
-            return false
-        }
-        return value.hasPrefix("https://") || value.hasPrefix("ssh://") ||
-            value.range(of: #"^git@[^:]+:[^ ]+/.+\.git$"#, options: .regularExpression) != nil
-    }
-
-    private static func isSafeGitRef(_ value: String) -> Bool {
-        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty || text.hasPrefix("-") || text.contains(" ") || text.contains("..") {
-            return false
-        }
-        let forbidden = CharacterSet(charactersIn: #"~^:?*[\\"#)
-        return text.rangeOfCharacter(from: forbidden) == nil
-    }
-
-    private static func isVersionTag(_ value: String) -> Bool {
-        value.range(of: #"^v[0-9]+\.[0-9]+\.[0-9]+([ab][0-9]+|rc[0-9]+)?$"#, options: .regularExpression) != nil
     }
 
     private static func string(_ value: Any?, _ fallback: String) -> String {
