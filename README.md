@@ -17,7 +17,7 @@ It is built for long-running agent work: test loops, code reviews, refactors, de
 Install Jarvis Line from the GitHub release tag, initialize it, then make sure your agent instruction language matches the TTS voice language.
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.1.3"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.2.0"
 jarvis-line init --codex --language "English"
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
@@ -326,7 +326,7 @@ feature/* or fix/*
 
 Branch roles:
 
-- `main`: release-ready code only. Public installs should prefer version tags such as `v0.1.3`.
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.2.0`.
 - `develop`: integration branch for reviewed changes before release.
 - `feature/*`: new features.
 - `fix/*`: bug fixes.
@@ -348,7 +348,7 @@ jarvis-line support-report --output ./jarvis-line-issue.md
 
 ## Release Status
 
-Jarvis Line is prepared as a `0.1.3` release package.
+Jarvis Line is prepared as a `0.2.0` release package.
 
 Release-ready project pieces:
 
@@ -368,10 +368,38 @@ Release-ready project pieces:
 - instruction replace/doctor/style commands
 - issue template that requests a reviewed redacted support report
 - system TTS fallback for users who do not want Kokoro
+- experimental macOS menu bar manager app
 
 Release caveat:
 
 - Kokoro model files are not bundled; users must place them locally or configure custom paths.
+
+## macOS Manager App
+
+An experimental macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
+It keeps the CLI as the core engine and provides native controls for status,
+start/stop/restart, repair, test voice, hook install, config, and logs.
+
+```bash
+cd apps/macos/JarvisLine
+swift run JarvisLine
+```
+
+To create a clickable app bundle:
+
+```bash
+cd apps/macos/JarvisLine
+./scripts/package-app.sh
+open "dist/Jarvis Line.app"
+```
+
+To create a local DMG:
+
+```bash
+cd apps/macos/JarvisLine
+./scripts/package-dmg.sh
+open "dist/JarvisLine-macOS.dmg"
+```
 
 ## Validation Status
 
