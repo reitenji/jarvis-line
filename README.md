@@ -381,12 +381,14 @@ It keeps the CLI as the core engine and provides native controls for status,
 start/stop/restart, repair, test voice, hook install, settings, config file
 access, and logs.
 
-The app includes a Settings tab for common config changes, so casual users do
-not need to edit `~/.codex/hooks/jarvis_line_config.json` by hand. It preserves
-unknown/custom config keys while saving runtime, TTS, and update preferences.
-The Settings tab uses controlled pickers and presets where possible, shows the
-installed CLI/app version in the header, and validates unsafe or incompatible
-choices before saving.
+The menu bar panel is intentionally small: it shows current runtime health and
+fast day-to-day actions. Common config changes open in a separate Settings
+window, so casual users do not need to edit
+`~/.codex/hooks/jarvis_line_config.json` by hand. It preserves unknown/custom
+config keys while saving runtime, TTS, and update preferences. The Settings
+window uses controlled pickers and presets where possible, shows the installed
+CLI/app version in the header, and validates unsafe or incompatible choices
+before saving.
 
 ```bash
 cd apps/macos/JarvisLine

@@ -59,8 +59,8 @@ struct JarvisLineApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            JarvisLinePanel(model: model)
-                .frame(width: 460)
+            JarvisLinePanel(model: model, mode: .quick)
+                .frame(width: 430)
                 .task {
                     await model.refresh()
                 }
@@ -68,6 +68,15 @@ struct JarvisLineApp: App {
             Image(systemName: model.statusIcon)
         }
         .menuBarExtraStyle(.window)
+
+        Window("Jarvis Line", id: "settings") {
+            JarvisLinePanel(model: model, mode: .settingsWindow)
+                .frame(minWidth: 700, minHeight: 660)
+                .task {
+                    await model.refresh()
+                }
+        }
+        .defaultSize(width: 760, height: 720)
     }
 }
 
@@ -203,79 +212,112 @@ final class JarvisLineModel: ObservableObject {
 
 struct JarvisLinePanel: View {
     @ObservedObject var model: JarvisLineModel
-    @State private var selectedTab = "runtime"
+    @Environment(\.openWindow) private var openWindow
+    let mode: PanelMode
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            Picker("View", selection: $selectedTab) {
-                Text("Runtime").tag("runtime")
-                Text("Settings").tag("settings")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            if selectedTab == "settings" {
-                settings
+        Group {
+            if mode == .quick {
+                quickBody
             } else {
-                statusGrid
-                controls
-                links
-                output
+                settingsWindowBody
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
+        .background(panelBackground)
+    }
+
+    private var quickBody: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            quickView
+            Divider()
+            footer
+        }
+    }
+
+    private var settingsWindowBody: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            settingsView
+            Divider()
+            footer
+        }
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 14) {
             appMark
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 9) {
                     Text("Jarvis Line")
-                        .font(.title3.weight(.semibold))
-                    statusPill
+                        .font(.system(size: 20, weight: .semibold))
+                    stateBadge
                 }
-                Text("\(model.status.summary) • \(model.cliVersion)")
-                    .font(.caption)
+                Text(model.status.summary)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text(model.appVersion)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    versionChip(model.cliVersion.replacingOccurrences(of: "jarvis-line ", with: "CLI "))
+                    versionChip(model.appVersion)
+                }
             }
             Spacer()
             if model.isBusy {
                 ProgressView()
                     .controlSize(.small)
+                    .frame(width: 22, height: 22)
+            } else {
+                Button {
+                    Task { await model.refresh() }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh")
             }
         }
-        .padding(12)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .windowBackgroundColor),
+                    Color.accentColor.opacity(0.08),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
     }
 
     private var appMark: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.accentColor.opacity(0.16))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
             if let image = NSImage(named: "AppIcon") {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-                    .padding(5)
+                    .padding(4)
             } else {
                 Image(systemName: model.statusIcon)
-                    .font(.system(size: 25, weight: .semibold))
+                    .font(.system(size: 27, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
             }
         }
-        .frame(width: 48, height: 48)
+        .frame(width: 54, height: 54)
     }
 
-    private var statusPill: some View {
+    private var stateBadge: some View {
         Label(model.status.watcherState == "running" ? "Live" : "Stopped", systemImage: model.status.watcherState == "running" ? "checkmark.circle.fill" : "pause.circle")
-            .font(.caption.weight(.semibold))
+            .font(.system(size: 11, weight: .semibold))
             .labelStyle(.titleAndIcon)
             .foregroundStyle(model.status.watcherState == "running" ? .green : .secondary)
             .padding(.horizontal, 8)
@@ -284,163 +326,160 @@ struct JarvisLinePanel: View {
             .clipShape(Capsule())
     }
 
-    private var statusGrid: some View {
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
-            statusRow("TTS", model.status.tts)
-            statusRow("Watcher", model.status.watcher)
-            statusRow("Worker", model.status.audioWorker)
-            statusRow("Queue", "\(model.status.queueJobs)")
-            statusRow("Speak Mode", model.status.speakMode)
-            statusRow("RSS", model.status.audioWorkerRSS)
-        }
-        .font(.system(size: 12, design: .monospaced))
-        .padding(12)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+    private func versionChip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
-    private func statusRow(_ label: String, _ value: String) -> some View {
-        GridRow {
-            Text(label)
-                .foregroundStyle(.secondary)
-            Text(value.isEmpty ? "n/a" : value)
-                .textSelection(.enabled)
+    private var quickView: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            heroStatus
+            compactStatus
+            commandDeck
         }
+        .padding(14)
     }
 
-    private var controls: some View {
+    private var compactStatus: some View {
         VStack(spacing: 8) {
-            HStack {
-                Button {
-                    Task { await model.start() }
-                } label: {
-                    Label("Start", systemImage: "play.fill")
-                }
-                Button {
-                    Task { await model.stop() }
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                }
-                Button {
-                    Task { await model.restart() }
-                } label: {
-                    Label("Restart", systemImage: "arrow.clockwise")
-                }
-            }
-            HStack {
-                Button {
-                    Task { await model.repair() }
-                } label: {
-                    Label("Repair", systemImage: "wrench.and.screwdriver")
-                }
-                Button {
-                    Task { await model.testVoice() }
-                } label: {
-                    Label("Test Voice", systemImage: "speaker.wave.2.fill")
-                }
-                Button {
-                    Task { await model.refresh() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.triangle.2.circlepath")
-                }
-            }
-            Button {
-                Task { await model.installCodexHook() }
-            } label: {
-                Label("Install Codex Hook", systemImage: "link.badge.plus")
-                    .frame(maxWidth: .infinity)
-            }
+            StatusLine(title: "Watcher", value: display(model.status.watcher), icon: "eye")
+            StatusLine(title: "Worker", value: display(model.status.audioWorker), icon: "cpu")
+            StatusLine(title: "Queue", value: "\(model.status.queueJobs) lines", icon: "text.line.first.and.arrowtriangle.forward")
         }
-        .disabled(model.isBusy)
-        .buttonStyle(.bordered)
+        .padding(10)
+        .background(sectionFill)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(sectionStroke)
     }
 
-    private var links: some View {
-        HStack {
-            Button("Config File") { model.openConfig() }
-            Button("Watcher Log") { model.openWatcherLog() }
-            Button("Audio Log") { model.openAudioWorkerLog() }
+    private var heroStatus: some View {
+        HStack(spacing: 14) {
+            Image(systemName: model.statusIcon)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(model.status.watcherState == "running" ? .green : .secondary)
+                .frame(width: 40, height: 40)
+                .background((model.status.watcherState == "running" ? Color.green : Color.secondary).opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.status.watcherState == "running" ? "Voice pipeline is active" : "Voice pipeline needs attention")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("TTS \(display(model.status.tts)) · \(display(model.status.speakMode)) · queue \(model.status.queueJobs)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            Button {
+                Task { await model.testVoice() }
+            } label: {
+                Label("Test", systemImage: "speaker.wave.2.fill")
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.isBusy)
         }
-        .buttonStyle(.link)
+        .padding(12)
+        .background(sectionFill)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(sectionStroke)
     }
 
-    private var settings: some View {
+    private var commandDeck: some View {
+        PanelSection(title: "Controls", icon: "switch.2") {
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    CommandButton(title: "Start", icon: "play.fill") { Task { await model.start() } }
+                    CommandButton(title: "Stop", icon: "stop.fill") { Task { await model.stop() } }
+                    CommandButton(title: "Restart", icon: "arrow.clockwise") { Task { await model.restart() } }
+                }
+                HStack(spacing: 8) {
+                    CommandButton(title: "Repair", icon: "wrench.and.screwdriver") { Task { await model.repair() } }
+                    CommandButton(title: "Install Hook", icon: "link.badge.plus") { Task { await model.installCodexHook() } }
+                }
+            }
+            .disabled(model.isBusy)
+        }
+    }
+
+    private var settingsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                runtimeSettings
-                ttsSettings
-                updateSettings
+                PanelSection(title: "Runtime", icon: "slider.horizontal.3") {
+                    runtimeSettings
+                }
+                PanelSection(title: "Voice", icon: "speaker.wave.2") {
+                    ttsSettings
+                }
+                PanelSection(title: "Updates", icon: "arrow.down.circle") {
+                    updateSettings
+                }
                 validationSummary
                 settingsActions
-                output
+                diagnosticsPanel
             }
+            .padding(16)
         }
-        .frame(height: 500)
+        .frame(height: mode == .settingsWindow ? 540 : 488)
     }
 
     private var runtimeSettings: some View {
-        GroupBox("Runtime") {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle("Speech enabled", isOn: $model.config.speechEnabled)
-                Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
+        Form {
+            Toggle("Speech enabled", isOn: $model.config.speechEnabled)
+            Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
 
-                Picker("Speak mode", selection: $model.config.speakMode) {
-                    Text("Final only").tag("final_only")
-                    Text("Commentary + final").tag("commentary_and_final")
-                    Text("Off").tag("off")
-                }
+            Picker("Speak mode", selection: $model.config.speakMode) {
+                Text("Final only").tag("final_only")
+                Text("Commentary + final").tag("commentary_and_final")
+                Text("Off").tag("off")
+            }
 
-                Picker("Line language", selection: $model.config.lineLanguage) {
-                    ForEach(JarvisConfigDraft.lineLanguageOptions, id: \.self) { value in
-                        Text(value).tag(value)
-                    }
-                }
-
-                LabeledContent("Assistant") {
-                    Text("Jarvis").foregroundStyle(.secondary)
-                }
-
-                Picker("Spoken length", selection: $model.config.maxSpokenChars) {
-                    Text("Short · 120").tag(120)
-                    Text("Balanced · 180").tag(180)
-                    Text("Detailed · 240").tag(240)
-                    Text("Verbose · 300").tag(300)
-                }
-
-                Picker("Queue size", selection: $model.config.maxQueueSize) {
-                    ForEach(JarvisConfigDraft.maxQueueSizeOptions, id: \.self) { value in
-                        Text("\(value) lines").tag(value)
-                    }
-                }
-
-                Picker("Quiet hours", selection: $model.config.quietHours) {
-                    Text("Off").tag("")
-                    Text("Night · 22:00-08:00").tag("22:00-08:00")
-                    Text("Evening · 20:00-08:00").tag("20:00-08:00")
-                    Text("After work · 18:00-09:00").tag("18:00-09:00")
+            Picker("Line language", selection: $model.config.lineLanguage) {
+                ForEach(JarvisConfigDraft.lineLanguageOptions, id: \.self) { value in
+                    Text(value).tag(value)
                 }
             }
+
+            LabeledContent("Assistant") {
+                Text("Jarvis")
+                    .foregroundStyle(.secondary)
+            }
+
+            Picker("Spoken length", selection: $model.config.maxSpokenChars) {
+                Text("Short · 120").tag(120)
+                Text("Balanced · 180").tag(180)
+                Text("Detailed · 240").tag(240)
+                Text("Verbose · 300").tag(300)
+            }
+
+            Picker("Queue size", selection: $model.config.maxQueueSize) {
+                ForEach(JarvisConfigDraft.maxQueueSizeOptions, id: \.self) { value in
+                    Text("\(value) lines").tag(value)
+                }
+            }
+
+            Picker("Quiet hours", selection: $model.config.quietHours) {
+                Text("Off").tag("")
+                Text("Night · 22:00-08:00").tag("22:00-08:00")
+                Text("Evening · 20:00-08:00").tag("20:00-08:00")
+                Text("After work · 18:00-09:00").tag("18:00-09:00")
+            }
         }
+        .formStyle(.grouped)
     }
 
     private var ttsSettings: some View {
-        GroupBox("TTS") {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            Form {
                 Picker("Backend", selection: $model.config.tts) {
                     Text("Kokoro · bundled default").tag("kokoro")
                     Text("System voice").tag("system")
                     Text("macOS say").tag("macos")
                     Text("Custom command").tag("command")
-                }
-
-                HStack {
-                    Text("Volume")
-                    Slider(value: $model.config.volume, in: 0...1)
-                    Text(String(format: "%.2f", model.config.volume))
-                        .font(.system(size: 11, design: .monospaced))
-                        .frame(width: 34, alignment: .trailing)
                 }
 
                 Picker("Fallback", selection: $model.config.fallbackTTS) {
@@ -453,17 +492,36 @@ struct JarvisLinePanel: View {
                 }
 
                 Toggle("Warm TTS", isOn: $model.config.warmTTS)
+
                 Picker("Warm-up text", selection: $model.config.warmTTSText) {
                     ForEach(options(JarvisConfigDraft.warmTextOptions, preserving: model.config.warmTTSText), id: \.self) { value in
                         Text(value).tag(value)
                     }
                 }
+            }
+            .formStyle(.grouped)
 
-                Divider()
-                Text("Backend options")
-                    .font(.caption)
+            HStack(spacing: 10) {
+                Image(systemName: "speaker.wave.1")
                     .foregroundStyle(.secondary)
+                Slider(value: $model.config.volume, in: 0...1)
+                Text(String(format: "%.2f", model.config.volume))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .frame(width: 34, alignment: .trailing)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(Color.primary.opacity(0.035))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
+            backendOptions
+        }
+    }
+
+    @ViewBuilder
+    private var backendOptions: some View {
+        PanelSection(title: "Backend options", icon: "dial.low") {
+            Form {
                 if model.config.tts == "kokoro" {
                     Picker("Kokoro voice", selection: $model.config.voice) {
                         Text("George + Lewis blend").tag("bm_george:70,bm_lewis:30")
@@ -511,36 +569,36 @@ struct JarvisLinePanel: View {
                     }
                 }
             }
+            .formStyle(.grouped)
         }
     }
 
     private var updateSettings: some View {
-        GroupBox("Updates") {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle("Check for updates", isOn: $model.config.updateCheckEnabled)
-                Picker("Interval", selection: $model.config.updateCheckIntervalHours) {
-                    ForEach(JarvisConfigDraft.updateIntervalOptions, id: \.self) { value in
-                        Text(value == 168 ? "Weekly" : "\(value) hours").tag(value)
+        Form {
+            Toggle("Check for updates", isOn: $model.config.updateCheckEnabled)
+            Picker("Interval", selection: $model.config.updateCheckIntervalHours) {
+                ForEach(JarvisConfigDraft.updateIntervalOptions, id: \.self) { value in
+                    Text(value == 168 ? "Weekly" : "\(value) hours").tag(value)
+                }
+            }
+            Picker("Source", selection: $model.config.updateSource) {
+                Text("Git").tag("git")
+                Text("PyPI").tag("pypi")
+            }
+            if model.config.updateSource == "git" {
+                Picker("Git repo", selection: $model.config.updateGitRepo) {
+                    ForEach(options(JarvisConfigDraft.updateRepoOptions, preserving: model.config.updateGitRepo), id: \.self) { value in
+                        Text(repoLabel(value)).tag(value)
                     }
                 }
-                Picker("Source", selection: $model.config.updateSource) {
-                    Text("Git").tag("git")
-                    Text("PyPI").tag("pypi")
-                }
-                if model.config.updateSource == "git" {
-                    Picker("Git repo", selection: $model.config.updateGitRepo) {
-                        ForEach(options(JarvisConfigDraft.updateRepoOptions, preserving: model.config.updateGitRepo), id: \.self) { value in
-                            Text(repoLabel(value)).tag(value)
-                        }
-                    }
-                    Picker("Git ref", selection: $model.config.updateGitRef) {
-                        ForEach(options(JarvisConfigDraft.updateRefOptions, preserving: model.config.updateGitRef), id: \.self) { value in
-                            Text(refLabel(value)).tag(value)
-                        }
+                Picker("Git ref", selection: $model.config.updateGitRef) {
+                    ForEach(options(JarvisConfigDraft.updateRefOptions, preserving: model.config.updateGitRef), id: \.self) { value in
+                        Text(refLabel(value)).tag(value)
                     }
                 }
             }
         }
+        .formStyle(.grouped)
     }
 
     @ViewBuilder
@@ -558,11 +616,15 @@ struct JarvisLinePanel: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .font(.caption)
-            .padding(10)
+            .font(.system(size: 12))
+            .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(issues.isEmpty ? Color.primary.opacity(0.035) : Color.red.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(issues.isEmpty ? Color.primary.opacity(0.06) : Color.red.opacity(0.20), lineWidth: 1)
+            )
         }
     }
 
@@ -610,48 +672,162 @@ struct JarvisLinePanel: View {
     }
 
     private var settingsActions: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Button {
-                    Task { await model.loadConfig() }
-                } label: {
-                    Label("Reload", systemImage: "arrow.clockwise")
-                }
-                Button {
-                    Task { await model.saveConfig(restart: false) }
-                } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                }
-                Button {
-                    Task { await model.saveConfig(restart: true) }
-                } label: {
-                    Label("Save + Restart", systemImage: "arrow.triangle.2.circlepath")
-                }
+        HStack(spacing: 8) {
+            Button {
+                Task { await model.loadConfig() }
+            } label: {
+                Label("Reload", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.bordered)
-            .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
+            Spacer()
+            Button {
+                Task { await model.saveConfig(restart: false) }
+            } label: {
+                Label("Save", systemImage: "square.and.arrow.down")
+            }
+            Button {
+                Task { await model.saveConfig(restart: true) }
+            } label: {
+                Label("Save + Restart", systemImage: "arrow.triangle.2.circlepath")
+            }
         }
+        .buttonStyle(.bordered)
+        .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
     }
 
     @ViewBuilder
-    private var output: some View {
+    private var diagnosticsPanel: some View {
         if let error = model.errorMessage {
-            Text(error)
-                .font(.caption)
-                .foregroundStyle(.red)
-                .textSelection(.enabled)
-        } else if !model.doctorText.isEmpty {
-            ScrollView {
-                Text(model.doctorText)
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            PanelSection(title: "Diagnostics", icon: "exclamationmark.triangle") {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
                     .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 150)
-            .padding(8)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else if !model.doctorText.isEmpty {
+            PanelSection(title: "Diagnostics", icon: "stethoscope") {
+                ScrollView {
+                    Text(model.doctorText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(height: mode == .settingsWindow ? 132 : 108)
+                .padding(9)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
         }
+    }
+
+    private var footer: some View {
+        HStack {
+            Text("Jarvis Line Manager")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.tertiary)
+            Spacer()
+            if mode == .quick {
+                Button {
+                    openWindow(id: "settings")
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .buttonStyle(.link)
+            }
+            Button("Quit") {
+                NSApplication.shared.terminate(nil)
+            }
+            .buttonStyle(.link)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+    }
+
+    private var panelBackground: some View {
+        Color(nsColor: .windowBackgroundColor)
+            .overlay(Color.primary.opacity(0.015))
+    }
+
+    private var sectionFill: some ShapeStyle {
+        .regularMaterial
+    }
+
+    private var sectionStroke: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+    }
+
+    private func display(_ value: String) -> String {
+        value.isEmpty ? "n/a" : value
+    }
+}
+
+enum PanelMode {
+    case quick
+    case settingsWindow
+}
+
+private struct StatusLine: View {
+    let title: String
+    let value: String
+    let icon: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+private struct PanelSection<Content: View>: View {
+    let title: String
+    let icon: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            content
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        )
+    }
+}
+
+private struct CommandButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.bordered)
     }
 }
 

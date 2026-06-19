@@ -20,8 +20,9 @@ cd apps/macos/JarvisLine
 open "dist/Jarvis Line.app"
 ```
 
-The app is a menu bar utility, so it does not open a normal window. Look for the
-waveform icon in the macOS menu bar.
+The app starts as a menu bar utility. Look for the waveform icon in the macOS
+menu bar. The quick panel stays focused on runtime status and frequent actions;
+use the Settings button to open the full configuration window.
 
 The local bundle uses the selected Variant 6 icon.
 
@@ -47,12 +48,12 @@ will close older running copies from build or DMG staging folders.
 - Runtime status: watcher, audio worker, queue, TTS, speak mode
 - Visible app and CLI version in the header
 - Controls: start, stop, restart, repair, test voice
-- Settings tab: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and update source
+- Separate Settings window: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and update source
 - Quick access: config file, watcher log, audio worker log
 - Hook install/repair through `jarvis-line install codex`
 
-The Settings tab edits common config values without requiring users to open the
-JSON file. Unknown/custom config keys are preserved on save. The app favors
+The Settings window edits common config values without requiring users to open
+the JSON file. Unknown/custom config keys are preserved on save. The app favors
 pickers and presets over free text, then blocks invalid combinations before
 writing config.
 
