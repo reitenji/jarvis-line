@@ -29,7 +29,7 @@ It is built for long-running agent work: test loops, code reviews, refactors, de
 Install Jarvis Line from the GitHub release tag, initialize it, then make sure your agent instruction language matches the TTS voice language.
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.2.1"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.2.2"
 jarvis-line init --codex --language "English"
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
@@ -338,7 +338,7 @@ feature/* or fix/*
 
 Branch roles:
 
-- `main`: release-ready code only. Public installs should prefer version tags such as `v0.2.1`.
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.2.2`.
 - `develop`: integration branch for reviewed changes before release.
 - `feature/*`: new features.
 - `fix/*`: bug fixes.
@@ -360,7 +360,7 @@ jarvis-line support-report --output ./jarvis-line-issue.md
 
 ## Release Status
 
-Jarvis Line is prepared as a `0.2.1` release package.
+Jarvis Line is prepared as a `0.2.2` release package.
 
 Release-ready project pieces:
 
