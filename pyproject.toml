@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jarvis-line"
-version = "0.2.1"
+version = "0.2.2"
 description = "Speak short assistant status lines from Codex/Claude sessions."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,6 +31,13 @@ test = ["pytest>=8"]
 
 [project.scripts]
 jarvis-line = "jarvis_line.cli:main"
+
+[tool.hatch.build]
+exclude = [
+  "/apps/macos/JarvisLine/.build",
+  "/apps/macos/JarvisLine/dist",
+  "/dist",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
