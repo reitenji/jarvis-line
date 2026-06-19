@@ -74,12 +74,14 @@ struct JarvisLineApp: App {
 @MainActor
 final class JarvisLineModel: ObservableObject {
     @Published var status = RuntimeStatus.empty
+    @Published var config = JarvisConfigDraft.defaults
     @Published var doctorText = ""
     @Published var lastOutput = ""
     @Published var isBusy = false
     @Published var errorMessage: String?
 
     private let cli = JarvisLineCLI()
+    private let configStore = JarvisConfigStore()
 
     var statusIcon: String {
         if status.watcherState == "running" {
@@ -93,6 +95,7 @@ final class JarvisLineModel: ObservableObject {
 
     func refresh() async {
         await run(label: "Refresh") {
+            config = try configStore.load()
             let statusOutput = try await cli.run(["status"])
             let doctorOutput = try await cli.run(["doctor"])
             status = RuntimeStatus.parse(statusOutput)
@@ -128,6 +131,26 @@ final class JarvisLineModel: ObservableObject {
 
     func testVoice() async {
         await command("Test Voice", ["tts", "test", "--text", "Jarvis line test is ready."])
+        await refresh()
+    }
+
+    func loadConfig() async {
+        await run(label: "Load Config") {
+            config = try configStore.load()
+            lastOutput = "Loaded config from \(configStore.displayPath)"
+        }
+    }
+
+    func saveConfig(restart: Bool) async {
+        await run(label: "Save Config") {
+            try configStore.save(config)
+            lastOutput = "Saved config to \(configStore.displayPath)"
+            if restart {
+                lastOutput += "\n" + (try await cli.run(["restart"]))
+            }
+            let doctorOutput = try await cli.run(["doctor"])
+            doctorText = doctorOutput
+        }
         await refresh()
     }
 
@@ -169,14 +192,26 @@ final class JarvisLineModel: ObservableObject {
 
 struct JarvisLinePanel: View {
     @ObservedObject var model: JarvisLineModel
+    @State private var selectedTab = "runtime"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            statusGrid
-            controls
-            links
-            output
+            Picker("View", selection: $selectedTab) {
+                Text("Runtime").tag("runtime")
+                Text("Settings").tag("settings")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if selectedTab == "settings" {
+                settings
+            } else {
+                statusGrid
+                controls
+                links
+                output
+            }
         }
         .padding(16)
     }
@@ -274,13 +309,135 @@ struct JarvisLinePanel: View {
 
     private var links: some View {
         HStack {
-            Button("Config") { model.openConfig() }
+            Button("Config File") { model.openConfig() }
             Button("Watcher Log") { model.openWatcherLog() }
             Button("Audio Log") { model.openAudioWorkerLog() }
             Spacer()
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }
         .buttonStyle(.link)
+    }
+
+    private var settings: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                runtimeSettings
+                ttsSettings
+                updateSettings
+                settingsActions
+                output
+            }
+        }
+        .frame(height: 500)
+    }
+
+    private var runtimeSettings: some View {
+        GroupBox("Runtime") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Speech enabled", isOn: $model.config.speechEnabled)
+                Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
+
+                Picker("Speak mode", selection: $model.config.speakMode) {
+                    Text("Final only").tag("final_only")
+                    Text("Commentary + final").tag("commentary_and_final")
+                    Text("Off").tag("off")
+                }
+
+                TextField("Line language", text: $model.config.lineLanguage)
+                TextField("Assistant name", text: $model.config.assistantName)
+
+                Stepper("Max spoken chars: \(model.config.maxSpokenChars)", value: $model.config.maxSpokenChars, in: 60...500, step: 10)
+                Stepper("Max queue size: \(model.config.maxQueueSize)", value: $model.config.maxQueueSize, in: 1...50)
+                TextField("Quiet hours, e.g. 22:00-08:00", text: $model.config.quietHours)
+            }
+        }
+    }
+
+    private var ttsSettings: some View {
+        GroupBox("TTS") {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Backend", selection: $model.config.tts) {
+                    Text("Kokoro").tag("kokoro")
+                    Text("System").tag("system")
+                    Text("macOS").tag("macos")
+                    Text("Command").tag("command")
+                }
+
+                HStack {
+                    Text("Volume")
+                    Slider(value: $model.config.volume, in: 0...1)
+                    Text(String(format: "%.2f", model.config.volume))
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(width: 34, alignment: .trailing)
+                }
+
+                Picker("Fallback", selection: $model.config.fallbackTTS) {
+                    Text("None").tag("none")
+                    Text("System").tag("system")
+                    Text("macOS").tag("macos")
+                    Text("Command").tag("command")
+                }
+
+                Toggle("Warm TTS", isOn: $model.config.warmTTS)
+                TextField("Warm-up text", text: $model.config.warmTTSText)
+
+                Divider()
+                Text("Backend options")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Kokoro voice", text: $model.config.voice)
+                TextField("Kokoro language, e.g. en-gb", text: $model.config.lang)
+                HStack {
+                    Text("Speed")
+                    Slider(value: $model.config.speed, in: 0.6...1.5)
+                    Text(String(format: "%.2f", model.config.speed))
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(width: 34, alignment: .trailing)
+                }
+                TextField("System voice", text: $model.config.systemVoice)
+                Stepper("System rate: \(model.config.systemRate)", value: $model.config.systemRate, in: 80...360, step: 5)
+                TextField("Command backend command", text: $model.config.command)
+            }
+        }
+    }
+
+    private var updateSettings: some View {
+        GroupBox("Updates") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Check for updates", isOn: $model.config.updateCheckEnabled)
+                Stepper("Interval: \(model.config.updateCheckIntervalHours)h", value: $model.config.updateCheckIntervalHours, in: 1...168)
+                Picker("Source", selection: $model.config.updateSource) {
+                    Text("Git").tag("git")
+                    Text("PyPI").tag("pypi")
+                }
+                TextField("Git repo", text: $model.config.updateGitRepo)
+                TextField("Git ref", text: $model.config.updateGitRef)
+            }
+        }
+    }
+
+    private var settingsActions: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Button {
+                    Task { await model.loadConfig() }
+                } label: {
+                    Label("Reload", systemImage: "arrow.clockwise")
+                }
+                Button {
+                    Task { await model.saveConfig(restart: false) }
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                Button {
+                    Task { await model.saveConfig(restart: true) }
+                } label: {
+                    Label("Save + Restart", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(model.isBusy)
+        }
     }
 
     @ViewBuilder

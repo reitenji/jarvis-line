@@ -378,7 +378,12 @@ Release caveat:
 
 An experimental macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
 It keeps the CLI as the core engine and provides native controls for status,
-start/stop/restart, repair, test voice, hook install, config, and logs.
+start/stop/restart, repair, test voice, hook install, settings, config file
+access, and logs.
+
+The app includes a Settings tab for common config changes, so casual users do
+not need to edit `~/.codex/hooks/jarvis_line_config.json` by hand. It preserves
+unknown/custom config keys while saving runtime, TTS, and update preferences.
 
 ```bash
 cd apps/macos/JarvisLine
