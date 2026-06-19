@@ -2,11 +2,25 @@ import AppKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var showSettingsWindow: (() -> Void)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.regular)
         if let icon = NSImage(named: "AppIcon") {
             NSApplication.shared.applicationIconImage = icon
         }
         SingleInstanceGuard.enforce()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            Self.showSettingsWindow?()
+        }
+        return true
     }
 }
 
@@ -58,7 +72,17 @@ enum SingleInstanceGuard {
 @main
 struct JarvisLineApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var model = JarvisLineModel()
+    @StateObject private var model: JarvisLineModel
+
+    init() {
+        let model = JarvisLineModel()
+        _model = StateObject(wrappedValue: model)
+        AppDelegate.showSettingsWindow = {
+            Task { @MainActor in
+                SettingsWindowController.shared.show(model: model)
+            }
+        }
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -71,6 +95,20 @@ struct JarvisLineApp: App {
             Image(systemName: model.statusIcon)
         }
         .menuBarExtraStyle(.window)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    SettingsWindowController.shared.show(model: model)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+            CommandGroup(after: .appInfo) {
+                Button("Refresh Status") {
+                    Task { await model.refresh() }
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
+        }
     }
 }
 
@@ -232,7 +270,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.minSize = NSSize(width: 700, height: 660)
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1)
-        window.titlebarAppearsTransparent = true
+        window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.delegate = self
