@@ -50,7 +50,7 @@ will close older running copies from build or DMG staging folders.
 - Controls: start, stop, restart, repair, test voice
 - Separate Settings window: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and update source
 - Quick access: config file, watcher log, audio worker log
-- Hook install/repair through `jarvis-line install codex`
+- Hook install appears only when the Codex hook is not already installed
 
 The Settings window edits common config values without requiring users to open
 the JSON file. Unknown/custom config keys are preserved on save. The app favors
