@@ -68,7 +68,7 @@ struct JarvisLineApp: App {
                     await model.refresh()
                 }
         } label: {
-            MenuBarGlyph(status: model.status)
+            Image(systemName: model.statusIcon)
         }
         .menuBarExtraStyle(.window)
     }
@@ -885,63 +885,6 @@ enum JarvisTheme {
     static let subtleText = Color(red: 0.48, green: 0.54, blue: 0.61)
     static let border = Color(red: 0.25, green: 0.29, blue: 0.35)
     static let error = Color(red: 1.00, green: 0.45, blue: 0.40)
-}
-
-private struct MenuBarGlyph: View {
-    let status: RuntimeStatus
-
-    private var isRunning: Bool {
-        status.watcherState == "running"
-    }
-
-    private var hasQueue: Bool {
-        status.queueJobs > 0
-    }
-
-    var body: some View {
-        Canvas { context, size in
-            let scale = min(size.width / 30, size.height / 18)
-            let xOffset = (size.width - 30 * scale) / 2
-            let yOffset = (size.height - 18 * scale) / 2
-
-            func point(_ x: Double, _ y: Double) -> CGPoint {
-                CGPoint(x: xOffset + x * scale, y: yOffset + y * scale)
-            }
-
-            var chevron = Path()
-            chevron.move(to: point(2.5, 3.0))
-            chevron.addLine(to: point(9.5, 9.0))
-            chevron.addLine(to: point(2.5, 15.0))
-
-            var prompt = Path()
-            prompt.move(to: point(11.5, 14.0))
-            prompt.addLine(to: point(18.0, 14.0))
-
-            let terminalColor = isRunning ? JarvisTheme.cyan : JarvisTheme.subtleText
-            let accentColor = hasQueue ? JarvisTheme.goldSoft : terminalColor
-            context.stroke(chevron, with: .color(terminalColor), style: StrokeStyle(lineWidth: 2.3 * scale, lineCap: .round, lineJoin: .round))
-            context.stroke(prompt, with: .color(accentColor), style: StrokeStyle(lineWidth: 2.1 * scale, lineCap: .round))
-
-            let bars: [(Double, Double, Double)] = [
-                (21.0, 6.5, 11.5),
-                (24.0, 3.5, 14.5),
-                (27.0, 7.0, 11.0),
-            ]
-            for (x, y1, y2) in bars {
-                var bar = Path()
-                bar.move(to: point(x, y1))
-                bar.addLine(to: point(x, y2))
-                context.stroke(bar, with: .color(terminalColor.opacity(isRunning ? 0.95 : 0.62)), style: StrokeStyle(lineWidth: 2.0 * scale, lineCap: .round))
-            }
-
-            if hasQueue {
-                let dotRect = CGRect(x: point(28.4, 2.1).x, y: point(0, 2.1).y, width: 3.8 * scale, height: 3.8 * scale)
-                context.fill(Path(ellipseIn: dotRect), with: .color(JarvisTheme.goldSoft))
-            }
-        }
-        .frame(width: 24, height: 18)
-        .accessibilityLabel(isRunning ? "Jarvis Line running" : "Jarvis Line stopped")
-    }
 }
 
 private struct StatusLine: View {

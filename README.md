@@ -1,4 +1,16 @@
-# Jarvis Line
+<p align="center">
+  <img src="apps/macos/JarvisLine/Resources/AppIcon.png" width="144" alt="Jarvis Line app icon">
+</p>
+
+<h1 align="center">Jarvis Line</h1>
+
+<p align="center">
+  <strong>Voice notifications for AI coding agents, powered by hook-driven TTS.</strong>
+</p>
+
+<p align="center">
+  Speak short agent status lines from Codex, Claude, Gemini, and other coding-agent sessions.
+</p>
 
 Hear what your coding agent just finished without reading the whole session.
 

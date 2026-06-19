@@ -54,7 +54,7 @@ will close older running copies from build or DMG staging folders.
 - Custom dark Jarvis Line theme derived from the app icon palette
 - A detailed high-resolution alpha app icon for Finder, Dock, and packaged DMG installs
 - A separate detailed brand mark inside the app panel
-- A compact custom top-bar glyph for the menu bar extra
+- Native menu bar status icon so running and queued states stay easy to read
 
 The Settings window edits common config values without requiring users to open
 the JSON file. Unknown/custom config keys are preserved on save. The app favors
