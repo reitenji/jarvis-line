@@ -53,6 +53,7 @@ will close older running copies from build or DMG staging folders.
 - Controls: start, stop, restart, repair, test voice
 - Regular Dock and minimal app-menu behavior while keeping the menu bar status icon
 - Separate Settings window: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and a simple GitHub update check interval
+- Settings actions stay in a bottom action bar instead of being mixed into the settings form
 - Quick access: config file, watcher log, audio worker log
 - Hook install appears only when the Codex hook is not already installed
 - Custom dark Jarvis Line theme derived from the app icon palette
