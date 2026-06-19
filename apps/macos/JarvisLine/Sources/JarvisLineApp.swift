@@ -142,8 +142,7 @@ final class JarvisLineModel: ObservableObject {
 
     var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local"
-        return "App \(version) (\(build))"
+        return "App v\(version)"
     }
 
     var statusIcon: String {
