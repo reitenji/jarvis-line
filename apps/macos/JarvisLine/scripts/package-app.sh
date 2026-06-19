@@ -12,7 +12,7 @@ APP_DIR="$DIST_DIR/$APP_NAME.app"
 cd "$ROOT_DIR"
 swift build -c "$CONFIGURATION" --product "$PRODUCT_NAME"
 
-rm -rf "$APP_DIR"
+rm -rf "$APP_DIR" "$DIST_DIR/JarvisLine.app"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"

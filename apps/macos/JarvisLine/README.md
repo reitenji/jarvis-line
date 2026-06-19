@@ -37,6 +37,11 @@ The DMG contains `Jarvis Line.app` and an `Applications` shortcut. The local DMG
 is ad-hoc signed but not notarized, so macOS may show a Gatekeeper warning
 outside development machines.
 
+When installing a newer build, drag `Jarvis Line.app` onto the Applications
+shortcut and choose Replace if Finder asks. The app uses a stable bundle
+identifier and a single-instance guard, so launching a newer Applications copy
+will close older running copies from build or DMG staging folders.
+
 ## Current MVP
 
 - Runtime status: watcher, audio worker, queue, TTS, speak mode
