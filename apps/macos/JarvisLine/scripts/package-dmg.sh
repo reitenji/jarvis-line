@@ -6,13 +6,18 @@ APP_NAME="Jarvis Line"
 DMG_NAME="${DMG_NAME:-JarvisLine-macOS.dmg}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
-STAGE_DIR="$DIST_DIR/dmg-root"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
 
 cd "$ROOT_DIR"
 "$ROOT_DIR/scripts/package-app.sh"
 
-rm -rf "$STAGE_DIR" "$DMG_PATH"
+rm -rf "$DIST_DIR/dmg-root" "$DMG_PATH"
+STAGE_DIR="$(mktemp -d "$DIST_DIR/dmg-root.XXXXXX")"
+cleanup() {
+  rm -rf "$STAGE_DIR"
+}
+trap cleanup EXIT
+
 mkdir -p "$STAGE_DIR"
 
 cp -R "$APP_DIR" "$STAGE_DIR/$APP_NAME.app"
