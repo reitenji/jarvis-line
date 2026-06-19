@@ -46,8 +46,15 @@ will close older running copies from build or DMG staging folders.
 
 - Runtime status: watcher, audio worker, queue, TTS, speak mode
 - Controls: start, stop, restart, repair, test voice
-- Quick access: config, watcher log, audio worker log
+- Settings tab: speech, speak mode, TTS backend, voice/rate/speed, volume, queue, and update source
+- Quick access: config file, watcher log, audio worker log
 - Hook install/repair through `jarvis-line install codex`
+
+The Settings tab edits common config values without requiring users to open the
+JSON file. Unknown/custom config keys are preserved on save. The app blocks
+invalid combinations before writing config, including mismatched Kokoro
+language settings, invalid quiet-hours ranges, unsafe git update refs, and
+command TTS entries without `{text}` / `{text_json}`.
 
 ## Packaging Later
 
