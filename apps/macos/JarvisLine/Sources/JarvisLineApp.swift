@@ -324,6 +324,7 @@ struct JarvisLinePanel: View {
                 runtimeSettings
                 ttsSettings
                 updateSettings
+                validationSummary
                 settingsActions
                 output
             }
@@ -343,7 +344,14 @@ struct JarvisLinePanel: View {
                     Text("Off").tag("off")
                 }
 
-                TextField("Line language", text: $model.config.lineLanguage)
+                Picker("Line language", selection: $model.config.lineLanguage) {
+                    Text("English").tag("English")
+                    Text("Turkish").tag("Turkish")
+                    Text("French").tag("French")
+                    Text("Italian").tag("Italian")
+                    Text("Japanese").tag("Japanese")
+                    Text("Chinese").tag("Chinese")
+                }
                 TextField("Assistant name", text: $model.config.assistantName)
 
                 Stepper("Max spoken chars: \(model.config.maxSpokenChars)", value: $model.config.maxSpokenChars, in: 60...500, step: 10)
@@ -385,18 +393,37 @@ struct JarvisLinePanel: View {
                 Text("Backend options")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField("Kokoro voice", text: $model.config.voice)
-                TextField("Kokoro language, e.g. en-gb", text: $model.config.lang)
-                HStack {
-                    Text("Speed")
-                    Slider(value: $model.config.speed, in: 0.6...1.5)
-                    Text(String(format: "%.2f", model.config.speed))
-                        .font(.system(size: 11, design: .monospaced))
-                        .frame(width: 34, alignment: .trailing)
+
+                if model.config.tts == "kokoro" {
+                    TextField("Kokoro voice", text: $model.config.voice)
+                    Picker("Kokoro language", selection: $model.config.lang) {
+                        Text("English GB").tag("en-gb")
+                        Text("English US").tag("en-us")
+                        Text("French").tag("fr-fr")
+                        Text("Italian").tag("it")
+                        Text("Japanese").tag("ja")
+                        Text("Mandarin").tag("cmn")
+                    }
+                    HStack {
+                        Text("Speed")
+                        Slider(value: $model.config.speed, in: 0.6...1.5)
+                        Text(String(format: "%.2f", model.config.speed))
+                            .font(.system(size: 11, design: .monospaced))
+                            .frame(width: 34, alignment: .trailing)
+                    }
                 }
-                TextField("System voice", text: $model.config.systemVoice)
-                Stepper("System rate: \(model.config.systemRate)", value: $model.config.systemRate, in: 80...360, step: 5)
-                TextField("Command backend command", text: $model.config.command)
+
+                if model.config.tts == "system" || model.config.tts == "macos" {
+                    TextField("System voice", text: $model.config.systemVoice)
+                    Stepper("System rate: \(model.config.systemRate)", value: $model.config.systemRate, in: 80...360, step: 5)
+                }
+
+                if model.config.tts == "command" {
+                    TextField("Command backend command", text: $model.config.command)
+                    Text("Command must include {text} or {text_json}.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -410,9 +437,34 @@ struct JarvisLinePanel: View {
                     Text("Git").tag("git")
                     Text("PyPI").tag("pypi")
                 }
-                TextField("Git repo", text: $model.config.updateGitRepo)
-                TextField("Git ref", text: $model.config.updateGitRef)
+                if model.config.updateSource == "git" {
+                    TextField("Git repo", text: $model.config.updateGitRepo)
+                    TextField("Git ref", text: $model.config.updateGitRef)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var validationSummary: some View {
+        let issues = model.config.blockingIssues
+        let guidance = model.config.guidance
+        if !issues.isEmpty || !guidance.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(issues, id: \.self) { issue in
+                    Label(issue, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                }
+                ForEach(guidance, id: \.self) { note in
+                    Label(note, systemImage: "info.circle")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -436,7 +488,7 @@ struct JarvisLinePanel: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
         }
     }
 

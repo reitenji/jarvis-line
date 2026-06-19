@@ -26,6 +26,121 @@ struct JarvisConfigDraft {
     var updateGitRepo: String
     var updateGitRef: String
 
+    var blockingIssues: [String] {
+        var issues: [String] = []
+
+        if !["kokoro", "system", "macos", "command"].contains(tts) {
+            issues.append("Choose a supported TTS backend.")
+        }
+        if !["final_only", "commentary_and_final", "off"].contains(speakMode) {
+            issues.append("Choose a supported speak mode.")
+        }
+        if !["none", "system", "macos", "command"].contains(fallbackTTS) {
+            issues.append("Choose a supported fallback TTS.")
+        }
+        if fallbackTTS != "none" && fallbackTTS == tts {
+            issues.append("Fallback TTS must be different from the primary TTS.")
+        }
+
+        let language = lineLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shorthandLanguages = ["en", "tr", "user", "user language", "same as user"]
+        if language.isEmpty {
+            issues.append("Line language is required.")
+        } else if shorthandLanguages.contains(language.lowercased()) {
+            issues.append("Use a full language name, for example English or Turkish.")
+        } else if language.range(of: #"^[A-Za-z][A-Za-z -]{2,}$"#, options: .regularExpression) == nil {
+            issues.append("Line language must be a full language name using letters, spaces, or hyphens.")
+        }
+
+        if assistantName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append("Assistant name is required.")
+        }
+        if assistantName.count > 32 {
+            issues.append("Assistant name must be 32 characters or shorter.")
+        }
+        if !quietHours.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            quietHours.range(of: #"^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$"#, options: .regularExpression) == nil {
+            issues.append("Quiet hours must use HH:MM-HH:MM, for example 22:00-08:00.")
+        }
+
+        if !(60...500).contains(maxSpokenChars) {
+            issues.append("Max spoken chars must be between 60 and 500.")
+        }
+        if !(1...50).contains(maxQueueSize) {
+            issues.append("Max queue size must be between 1 and 50.")
+        }
+        if !(0...1).contains(volume) {
+            issues.append("Volume must be between 0.00 and 1.00.")
+        }
+
+        if tts == "kokoro" {
+            let allowedLangs = ["en-us", "en-gb", "fr-fr", "it", "ja", "cmn"]
+            if !allowedLangs.contains(lang) {
+                issues.append("Kokoro language must be one of en-us, en-gb, fr-fr, it, ja, or cmn.")
+            }
+            if !kokoroLanguageMatchesLineLanguage {
+                issues.append("Kokoro language code must match the selected line language.")
+            }
+            if voice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append("Kokoro voice is required.")
+            }
+            if !(0.6...1.5).contains(speed) {
+                issues.append("Kokoro speed must be between 0.60 and 1.50.")
+            }
+        }
+
+        if (tts == "system" || tts == "macos") && !(80...360).contains(systemRate) {
+            issues.append("System voice rate must be between 80 and 360.")
+        }
+
+        if tts == "command" {
+            let value = command.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty {
+                issues.append("Command backend requires a command.")
+            }
+            if !value.contains("{text}") && !value.contains("{text_json}") {
+                issues.append("Command backend must include {text} or {text_json}.")
+            }
+            if value.contains("\n") || value.contains("\r") {
+                issues.append("Command backend must be a single line.")
+            }
+        }
+
+        if !["git", "pypi"].contains(updateSource) {
+            issues.append("Choose a supported update source.")
+        }
+        if updateSource == "git" {
+            let repo = updateGitRepo.trimmingCharacters(in: .whitespacesAndNewlines)
+            if repo.isEmpty {
+                issues.append("Git update repo is required.")
+            } else if !Self.isSafeGitRepo(repo) {
+                issues.append("Git update repo must be an https, ssh, or git@ GitHub-style URL.")
+            }
+            if !Self.isSafeGitRef(updateGitRef) {
+                issues.append("Git update ref must be a safe branch, tag, or latest.")
+            }
+        }
+        if !(1...168).contains(updateCheckIntervalHours) {
+            issues.append("Update check interval must be between 1 and 168 hours.")
+        }
+
+        return issues
+    }
+
+    var guidance: [String] {
+        var notes: [String] = []
+        if tts == "kokoro" && lineLanguage != "English" {
+            notes.append("Kokoro only works well when its language code and model support the selected language.")
+        }
+        if tts == "system" || tts == "macos" {
+            notes.append("System/macOS voice quality depends on the voice selected in macOS Read & Speak settings.")
+        }
+        if tts == "command" {
+            notes.append("Keep API keys outside this config; call a wrapper command that reads secrets from environment variables.")
+        }
+        return notes
+    }
+
     static let defaults = JarvisConfigDraft(
         tts: "kokoro",
         speakMode: "final_only",
@@ -162,6 +277,40 @@ struct JarvisConfigDraft {
         return updated
     }
 
+    private var kokoroLanguageMatchesLineLanguage: Bool {
+        switch lineLanguage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "english":
+            return ["en-us", "en-gb"].contains(lang)
+        case "french":
+            return lang == "fr-fr"
+        case "italian":
+            return lang == "it"
+        case "japanese":
+            return lang == "ja"
+        case "chinese", "mandarin", "mandarin chinese":
+            return lang == "cmn"
+        default:
+            return false
+        }
+    }
+
+    private static func isSafeGitRepo(_ value: String) -> Bool {
+        if value.hasPrefix("-") || value.contains(" ") || value.contains("\n") || value.contains("\r") {
+            return false
+        }
+        return value.hasPrefix("https://") || value.hasPrefix("ssh://") ||
+            value.range(of: #"^git@[^:]+:[^ ]+/.+\.git$"#, options: .regularExpression) != nil
+    }
+
+    private static func isSafeGitRef(_ value: String) -> Bool {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty || text.hasPrefix("-") || text.contains(" ") || text.contains("..") {
+            return false
+        }
+        let forbidden = CharacterSet(charactersIn: #"~^:?*[\\"#)
+        return text.rangeOfCharacter(from: forbidden) == nil
+    }
+
     private static func string(_ value: Any?, _ fallback: String) -> String {
         optionalString(value).isEmpty ? fallback : optionalString(value)
     }
@@ -223,6 +372,10 @@ struct JarvisConfigStore {
     }
 
     func save(_ draft: JarvisConfigDraft) throws {
+        let issues = draft.blockingIssues
+        if !issues.isEmpty {
+            throw ConfigValidationError(issues: issues)
+        }
         let updated = draft.applying(to: try rawConfig())
         let data = try JSONSerialization.data(withJSONObject: updated, options: [.prettyPrinted, .sortedKeys])
         try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -280,6 +433,14 @@ struct JarvisConfigStore {
             "delete_after_play": true,
             "temp_dir": ttsHome.appendingPathComponent("generated").path,
         ]
+    }
+}
+
+struct ConfigValidationError: LocalizedError {
+    let issues: [String]
+
+    var errorDescription: String? {
+        "Fix settings before saving:\n" + issues.map { "- \($0)" }.joined(separator: "\n")
     }
 }
 
