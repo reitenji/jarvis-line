@@ -308,6 +308,16 @@ Do not paste raw logs into issues. Use `support-report`, review the Markdown, th
 - [Edge TTS](docs/recipes/edge-tts.md)
 - [OpenAI TTS](docs/recipes/openai-tts.md)
 
+## Community
+
+- Read project updates in [Announcements](https://github.com/reitenji/jarvis-line/discussions/categories/announcements).
+- Ask installation, configuration, TTS, and agent-integration questions in [Q&A](https://github.com/reitenji/jarvis-line/discussions/categories/q-a).
+- Propose early feature ideas in [Ideas](https://github.com/reitenji/jarvis-line/discussions/categories/ideas).
+- Report reproducible defects through the [bug report form](https://github.com/reitenji/jarvis-line/issues/new?template=bug_report.yml).
+- Review [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately according to [SECURITY.md](SECURITY.md), never in a public issue or discussion.
+
 ## Development
 
 Install locally:
@@ -343,6 +353,8 @@ bash scripts/verify-macos-artifacts.sh
 ```
 
 ## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete setup, verification, privacy, and pull request guide.
 
 Jarvis Line uses a simple release branch flow:
 
@@ -463,7 +475,7 @@ Some combinations are implemented but still need more real-world validation:
 - third-party/custom TTS command wrappers such as Edge TTS, OpenAI TTS, ElevenLabs, or local model scripts
 - real Claude/Gemini hook adapters that call the new `jarvis-line emit` protocol
 
-If you try one of these paths and hit a rough edge, please feel free to open an issue. A reviewed support report is the preferred format because it is transparent and easy to paste into the issue body:
+If you need setup help or are unsure whether the behavior is a defect, start in [Q&A Discussions](https://github.com/reitenji/jarvis-line/discussions/categories/q-a). For a reproducible defect, use the bug report form with a reviewed support report:
 
 ```bash
 jarvis-line support-report --output ./jarvis-line-issue.md

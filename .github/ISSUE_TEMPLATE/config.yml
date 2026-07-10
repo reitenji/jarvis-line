@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup and usage questions
+    url: https://github.com/reitenji/jarvis-line/discussions/categories/q-a
+    about: Ask for help with installation, configuration, TTS, or agent integration.
+  - name: Feature ideas
+    url: https://github.com/reitenji/jarvis-line/discussions/categories/ideas
+    about: Propose and discuss an idea before it becomes actionable work.
+  - name: Private security report
+    url: https://github.com/reitenji/jarvis-line/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue.
