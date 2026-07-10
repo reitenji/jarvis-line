@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var showSettingsWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApplication.shared.setActivationPolicy(.regular)
+        Self.applyDockVisibility(JarvisAppPreferences.showDockIcon)
         if let icon = NSImage(named: "AppIcon") {
             NSApplication.shared.applicationIconImage = icon
         }
@@ -33,6 +33,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         for item in mainMenu.items.reversed() where ["File", "Edit", "View", "Window", "Help"].contains(item.title) {
             mainMenu.removeItem(item)
+        }
+    }
+
+    static func applyDockVisibility(_ isVisible: Bool) {
+        NSApplication.shared.setActivationPolicy(isVisible ? .regular : .accessory)
+        if isVisible {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
+    }
+}
+
+enum JarvisAppPreferences {
+    private static let showDockIconKey = "showDockIcon"
+
+    static var showDockIcon: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: showDockIconKey) != nil else {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: showDockIconKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: showDockIconKey)
         }
     }
 }
@@ -138,6 +161,7 @@ final class JarvisLineModel: ObservableObject {
     @Published var isBusy = false
     @Published var errorMessage: String?
     @Published var codexHookInstalled = false
+    @Published var showDockIcon = JarvisAppPreferences.showDockIcon
 
     private let cli = JarvisLineCLI()
     private let configStore = JarvisConfigStore()
@@ -240,6 +264,12 @@ final class JarvisLineModel: ObservableObject {
 
     func openAudioWorkerLog() {
         open(path: "~/.codex/hooks/jarvis_line_audio_worker.log")
+    }
+
+    func setDockIconVisible(_ isVisible: Bool) {
+        showDockIcon = isVisible
+        JarvisAppPreferences.showDockIcon = isVisible
+        AppDelegate.applyDockVisibility(isVisible)
     }
 
     private func command(_ label: String, _ args: [String]) async {
@@ -595,6 +625,10 @@ struct JarvisLinePanel: View {
 
     private var runtimeSettings: some View {
         Form {
+            Toggle("Show in Dock", isOn: Binding(
+                get: { model.showDockIcon },
+                set: { model.setDockIconVisible($0) }
+            ))
             Toggle("Speech enabled", isOn: $model.config.speechEnabled)
             Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
 
