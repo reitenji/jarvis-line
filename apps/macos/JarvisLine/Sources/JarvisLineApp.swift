@@ -152,6 +152,8 @@ struct JarvisLineApp: App {
 final class JarvisLineModel: ObservableObject {
     @Published var status = RuntimeStatus.empty
     @Published var config = JarvisConfigDraft.defaults
+    @Published var configContract = JarvisConfigContract.empty
+    @Published var traceEvents: [RuntimeTraceEvent] = []
     @Published var cliVersion = "jarvis-line unknown"
     @Published var systemVoices: [String] = [""]
     @Published var doctorText = ""
@@ -179,10 +181,15 @@ final class JarvisLineModel: ObservableObject {
         return "waveform.circle"
     }
 
+    var validationIssues: [String] {
+        config.blockingIssues(using: configContract)
+    }
+
     func refresh() async {
         await run(label: "Refresh") {
-            config = try configStore.load()
             cliVersion = (try? await cli.run(["--version"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "jarvis-line unavailable"
+            await refreshConfigContract()
+            config = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
             systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
             let statusOutput = try await cli.run(["status"])
             let doctorOutput = try await cli.run(["doctor"])
@@ -190,6 +197,7 @@ final class JarvisLineModel: ObservableObject {
             doctorText = doctorOutput
             codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             lastOutput = statusOutput
+            await refreshTrace()
         }
     }
 
@@ -225,7 +233,8 @@ final class JarvisLineModel: ObservableObject {
 
     func loadConfig() async {
         await run(label: "Load Config") {
-            config = try configStore.load()
+            await refreshConfigContract()
+            config = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
             systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
             lastOutput = "Loaded config from \(configStore.displayPath)"
         }
@@ -233,7 +242,7 @@ final class JarvisLineModel: ObservableObject {
 
     func saveConfig(restart: Bool) async {
         await run(label: "Save Config") {
-            try configStore.save(config)
+            try configStore.save(config, contract: configContract)
             lastOutput = "Saved config to \(configStore.displayPath)"
             if restart {
                 lastOutput += "\n" + (try await cli.run(["restart"]))
@@ -267,6 +276,23 @@ final class JarvisLineModel: ObservableObject {
         await run(label: label) {
             lastOutput = try await cli.run(args)
         }
+    }
+
+    private func refreshConfigContract() async {
+        guard let output = try? await cli.run(["config", "contract"]),
+              let contract = try? JarvisConfigContract.fromJSON(output) else {
+            return
+        }
+        configContract = contract
+    }
+
+    private func refreshTrace() async {
+        guard let output = try? await cli.run(["trace", "--limit", "12", "--json"]),
+              let data = output.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([RuntimeTraceEvent].self, from: data) else {
+            return
+        }
+        traceEvents = decoded
     }
 
     private func run(label: String, operation: () async throws -> Void) async {
@@ -607,13 +633,13 @@ struct JarvisLinePanel: View {
             Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
 
             Picker("Speak mode", selection: $model.config.speakMode) {
-                Text("Final only").tag("final_only")
-                Text("Commentary + final").tag("commentary_and_final")
-                Text("Off").tag("off")
+                ForEach(model.configContract.stringOptions("speak_mode", fallback: JarvisConfigDraft.speakModeOptions), id: \.self) { value in
+                    Text(speakModeLabel(value)).tag(value)
+                }
             }
 
             Picker("Line language", selection: $model.config.lineLanguage) {
-                ForEach(JarvisConfigDraft.lineLanguageOptions, id: \.self) { value in
+                ForEach(model.configContract.stringOptions("line_language", fallback: JarvisConfigDraft.lineLanguageOptions), id: \.self) { value in
                     Text(value).tag(value)
                 }
             }
@@ -624,23 +650,21 @@ struct JarvisLinePanel: View {
             }
 
             Picker("Spoken length", selection: $model.config.maxSpokenChars) {
-                Text("Short · 120").tag(120)
-                Text("Balanced · 180").tag(180)
-                Text("Detailed · 240").tag(240)
-                Text("Verbose · 300").tag(300)
+                ForEach(model.configContract.intOptions("max_spoken_chars", fallback: JarvisConfigDraft.maxSpokenCharsOptions), id: \.self) { value in
+                    Text(spokenLengthLabel(value)).tag(value)
+                }
             }
 
             Picker("Queue size", selection: $model.config.maxQueueSize) {
-                ForEach(JarvisConfigDraft.maxQueueSizeOptions, id: \.self) { value in
+                ForEach(model.configContract.intOptions("max_queue_size", fallback: JarvisConfigDraft.maxQueueSizeOptions), id: \.self) { value in
                     Text("\(value) lines").tag(value)
                 }
             }
 
             Picker("Quiet hours", selection: $model.config.quietHours) {
-                Text("Off").tag("")
-                Text("Night · 22:00-08:00").tag("22:00-08:00")
-                Text("Evening · 20:00-08:00").tag("20:00-08:00")
-                Text("After work · 18:00-09:00").tag("18:00-09:00")
+                ForEach([""] + model.configContract.stringOptions("quiet_hours", fallback: JarvisConfigDraft.quietHourOptions.filter { !$0.isEmpty }), id: \.self) { value in
+                    Text(quietHoursLabel(value)).tag(value)
+                }
             }
         }
         .formStyle(.grouped)
@@ -651,25 +675,21 @@ struct JarvisLinePanel: View {
         VStack(alignment: .leading, spacing: 12) {
             Form {
                 Picker("Backend", selection: $model.config.tts) {
-                    Text("Kokoro · bundled default").tag("kokoro")
-                    Text("System voice").tag("system")
-                    Text("macOS say").tag("macos")
-                    Text("Custom command").tag("command")
+                    ForEach(model.configContract.stringOptions("tts", fallback: JarvisConfigDraft.ttsOptions), id: \.self) { value in
+                        Text(ttsLabel(value)).tag(value)
+                    }
                 }
 
                 Picker("Fallback", selection: $model.config.fallbackTTS) {
-                    Text("None").tag("none")
-                    Text("System").tag("system")
-                    Text("macOS").tag("macos")
-                    if !model.config.command.isEmpty {
-                        Text("Command").tag("command")
+                    ForEach(fallbackOptions, id: \.self) { value in
+                        Text(fallbackLabel(value)).tag(value)
                     }
                 }
 
                 Toggle("Warm TTS", isOn: $model.config.warmTTS)
 
                 Picker("Warm-up text", selection: $model.config.warmTTSText) {
-                    ForEach(options(JarvisConfigDraft.warmTextOptions, preserving: model.config.warmTTSText), id: \.self) { value in
+                    ForEach(options(model.configContract.stringOptions("warm_tts_text", fallback: JarvisConfigDraft.warmTextOptions), preserving: model.config.warmTTSText), id: \.self) { value in
                         Text(value).tag(value)
                     }
                 }
@@ -701,31 +721,42 @@ struct JarvisLinePanel: View {
             Form {
                 if model.config.tts == "kokoro" {
                     Picker("Kokoro voice", selection: $model.config.voice) {
-                        Text("George + Lewis blend").tag("bm_george:70,bm_lewis:30")
-                        Text("George").tag("bm_george")
-                        Text("Lewis").tag("bm_lewis")
+                        ForEach(model.configContract.stringOptions("voice", fallback: JarvisConfigDraft.kokoroVoiceOptions), id: \.self) { value in
+                            Text(kokoroVoiceLabel(value)).tag(value)
+                        }
                     }
                     Picker("Kokoro language", selection: $model.config.lang) {
-                        ForEach(JarvisConfigDraft.kokoroLangOptions, id: \.self) { value in
+                        ForEach(model.configContract.stringOptions("lang", fallback: JarvisConfigDraft.kokoroLangOptions), id: \.self) { value in
                             Text(kokoroLangLabel(value)).tag(value)
                         }
                     }
                     Picker("Speed", selection: $model.config.speed) {
-                        Text("Calm · 0.90").tag(0.9)
-                        Text("Normal · 1.00").tag(1.0)
-                        Text("Jarvis default · 1.08").tag(1.08)
-                        Text("Fast · 1.20").tag(1.2)
+                        ForEach(model.configContract.doubleOptions("speed", fallback: JarvisConfigDraft.speedOptions), id: \.self) { value in
+                            Text(speedLabel(value)).tag(value)
+                        }
                     }
                 }
 
                 if model.config.tts == "system" || model.config.tts == "macos" {
-                    Picker("System voice", selection: $model.config.systemVoice) {
+                    Picker(
+                        model.config.tts == "macos" ? "macOS voice" : "System voice",
+                        selection: $model.config.systemVoice
+                    ) {
                         ForEach(model.systemVoices, id: \.self) { value in
                             Text(value.isEmpty ? "System default" : value).tag(value)
                         }
                     }
-                    Picker("System rate", selection: $model.config.systemRate) {
-                        ForEach(JarvisConfigDraft.systemRateOptions, id: \.self) { value in
+                    Picker(
+                        model.config.tts == "macos" ? "macOS rate" : "System rate",
+                        selection: $model.config.systemRate
+                    ) {
+                        ForEach(
+                            model.configContract.intOptions(
+                                "system_rate",
+                                fallback: JarvisConfigDraft.systemRateOptions
+                            ),
+                            id: \.self
+                        ) { value in
                             Text("\(value)").tag(value)
                         }
                     }
@@ -755,7 +786,7 @@ struct JarvisLinePanel: View {
         Form {
             Toggle("Check for updates", isOn: $model.config.updateCheckEnabled)
             Picker("Interval", selection: $model.config.updateCheckIntervalHours) {
-                ForEach(JarvisConfigDraft.updateIntervalOptions, id: \.self) { value in
+                ForEach(model.configContract.intOptions("update_check_interval_hours", fallback: JarvisConfigDraft.updateIntervalOptions), id: \.self) { value in
                     Text(value == 168 ? "Weekly" : "\(value) hours").tag(value)
                 }
             }
@@ -770,7 +801,7 @@ struct JarvisLinePanel: View {
 
     @ViewBuilder
     private var validationSummary: some View {
-        let issues = model.config.blockingIssues
+        let issues = model.validationIssues
         let guidance = model.config.guidance
         if !issues.isEmpty || !guidance.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
@@ -793,6 +824,83 @@ struct JarvisLinePanel: View {
                     .stroke(issues.isEmpty ? JarvisTheme.cyan.opacity(0.22) : JarvisTheme.error.opacity(0.34), lineWidth: 1)
             )
         }
+    }
+
+    private var fallbackOptions: [String] {
+        var values = ["none"] + model.configContract.stringOptions(
+            "fallback_tts",
+            fallback: JarvisConfigDraft.fallbackOptions.filter { $0 != "none" }
+        )
+        if model.config.command.isEmpty {
+            values.removeAll { $0 == "command" }
+        }
+        return Array(NSOrderedSet(array: values)) as? [String] ?? values
+    }
+
+    private func speakModeLabel(_ value: String) -> String {
+        switch value {
+        case "final_only": return "Final only"
+        case "commentary_and_final": return "Commentary + final"
+        case "off": return "Off"
+        default: return value
+        }
+    }
+
+    private func spokenLengthLabel(_ value: Int) -> String {
+        switch value {
+        case 120: return "Short · 120"
+        case 180: return "Balanced · 180"
+        case 240: return "Detailed · 240"
+        case 300: return "Verbose · 300"
+        default: return "\(value) characters"
+        }
+    }
+
+    private func quietHoursLabel(_ value: String) -> String {
+        switch value {
+        case "": return "Off"
+        case "22:00-08:00": return "Night · 22:00-08:00"
+        case "20:00-08:00": return "Evening · 20:00-08:00"
+        case "18:00-09:00": return "After work · 18:00-09:00"
+        default: return value
+        }
+    }
+
+    private func ttsLabel(_ value: String) -> String {
+        switch value {
+        case "kokoro": return "Kokoro · bundled default"
+        case "system": return "System voice"
+        case "macos": return "macOS say"
+        case "command": return "Custom command"
+        default: return value
+        }
+    }
+
+    private func fallbackLabel(_ value: String) -> String {
+        switch value {
+        case "none": return "None"
+        case "system": return "System"
+        case "macos": return "macOS"
+        case "command": return "Command"
+        default: return value
+        }
+    }
+
+    private func kokoroVoiceLabel(_ value: String) -> String {
+        switch value {
+        case "bm_george:70,bm_lewis:30": return "George + Lewis blend"
+        case "bm_george": return "George"
+        case "bm_lewis": return "Lewis"
+        default: return value
+        }
+    }
+
+    private func speedLabel(_ value: Double) -> String {
+        if abs(value - 0.9) < 0.001 { return "Calm · 0.90" }
+        if abs(value - 1.0) < 0.001 { return "Normal · 1.00" }
+        if abs(value - 1.08) < 0.001 { return "Jarvis default · 1.08" }
+        if abs(value - 1.2) < 0.001 { return "Fast · 1.20" }
+        return String(format: "%.2f", value)
     }
 
     private func options(_ base: [String], preserving current: String) -> [String] {
@@ -835,7 +943,7 @@ struct JarvisLinePanel: View {
             } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
-            .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
+            .disabled(model.isBusy || !model.validationIssues.isEmpty)
 
             Button {
                 Task { await model.saveConfig(restart: true) }
@@ -843,7 +951,7 @@ struct JarvisLinePanel: View {
                 Label("Save + Restart", systemImage: "arrow.triangle.2.circlepath")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(model.isBusy || !model.config.blockingIssues.isEmpty)
+            .disabled(model.isBusy || !model.validationIssues.isEmpty)
         }
         .buttonStyle(.bordered)
         .tint(JarvisTheme.cyan)
@@ -851,32 +959,12 @@ struct JarvisLinePanel: View {
 
     @ViewBuilder
     private var diagnosticsPanel: some View {
-        if let error = model.errorMessage {
-            PanelSection(title: "Diagnostics", icon: "exclamationmark.triangle") {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(JarvisTheme.error)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else if !model.doctorText.isEmpty {
-            PanelSection(title: "Diagnostics", icon: "stethoscope") {
-                ScrollView {
-                    Text(model.doctorText)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(JarvisTheme.mutedText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(height: mode == .settingsWindow ? 132 : 108)
-                .padding(9)
-                .background(JarvisTheme.console)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(JarvisTheme.cyan.opacity(0.14), lineWidth: 1)
-                )
-            }
+        PanelSection(title: "Runtime diagnostics", icon: "stethoscope") {
+            RuntimeDiagnosticsView(
+                events: model.traceEvents,
+                doctorText: model.doctorText,
+                errorMessage: model.errorMessage
+            )
         }
     }
 

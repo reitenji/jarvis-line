@@ -50,6 +50,8 @@ Recommended defaults:
 - Uses Kokoro as the recommended local voice engine.
 - Falls back to system TTS if Kokoro is not installed or the user does not want Kokoro.
 - Supports custom TTS commands and API wrappers.
+- Accepts a versioned `emit` event from any agent or editor adapter.
+- Keeps a bounded privacy-safe lifecycle trace for fast diagnosis.
 - Prints agent instructions for `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` so you can paste them where they belong.
 - Generates redacted Markdown support reports for issue descriptions.
 
@@ -68,17 +70,24 @@ Jarvis Line is not a full transcript narrator. It is designed for short spoken a
 ## How It Works
 
 ```text
-agent response
-  -> Jarvis line: ...
-  -> session watcher
+agent response or hook event
+  -> agent adapter / Codex session watcher
+  -> normalized Jarvis Line event
   -> latest-message cache
-  -> notify hook
   -> audio queue
   -> single audio worker
   -> selected TTS engine
 ```
 
 The important part is the queue. Even if multiple sessions finish close together, Jarvis Line speaks one line at a time.
+
+Codex can use the bundled session watcher and notify hook. Other agents can submit the same normalized event directly:
+
+```bash
+jarvis-line emit --source claude --session session-123 --phase commentary --line "The tests are running."
+```
+
+See [docs/EVENT-PROTOCOL.md](docs/EVENT-PROTOCOL.md) for JSON stdin and adapter rules.
 
 ## Quick Start
 
@@ -325,6 +334,14 @@ Run syntax checks:
 python3 -m compileall -q src/jarvis_line
 ```
 
+Verify shared version metadata and the native app:
+
+```bash
+python3 scripts/check_version_consistency.py
+swift test --package-path apps/macos/JarvisLine
+bash scripts/verify-macos-artifacts.sh
+```
+
 ## Contributing
 
 Jarvis Line uses a simple release branch flow:
@@ -360,7 +377,7 @@ jarvis-line support-report --output ./jarvis-line-issue.md
 
 ## Release Status
 
-Jarvis Line is prepared as a `0.2.2` release package.
+The current tagged release is `0.2.2`. Changes listed under `Unreleased` are validated on feature/develop branches before the next version tag is created.
 
 Release-ready project pieces:
 
@@ -375,23 +392,29 @@ Release-ready project pieces:
 - config defaults/schema inspection commands
 - config profiles and prefix helper commands
 - runtime start/stop/restart, queue, and log commands
+- privacy-safe runtime trace and native diagnostics
+- final-safe, session-fair queue scheduling
+- agent-neutral versioned event protocol
+- shared CLI/macOS configuration contract
 - update check/apply/install/configure commands
 - fallback TTS and command retry/env/cwd settings
 - instruction replace/doctor/style commands
 - issue template that requests a reviewed redacted support report
 - system TTS fallback for users who do not want Kokoro
 - experimental macOS menu bar manager app
+- Swift tests, app/DMG smoke verification, and SHA-256 release checksums
 
 Release caveat:
 
 - Kokoro model files are not bundled; users must place them locally or configure custom paths.
+- Local DMGs are ad-hoc signed but not Apple-notarized until a Developer ID release process is configured.
 
 ## macOS Manager App
 
 An experimental macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
 It keeps the CLI as the core engine and provides native controls for status,
 start/stop/restart, repair, test voice, hook install, settings, config file
-access, and logs.
+access, structured runtime diagnostics, and logs.
 
 The menu bar panel is intentionally small: it shows current runtime health and
 fast day-to-day actions. Common config changes open in a separate Settings
@@ -400,8 +423,10 @@ window, so casual users do not need to edit
 config keys while saving runtime, TTS, and update preferences. The Settings
 window uses controlled pickers and presets where possible, shows the installed
 CLI/app version in the header, and validates unsafe or incompatible choices
-before saving. The macOS app uses a custom dark theme derived from the Jarvis
-Line icon palette instead of the default macOS utility look.
+before saving. Picker values and defaults come from the CLI's versioned config
+contract, which prevents Python and Swift settings from drifting. The macOS app
+uses a custom dark theme derived from the Jarvis Line icon palette instead of
+the default macOS utility look.
 
 ```bash
 cd apps/macos/JarvisLine
@@ -424,6 +449,8 @@ cd apps/macos/JarvisLine
 open "dist/JarvisLine-macOS.dmg"
 ```
 
+The packaging script also writes `dist/JarvisLine-macOS.dmg.sha256`. CI mounts the DMG read-only, checks that it contains exactly one app, and verifies the checksum before retaining the artifact.
+
 ## Validation Status
 
 The current release has been exercised locally on macOS with the Jarvis Line CLI, Codex hook flow, queue handling, Kokoro configuration checks, system TTS fallback, instruction generation, support reports, unit tests, and smoke tests.
@@ -434,7 +461,7 @@ Some combinations are implemented but still need more real-world validation:
 - Linux system TTS playback with `spd-say`, `espeak-ng`, or `espeak`
 - non-English Kokoro setups with user-provided compatible models, voices, and language settings
 - third-party/custom TTS command wrappers such as Edge TTS, OpenAI TTS, ElevenLabs, or local model scripts
-- Claude and Gemini usage beyond instruction generation
+- real Claude/Gemini hook adapters that call the new `jarvis-line emit` protocol
 
 If you try one of these paths and hit a rough edge, please feel free to open an issue. A reviewed support report is the preferred format because it is transparent and easy to paste into the issue body:
 
