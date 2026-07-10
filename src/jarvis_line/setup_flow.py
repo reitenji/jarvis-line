@@ -417,14 +417,18 @@ def collect_setup_plan(
         input_fn=input_fn,
         output_fn=output_fn,
     )
+    speak_mode_options = [
+        ("final_only", "Final responses only"),
+        ("commentary_and_final", "Commentary and final responses"),
+        ("off", "Do not speak"),
+    ]
+    current_speak_mode = str(current.get("speak_mode", "final_only"))
+    if current_speak_mode not in {option_id for option_id, _label in speak_mode_options}:
+        current_speak_mode = "final_only"
     speak_mode = prompt_choice(
         "When should Jarvis Line speak?",
-        [
-            ("final_only", "Final responses only"),
-            ("commentary_and_final", "Commentary and final responses"),
-            ("off", "Do not speak"),
-        ],
-        default=str(current.get("speak_mode", "final_only")),
+        speak_mode_options,
+        default=current_speak_mode,
         input_fn=input_fn,
         output_fn=output_fn,
     )

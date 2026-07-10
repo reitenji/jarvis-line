@@ -264,6 +264,41 @@ def test_apply_runs_healthy_doctor_before_optional_voice_test(monkeypatch, tmp_p
     assert calls == ["doctor", "voice"]
 
 
+def test_apply_skips_runtime_health_gate_when_runtime_start_is_not_requested(
+    monkeypatch, tmp_path
+):
+    patch_setup_paths(monkeypatch, tmp_path)
+    stopped_runtime_doctor = {
+        "ok": False,
+        "selected_backend_ok": True,
+        "runtime_ok": False,
+        "result": {
+            "selected_tts": "system",
+            "system_tts": {"ok": True},
+            "watcher": {"ok": False},
+            "audio_worker": {"ok": False},
+        },
+    }
+    monkeypatch.setattr(cli, "setup_doctor_json", lambda: stopped_runtime_doctor)
+
+    result = cli.apply_setup_plan(
+        kokoro_codex_plan(
+            tts="system",
+            install_kokoro=False,
+            install_codex_hook=False,
+            start_runtime=False,
+        ),
+        json_mode=True,
+    )
+
+    doctor_step = next(step for step in result["steps"] if step["name"] == "doctor")
+    assert result["ok"] is True
+    assert doctor_step["ok"] is True
+    assert doctor_step["status"] == "healthy-for-requested-scope"
+    assert doctor_step["scope"] == "backend_and_config"
+    assert doctor_step["result"]["runtime_ok"] is False
+
+
 def test_setup_doctor_rejects_success_exit_when_selected_backend_is_unhealthy(monkeypatch):
     def doctor_with_unhealthy_backend(_args):
         print(json.dumps({
@@ -357,7 +392,7 @@ def test_wizard_applies_the_collected_plan_through_existing_pipeline(monkeypatch
 
 
 @pytest.mark.parametrize("error", [EOFError, KeyboardInterrupt])
-def test_wizard_cancellation_has_no_side_effects(monkeypatch, capsys, error):
+def test_wizard_cancellation_before_confirmation_has_no_side_effects(monkeypatch, capsys, error):
     monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
     monkeypatch.setattr(cli.setup_flow, "collect_setup_plan", lambda *_args, **_kwargs: (_ for _ in ()).throw(error()))
     monkeypatch.setattr(cli, "apply_setup_plan", lambda *_args, **_kwargs: pytest.fail("must not apply"))
@@ -365,6 +400,35 @@ def test_wizard_cancellation_has_no_side_effects(monkeypatch, capsys, error):
     assert cli.setup_wizard(argparse.Namespace(test=False)) == 130
 
     assert "No changes were made" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("error", [EOFError, KeyboardInterrupt])
+def test_wizard_reports_interruption_after_real_apply(monkeypatch, tmp_path, capsys, error):
+    patch_setup_paths(monkeypatch, tmp_path)
+    plan = kokoro_codex_plan(
+        tts="system",
+        install_kokoro=False,
+        install_codex_hook=False,
+        start_runtime=False,
+    )
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli.setup_flow, "collect_setup_plan", lambda *_args, **_kwargs: plan)
+    monkeypatch.setattr(cli.setup_flow, "prompt_yes_no", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        cli,
+        "setup_doctor_json",
+        lambda: (_ for _ in ()).throw(error()),
+    )
+
+    assert cli.setup_wizard(argparse.Namespace(test=False)) == 130
+
+    assert cli.load_json(cli.CONFIG_PATH, {})["tts"] == "system"
+    stderr = capsys.readouterr().err
+    assert "Setup interrupted" in stderr
+    assert "Some approved setup steps may have applied" in stderr
+    assert "jarvis-line doctor" in stderr
+    assert "jarvis-line status" in stderr
+    assert "No changes were made" not in stderr
 
 
 def test_wizard_passes_test_flag_to_plan_collection(monkeypatch):

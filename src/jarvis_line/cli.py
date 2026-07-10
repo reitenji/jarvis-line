@@ -1096,12 +1096,16 @@ def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str
     steps: list[dict[str, Any]] = []
     try:
         config = setup_flow.build_config(plan, load_effective_config({}))
+    except (EOFError, KeyboardInterrupt):
+        raise
     except Exception as exc:
         return _setup_result(plan, steps, ok=False, error=str(exc))
 
     def run_step(name: str, callback) -> bool:
         try:
             code = _run_setup_callable(callback, json_mode=json_mode)
+        except (EOFError, KeyboardInterrupt):
+            raise
         except Exception as exc:
             steps.append({"name": name, "ok": False, "error": str(exc)})
             return False
@@ -1128,6 +1132,8 @@ def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str
             steps.append({"name": "config_backup", "ok": True, "path": str(backup)})
         save_json(CONFIG_PATH, config)
         steps.append({"name": "config_write", "ok": True})
+    except (EOFError, KeyboardInterrupt):
+        raise
     except Exception as exc:
         steps.append({"name": "config_write", "ok": False, "error": str(exc)})
         return _setup_result(plan, steps, ok=False, error="config write failed")
@@ -1144,11 +1150,22 @@ def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str
 
     try:
         doctor_payload = _run_setup_callable(setup_doctor_json, json_mode=json_mode)
-        steps.append({"name": "doctor", "ok": bool(doctor_payload.get("ok", False)), "result": doctor_payload})
+        doctor_ok = bool(doctor_payload.get("selected_backend_ok", False)) and (
+            not plan.start_runtime or bool(doctor_payload.get("runtime_ok", False))
+        )
+        steps.append({
+            "name": "doctor",
+            "ok": doctor_ok,
+            "scope": "backend_and_runtime" if plan.start_runtime else "backend_and_config",
+            "status": "healthy-for-requested-scope" if doctor_ok else "warning",
+            "result": doctor_payload,
+        })
+    except (EOFError, KeyboardInterrupt):
+        raise
     except Exception as exc:
         steps.append({"name": "doctor", "ok": False, "error": str(exc)})
         return _setup_result(plan, steps, ok=False, error="doctor failed")
-    if not doctor_payload.get("ok", False):
+    if not doctor_ok:
         return _setup_result(plan, steps, ok=False, error="doctor failed")
 
     if plan.test_voice and not run_step(
@@ -1895,6 +1912,7 @@ def prefix_remove(args) -> int:
 
 
 def setup_wizard(args) -> int:
+    confirmed = False
     try:
         env = detect_setup_environment()
         plan = setup_flow.collect_setup_plan(
@@ -1907,11 +1925,19 @@ def setup_wizard(args) -> int:
         if not setup_flow.prompt_yes_no("Apply this setup?", default=True):
             print("Setup cancelled. No changes were made.")
             return 0
+        confirmed = True
         result = apply_setup_plan(plan, json_mode=False)
         print_setup_result(result)
         return 0 if result["ok"] else 1
     except (EOFError, KeyboardInterrupt):
-        print("\nSetup cancelled. No changes were made.", file=sys.stderr)
+        if confirmed:
+            print(
+                "\nSetup interrupted. Some approved setup steps may have applied. "
+                "Run `jarvis-line doctor` or `jarvis-line status` to check the current state.",
+                file=sys.stderr,
+            )
+        else:
+            print("\nSetup cancelled. No changes were made.", file=sys.stderr)
         return 130
 
 

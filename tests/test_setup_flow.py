@@ -186,3 +186,16 @@ def test_collect_setup_plan_forces_voice_test_when_requested():
     )
 
     assert plan.test_voice is True
+
+
+def test_collect_setup_plan_falls_back_from_invalid_speak_mode():
+    answers = iter(["1", "1", "", "1", "1", "n", "n"])
+
+    plan = setup_flow.collect_setup_plan(
+        environment(),
+        {"speak_mode": "legacy_mode"},
+        input_fn=lambda _prompt: next(answers),
+        output_fn=lambda _line: None,
+    )
+
+    assert plan.speak_mode == "final_only"
