@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0
+
 - Drain pending audio jobs before an RSS-triggered worker exit to avoid repeated Kokoro reloads during bursts.
 - Preserve final messages when trimming the queue and rotate playback fairly across active sessions.
 - Add a bounded privacy-safe lifecycle trace and `jarvis-line trace` command.
@@ -9,6 +11,9 @@
 - Add the versioned `jarvis-line emit` protocol for Codex, Claude, Gemini, and custom adapters.
 - Establish a canonical config contract shared by the Python CLI and macOS settings app.
 - Add native runtime diagnostics, Swift tests, app/DMG smoke checks, checksums, and tag artifact automation.
+- Add a macOS Dock visibility setting and preserve the preference across launches.
+- Fix first-save config defaults and macOS voice/rate round-tripping in the manager app.
+- Require release tags to originate from `main` and verify Python and native artifacts before publishing.
 
 ## 0.1.0b8
 
