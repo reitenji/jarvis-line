@@ -316,3 +316,69 @@ def test_setup_parser_routes_machine_commands_and_preserves_default():
     assert apply.setup_command == "apply"
     assert default.func is cli.setup_command
     assert default.default is True
+
+
+def test_wizard_decline_leaves_files_and_runtime_unchanged(monkeypatch, tmp_path, capsys):
+    patch_setup_paths(monkeypatch, tmp_path)
+    original = {"tts": "system", "line_language": "English"}
+    cli.save_json(cli.CONFIG_PATH, original)
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli.setup_flow, "collect_setup_plan", lambda *_args, **_kwargs: kokoro_codex_plan())
+    monkeypatch.setattr(cli.setup_flow, "prompt_yes_no", lambda *_args, **_kwargs: False)
+    applied = []
+    monkeypatch.setattr(cli, "apply_setup_plan", lambda *_args, **_kwargs: applied.append(True))
+
+    assert cli.setup_wizard(argparse.Namespace(test=False)) == 0
+
+    assert cli.load_json(cli.CONFIG_PATH, {}) == original
+    assert applied == []
+    assert "No changes were made" in capsys.readouterr().out
+
+
+def test_wizard_applies_the_collected_plan_through_existing_pipeline(monkeypatch, capsys):
+    plan = kokoro_codex_plan(start_runtime=False)
+    result = {"ok": True, "steps": [], "instruction": {}}
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli, "load_effective_config", lambda _default=None: {})
+    monkeypatch.setattr(cli.setup_flow, "collect_setup_plan", lambda *_args, **_kwargs: plan)
+    monkeypatch.setattr(cli.setup_flow, "prompt_yes_no", lambda *_args, **_kwargs: True)
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "apply_setup_plan",
+        lambda received, *, json_mode: calls.append((received, json_mode)) or result,
+    )
+    monkeypatch.setattr(cli, "print_setup_result", lambda received: calls.append((received, "printed")))
+
+    assert cli.setup_wizard(argparse.Namespace(test=False)) == 0
+
+    assert calls == [(plan, False), (result, "printed")]
+    assert "Review setup" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error", [EOFError, KeyboardInterrupt])
+def test_wizard_cancellation_has_no_side_effects(monkeypatch, capsys, error):
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli.setup_flow, "collect_setup_plan", lambda *_args, **_kwargs: (_ for _ in ()).throw(error()))
+    monkeypatch.setattr(cli, "apply_setup_plan", lambda *_args, **_kwargs: pytest.fail("must not apply"))
+
+    assert cli.setup_wizard(argparse.Namespace(test=False)) == 130
+
+    assert "No changes were made" in capsys.readouterr().err
+
+
+def test_wizard_passes_test_flag_to_plan_collection(monkeypatch):
+    plan = kokoro_codex_plan(start_runtime=False, test_voice=True)
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli, "load_effective_config", lambda _default=None: {})
+    seen = []
+    monkeypatch.setattr(
+        cli.setup_flow,
+        "collect_setup_plan",
+        lambda *_args, **kwargs: seen.append(kwargs["force_test"]) or plan,
+    )
+    monkeypatch.setattr(cli.setup_flow, "prompt_yes_no", lambda *_args, **_kwargs: False)
+
+    assert cli.setup_wizard(argparse.Namespace(test=True)) == 0
+
+    assert seen == [True]

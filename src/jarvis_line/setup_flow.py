@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 from jarvis_line.config_contract import (
@@ -300,3 +301,209 @@ def instruction_guidance(plan: SetupPlan) -> dict[str, str | None]:
             f'--language "{plan.language}"'
         ),
     }
+
+
+def prompt_choice(
+    prompt: str,
+    options: list[tuple[str, str]],
+    *,
+    default: str,
+    input_fn=input,
+    output_fn=print,
+) -> str:
+    """Select a value from a numbered, caller-controlled list."""
+    option_ids = [option_id for option_id, _label in options]
+    if not options or default not in option_ids:
+        raise ValueError("prompt choices require a valid default")
+    default_index = option_ids.index(default) + 1
+    output_fn(prompt)
+    for index, (_option_id, label) in enumerate(options, start=1):
+        output_fn(f"  {index}. {label}")
+    while True:
+        choice = input_fn(f"Choose a number [{default_index}]: ").strip()
+        if not choice:
+            return default
+        if choice.isdigit():
+            index = int(choice)
+            if 1 <= index <= len(options):
+                return options[index - 1][0]
+        output_fn(f"Choose a number from 1 to {len(options)}.")
+
+
+def prompt_yes_no(
+    prompt: str,
+    *,
+    default: bool,
+    input_fn=input,
+    output_fn=print,
+) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        choice = input_fn(f"{prompt} [{suffix}]: ").strip().casefold()
+        if not choice:
+            return default
+        if choice in {"y", "yes"}:
+            return True
+        if choice in {"n", "no"}:
+            return False
+        output_fn("Choose yes or no.")
+
+
+def prompt_language(
+    *,
+    default: str,
+    input_fn=input,
+    output_fn=print,
+) -> str:
+    languages = list(UI_OPTIONS["line_language"])
+    other_id = "__other_language__"
+    default_id = default if default in languages else other_id
+    choice = prompt_choice(
+        "Jarvis line language",
+        [(language, language) for language in languages]
+        + [(other_id, "Other language...")],
+        default=default_id,
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    if choice != other_id:
+        return normalize_language(choice)
+    while True:
+        try:
+            return normalize_language(input_fn("Full language name: "))
+        except SetupContractError as exc:
+            output_fn(str(exc))
+
+
+def _default_backend(options: list[dict[str, Any]], current: Mapping[str, Any]) -> str:
+    current_tts = current.get("tts")
+    available = {option["id"] for option in options if option["available"]}
+    if current_tts in available:
+        return str(current_tts)
+    for option in options:
+        if option["available"] and option["recommended"]:
+            return str(option["id"])
+    return next(str(option["id"]) for option in options if option["available"])
+
+
+def collect_setup_plan(
+    env: SetupEnvironment,
+    current: Mapping[str, Any],
+    *,
+    force_test: bool = False,
+    input_fn=input,
+    output_fn=print,
+) -> SetupPlan:
+    """Collect a reviewed setup plan without writing config or starting services."""
+    current = dict(current)
+    language = prompt_language(
+        default=normalize_language(current.get("line_language", "English")),
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    inspected_backends = backend_options(env, language, current)
+    available_backends = [option for option in inspected_backends if option["available"]]
+    if not available_backends:
+        raise SetupContractError("no TTS backend is available on this machine")
+    if not any(option["id"] == "command" for option in available_backends):
+        output_fn(
+            "Custom command TTS is unavailable until configured; run "
+            "`jarvis-line tts use command --command ...`."
+        )
+    tts = prompt_choice(
+        "Voice backend",
+        [(str(option["id"]), str(option["label"])) for option in available_backends],
+        default=_default_backend(available_backends, current),
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    speak_mode = prompt_choice(
+        "When should Jarvis Line speak?",
+        [
+            ("final_only", "Final responses only"),
+            ("commentary_and_final", "Commentary and final responses"),
+            ("off", "Do not speak"),
+        ],
+        default=str(current.get("speak_mode", "final_only")),
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    agent_target = prompt_choice(
+        "Agent instruction target",
+        [
+            ("agents", "AGENTS.md-compatible agent"),
+            ("codex", "Codex"),
+            ("claude", "Claude"),
+            ("gemini", "Gemini"),
+        ],
+        default="agents",
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    instruction_scope = prompt_choice(
+        "Instruction guidance scope",
+        [("project", "Current project"), ("global", "Your global agent instructions")],
+        default="project",
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    project_path = str(Path.cwd()) if instruction_scope == "project" else None
+    install_kokoro = tts == "kokoro" and not env.kokoro_ready and prompt_yes_no(
+        "Install verified Kokoro assets before applying setup?",
+        default=True,
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    install_codex_hook = agent_target == "codex" and prompt_yes_no(
+        "Install the Codex SessionStart hook?",
+        default=True,
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    start_runtime = prompt_yes_no(
+        "Start the Jarvis Line runtime after setup?",
+        default=True,
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    test_voice = force_test or prompt_yes_no(
+        "Play a short voice test after setup?",
+        default=False,
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    return SetupPlan.from_mapping(
+        {
+            "version": SETUP_SCHEMA_VERSION,
+            "language": language,
+            "tts": tts,
+            "speak_mode": speak_mode,
+            "agent_target": agent_target,
+            "instruction_scope": instruction_scope,
+            "install_kokoro": install_kokoro,
+            "install_codex_hook": install_codex_hook,
+            "start_runtime": start_runtime,
+            "test_voice": test_voice,
+            "project_path": project_path,
+            "command": current.get("command") if tts == "command" else None,
+        }
+    )
+
+
+def review_lines(plan: SetupPlan, env: SetupEnvironment) -> list[str]:
+    guidance = instruction_guidance(plan)
+    lines = [
+        "Review setup:",
+        f"  Language: {plan.language}",
+        f"  Voice backend: {plan.tts}",
+        f"  Speech mode: {plan.speak_mode}",
+        f"  Instruction guidance: {guidance['scope']} {guidance['filename']} at {guidance['destination']}",
+        "  Instruction files are guidance only and will not be written.",
+        f"  Start runtime: {'yes' if plan.start_runtime else 'no'}",
+        f"  Voice test: {'yes' if plan.test_voice else 'no'}",
+    ]
+    if plan.tts == "kokoro" and not env.kokoro_ready:
+        lines.append(f"  Install Kokoro assets: {'yes' if plan.install_kokoro else 'no'}")
+    if plan.agent_target == "codex":
+        lines.append(f"  Install Codex hook: {'yes' if plan.install_codex_hook else 'no'}")
+    return lines

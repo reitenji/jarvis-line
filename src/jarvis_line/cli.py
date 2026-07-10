@@ -1185,6 +1185,18 @@ def setup_command(args) -> int:
     return setup_wizard(args)
 
 
+def print_setup_result(result: Mapping[str, Any]) -> None:
+    if result.get("ok"):
+        print("Setup complete.")
+    else:
+        print(f"Setup failed: {result.get('error', 'unknown error')}")
+    for step in result.get("steps", []):
+        print_check(bool(step.get("ok")), str(step.get("name", "setup")))
+    instruction = result.get("instruction")
+    if isinstance(instruction, dict) and instruction.get("command"):
+        print_next(str(instruction["command"]))
+
+
 def init_project(args) -> int:
     setup_rc = setup_default(argparse.Namespace(test=getattr(args, "test", False)))
     if setup_rc != 0:
@@ -1882,31 +1894,25 @@ def prefix_remove(args) -> int:
     return 0
 
 
-def setup_wizard(_args) -> int:
-    print("Jarvis Line setup")
-    print("1. Kokoro local (recommended default)")
-    print("2. System TTS fallback")
-    print("3. macOS say")
-    print("4. Custom command")
-    choice = input("Choose TTS [1]: ").strip() or "1"
-    if choice == "2":
-        rc = tts_use(argparse.Namespace(preset="system", command=None, player=None, mode=None))
-    elif choice == "3":
-        rc = tts_use(argparse.Namespace(preset="macos", command=None, player=None, mode=None))
-    elif choice == "4":
-        command = input("Command, use {text}: ").strip()
-        rc = tts_use(argparse.Namespace(preset="command", command=command, player=None, mode="play"))
-    else:
-        rc = tts_use(argparse.Namespace(preset="kokoro", command=None, player=None, mode=None))
-    if rc != 0:
-        return rc
-    speak_mode = input("Speak mode [final_only/commentary_and_final/off] (final_only): ").strip()
-    if speak_mode:
-        config_set(argparse.Namespace(key="speak_mode", value=speak_mode))
-    prefix = input("Line prefix (Jarvis line:): ").strip()
-    if prefix:
-        config_set(argparse.Namespace(key="line_prefixes", value=prefix))
-    return launch_runtime(argparse.Namespace(test=True), selected_backend(load_effective_config({})))
+def setup_wizard(args) -> int:
+    try:
+        env = detect_setup_environment()
+        plan = setup_flow.collect_setup_plan(
+            env,
+            load_effective_config({}),
+            force_test=bool(getattr(args, "test", False)),
+        )
+        for line in setup_flow.review_lines(plan, env):
+            print(line)
+        if not setup_flow.prompt_yes_no("Apply this setup?", default=True):
+            print("Setup cancelled. No changes were made.")
+            return 0
+        result = apply_setup_plan(plan, json_mode=False)
+        print_setup_result(result)
+        return 0 if result["ok"] else 1
+    except (EOFError, KeyboardInterrupt):
+        print("\nSetup cancelled. No changes were made.", file=sys.stderr)
+        return 130
 
 
 INSTRUCTION_FILES = {
