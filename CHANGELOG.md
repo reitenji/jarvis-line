@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.3.1
+
+- Record queued lifecycle metadata before launching the audio worker so traces stay in causal order.
+- Update GitHub artifact actions to their current Node 24-based major versions.
+
 ## 0.3.0
 
 - Drain pending audio jobs before an RSS-triggered worker exit to avoid repeated Kokoro reloads during bursts.

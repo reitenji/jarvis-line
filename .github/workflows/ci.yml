@@ -41,7 +41,7 @@ jobs:
         run: swift test --package-path apps/macos/JarvisLine
       - name: Verify app and DMG artifacts
         run: bash scripts/verify-macos-artifacts.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jarvis-line-macos-smoke
           path: |

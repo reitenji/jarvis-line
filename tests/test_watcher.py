@@ -347,12 +347,13 @@ def test_queue_log_is_private_and_trace_records_metadata(tmp_path, monkeypatch):
         "runtime_config",
         lambda: {"speak_mode": "final_only", "debug_content_logging": False},
     )
-    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: None)
     events = []
+    lifecycle = []
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: lifecycle.append("launch"))
     monkeypatch.setattr(
         watcher.diagnostics,
         "record_event",
-        lambda event, **metadata: events.append((event, metadata)),
+        lambda event, **metadata: (events.append((event, metadata)), lifecycle.append(event)),
     )
 
     assert watcher.queue_jarvis_line("/private/session.jsonl", "final", "secret line") is True
@@ -363,6 +364,7 @@ def test_queue_log_is_private_and_trace_records_metadata(tmp_path, monkeypatch):
     assert events[-1][0] == "queued"
     assert events[-1][1]["phase"] == "final"
     assert "line" not in events[-1][1]
+    assert lifecycle == ["queued", "launch"]
 
 
 def test_final_duplicate_stays_suppressed_after_dedupe_window(tmp_path, monkeypatch):
