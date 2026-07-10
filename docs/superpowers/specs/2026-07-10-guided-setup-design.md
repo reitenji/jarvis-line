@@ -20,6 +20,8 @@ configuration model.
 ## Goals
 
 - Turn the existing `jarvis-line setup` command into a safe first-run wizard.
+- Add a native macOS Setup Assistant that drives the same setup engine without
+  duplicating configuration or compatibility rules in Swift.
 - Present controlled, platform-aware choices before advanced free-form input.
 - Keep the spoken instruction language and selected TTS compatible by default.
 - Recommend Kokoro for English and platform system TTS for other languages.
@@ -38,7 +40,7 @@ configuration model.
 
 ## Non-Goals
 
-- A graphical setup flow in the macOS manager app.
+- Graphical setup applications for Windows or Linux in this feature.
 - Automatic edits to agent instruction Markdown.
 - Native Claude or Gemini hook adapters.
 - Automatic selection of a natural OS voice for every language.
@@ -110,6 +112,62 @@ configuration model.
    - Print the exact `jarvis-line instructions print ... --language "..."`
      command plus project/global destination guidance.
 
+## macOS Graphical Setup Assistant
+
+The existing macOS manager app adds a separate native Setup Assistant window.
+It follows the same sequence as the CLI wizard:
+
+```text
+Welcome -> Language -> Voice -> Speech -> Agent & Scope -> Review -> Verify
+```
+
+### Launch Behavior
+
+- Open the assistant automatically once when the app finds no Jarvis Line
+  config. Existing users with a config must not receive surprise onboarding.
+- Record that the first-run offer was shown in app preferences. Dismissing it
+  does not mutate config and does not reopen it on every launch.
+- When setup is incomplete, keep a visible `Complete Setup` action in the menu
+  bar panel.
+- Add `Run Setup Assistant...` to the full Settings window so any user can
+  revisit the flow later.
+- Opening or closing the assistant must not change Dock visibility or create a
+  second app process.
+
+### Interaction Design
+
+- Use the current Jarvis Line dark theme, app mark, typography hierarchy, and
+  restrained cyan/gold semantic accents.
+- Use native pickers, radio-style selection rows, toggles, progress indicators,
+  and Back/Continue buttons. Do not expose raw JSON or unrestricted config
+  fields in the casual flow.
+- Keep a stable window size with a fixed header, one scrollable content region,
+  and a persistent action footer. Text must remain readable at the longest
+  supported language labels.
+- Show unavailable TTS choices as disabled only when the explanation helps the
+  user; otherwise omit them. Never let a disabled backend become the selected
+  plan value.
+- Show the Kokoro source, license, approximate size, and install confirmation
+  before invoking any network work.
+- Project scope uses an `NSOpenPanel` folder picker only to produce accurate
+  destination guidance. The app still does not write instruction Markdown.
+- The final screen offers `Copy Instructions`, `Test Voice`, and `Done`. Copying
+  instructions reads reviewed output from the CLI and places it on the local
+  clipboard.
+
+### Progress And Errors
+
+- During apply, replace navigation controls with one progress indicator and the
+  current safe step label, such as `Verifying Kokoro assets` or
+  `Starting Jarvis Line`.
+- A failed step remains visible with a concise recovery action and captured,
+  redacted CLI detail. The window does not close automatically on failure.
+- Retry uses the same reviewed plan. Back returns to editing only when no apply
+  process is active.
+- Completion requires a valid config and healthy runtime when runtime start was
+  selected. A failed optional voice test is reported separately and does not
+  corrupt the completed setup.
+
 ## Architecture
 
 ### Setup Model
@@ -123,6 +181,39 @@ filled `argparse.Namespace` objects between prompts:
 
 These objects contain no subprocesses or file writes. Pure helper functions
 derive available choices, recommendations, proposed config, and review text.
+
+### Versioned Machine Interface
+
+The macOS app must not reconstruct Python setup rules. Extend `setup` with two
+machine-oriented subcommands while preserving the current no-subcommand flow:
+
+- `jarvis-line setup inspect --json` returns a bounded versioned document with
+  environment facts, current values, available choices, recommendations, and
+  whether first-run setup is needed.
+- `jarvis-line setup apply --stdin --json` reads a versioned `SetupPlan` JSON
+  document from at most 64 KiB of stdin, validates it with the same Python
+  helpers as the interactive wizard, applies it, and returns a structured
+  `SetupResult`.
+
+The bridge accepts no arbitrary instruction-file path and no secret-bearing
+custom command environment. Unknown versions, fields, choices, or option-like
+values fail before any persistent change. Human-readable interactive output and
+machine-readable JSON must never be mixed on stdout.
+
+### SwiftUI Setup Coordinator
+
+Add a focused `SetupAssistantModel` and `SetupAssistantWindowController`
+instead of expanding `JarvisLineModel` into another large state machine.
+
+- The model decodes setup inspection, owns the editable plan, validates step
+  navigation locally against server-provided choices, and submits the final
+  plan through `JarvisLineCLI`.
+- The window controller follows the existing single-window ownership pattern
+  and reactivates the existing assistant if the user opens it twice.
+- `JarvisLineModel` exposes only the minimal actions needed to refresh status
+  after successful setup and to report whether first-run onboarding is needed.
+- The CLI remains authoritative for config generation, backend compatibility,
+  hook installation, runtime activation, doctor checks, and instruction text.
 
 ### Prompt Layer
 
@@ -160,6 +251,8 @@ manually, but setup must not overwrite an existing backup on repeated runs.
   low-friction Kokoro-or-system behavior.
 - `jarvis-line setup --test` forces the final voice test while retaining the
   interactive flow.
+- `jarvis-line setup inspect --json` and `setup apply --stdin --json` form the
+  versioned bridge used by the macOS app and advanced automation.
 - Existing `init`, `tts`, `kokoro`, `config`, `instructions`, and `doctor`
   commands remain available for scripting and advanced users.
 - Existing config values are preserved unless the reviewed plan intentionally
@@ -175,6 +268,7 @@ manually, but setup must not overwrite an existing backup on repeated runs.
 - Model files use the existing pinned size and SHA-256 verification.
 - No setup answer, health result, or audio text leaves the machine.
 - The test phrase contains no user-provided content.
+- Clipboard use happens only after the user presses `Copy Instructions`.
 
 ## Resource Limits
 
@@ -243,6 +337,28 @@ paste the reviewed output into this project's AGENTS.md.
 - Help and command documentation describe the guided flow and its network/audio
   confirmation behavior.
 
+### Machine Contract Tests
+
+- Inspection JSON is versioned, bounded, deterministic, and contains no spoken
+  text, command environment, or absolute session paths.
+- Apply rejects oversized input, malformed JSON, unknown versions and fields,
+  unsupported choices, and custom instruction paths before mutation.
+- Interactive and JSON plans produce the same proposed config and side effects.
+- JSON mode writes diagnostics only to the result object or stderr and keeps
+  stdout parseable.
+
+### macOS App Tests
+
+- Setup inspection and result documents decode into typed Swift models.
+- Step navigation cannot advance with a disabled or incompatible selection.
+- First-run auto-open occurs only when config is absent and has not already
+  been offered.
+- Reopening the assistant activates one existing window and one app process.
+- Cancel and Back do not save config or install hooks.
+- Apply submits exactly the reviewed plan and refreshes the main model once.
+- Instruction output is copied only after an explicit user action.
+- Failure and retry preserve the reviewed plan and do not dismiss the window.
+
 ### Verification
 
 - Run the complete Python suite.
@@ -250,6 +366,9 @@ paste the reviewed output into this project's AGENTS.md.
   and Windows CI.
 - Run the macOS app build/tests to confirm the shared config contract remains
   compatible.
+- Launch the packaged app and visually inspect every assistant step at the
+  normal and minimum supported window sizes, including long language labels,
+  disabled backends, progress, failure, and completion states.
 - Manually exercise one English Kokoro path and one non-English system-TTS path
   on macOS without editing the user's instruction files.
 
@@ -257,11 +376,17 @@ paste the reviewed output into this project's AGENTS.md.
 
 - A new user can reach a healthy runtime through `jarvis-line setup` without
   editing JSON.
+- A new macOS user can complete the same setup through the native app without
+  opening Terminal or receiving a different configuration result.
 - The user sees only valid casual choices for the current platform.
 - Language and TTS mismatches are prevented or clearly routed to the advanced
   custom-model path.
-- No persistent change happens before the final confirmation.
+- No Jarvis Line config, hook, instruction, or runtime change happens before
+  final confirmation. The macOS app may persist only its own one-time
+  first-run-offer dismissal preference.
 - Cancelling or failing before apply preserves the prior installation.
 - Agent Markdown remains entirely user-controlled.
+- The Setup Assistant opens automatically only for a true first run, remains
+  manually accessible later, and never creates a duplicate app instance.
 - The completed flow states exactly what was changed and what the user must
   paste into which instruction scope.
