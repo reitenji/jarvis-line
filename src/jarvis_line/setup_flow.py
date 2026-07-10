@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -47,13 +48,23 @@ def normalize_language(value: Any) -> str:
 
 
 def validate_full_language(value: Any) -> str:
-    text = str(value or "").strip()
+    raw = str(value or "")
+    if any(unicodedata.category(char).startswith("C") for char in raw):
+        raise SetupContractError("language name is invalid")
+    text = raw.strip()
     if not text or (text.isascii() and text.isalpha() and len(text) <= 3):
         raise SetupContractError(
             'use a full language name, for example "English" or "Turkish"'
         )
-    if len(text) > 80 or any(ord(char) < 32 for char in text):
+    if len(text) > 80:
         raise SetupContractError("language name is invalid")
+    allowed_punctuation = {" ", "-", "'", "\u2019", "(", ")"}
+    if any(
+        unicodedata.category(char)[0] not in {"L", "M"}
+        and char not in allowed_punctuation
+        for char in text
+    ):
+        raise SetupContractError("language name contains unsupported characters")
     return text
 
 

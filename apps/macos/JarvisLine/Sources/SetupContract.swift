@@ -186,15 +186,6 @@ struct SetupInstructionResult: Decodable, Sendable {
     let command: String
     let text: String
 
-    static let empty = SetupInstructionResult(
-        target: "",
-        scope: "",
-        filename: "",
-        destination: "",
-        command: "",
-        text: ""
-    )
-
     private enum CodingKeys: String, CodingKey {
         case target
         case scope
@@ -222,12 +213,12 @@ struct SetupInstructionResult: Decodable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        target = try container.decodeIfPresent(String.self, forKey: .target) ?? ""
-        scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? ""
-        filename = try container.decodeIfPresent(String.self, forKey: .filename) ?? ""
-        destination = try container.decodeIfPresent(String.self, forKey: .destination) ?? ""
-        command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
-        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        target = try container.decode(String.self, forKey: .target)
+        scope = try container.decode(String.self, forKey: .scope)
+        filename = try container.decode(String.self, forKey: .filename)
+        destination = try container.decode(String.self, forKey: .destination)
+        command = try container.decode(String.self, forKey: .command)
+        text = try container.decode(String.self, forKey: .text)
     }
 }
 
@@ -262,7 +253,7 @@ struct SetupApplyResult: Decodable, Sendable {
     let version: Int
     let ok: Bool
     let steps: [SetupResultStep]
-    let instruction: SetupInstructionResult
+    let instruction: SetupInstructionResult?
     let error: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -277,9 +268,19 @@ struct SetupApplyResult: Decodable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decode(Int.self, forKey: .version)
         ok = try container.decode(Bool.self, forKey: .ok)
-        steps = try container.decodeIfPresent([SetupResultStep].self, forKey: .steps) ?? []
-        instruction = try container.decodeIfPresent(SetupInstructionResult.self, forKey: .instruction) ?? .empty
         error = try container.decodeIfPresent(String.self, forKey: .error)
+
+        let isBareContractError = !ok
+            && error != nil
+            && !container.contains(.steps)
+            && !container.contains(.instruction)
+        if isBareContractError {
+            steps = []
+            instruction = nil
+        } else {
+            steps = try container.decode([SetupResultStep].self, forKey: .steps)
+            instruction = try container.decode(SetupInstructionResult.self, forKey: .instruction)
+        }
     }
 
     static func decode(_ text: String) throws -> Self {

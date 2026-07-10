@@ -75,15 +75,15 @@ struct SetupContractTests {
         #expect(encoded["agent_target"] as? String == "codex")
         #expect(encoded["instruction_path"] == nil)
         #expect(result.steps.first?.id == "config_write")
-        #expect(result.instruction.target == "codex")
-        #expect(result.instruction.filename == "AGENTS.md")
-        #expect(result.instruction.destination == "/tmp/project")
-        #expect(result.instruction.text == "## Jarvis Line")
+        #expect(result.instruction?.target == "codex")
+        #expect(result.instruction?.filename == "AGENTS.md")
+        #expect(result.instruction?.destination == "/tmp/project")
+        #expect(result.instruction?.text == "## Jarvis Line")
     }
 
     @Test func applyResultRejectsUnsupportedVersion() {
         #expect(throws: SetupContractError.self) {
-            try SetupApplyResult.decode(#"{"version":2,"ok":false,"steps":[],"instruction":{"command":"","filename":"AGENTS.md","scope":"project"}}"#)
+            try SetupApplyResult.decode(#"{"version":2,"ok":false,"steps":[],"instruction":{"target":"codex","scope":"project","filename":"AGENTS.md","destination":"/tmp/project","command":"","text":""}}"#)
         }
     }
 
@@ -100,7 +100,7 @@ struct SetupContractTests {
         #expect(!result.ok)
         #expect(result.steps.first?.id == "runtime")
         #expect(result.steps.first?.detail == "start failed")
-        #expect(result.instruction.text == "## Jarvis Line")
+        #expect(result.instruction?.text == "## Jarvis Line")
     }
 
     @Test func bareApplyContractErrorDecodesWithoutStepsOrInstruction() throws {
@@ -109,8 +109,29 @@ struct SetupContractTests {
         #expect(!result.ok)
         #expect(result.error == "setup plan must be valid JSON")
         #expect(result.steps.isEmpty)
-        #expect(result.instruction.command.isEmpty)
-        #expect(result.instruction.text.isEmpty)
+        #expect(result.instruction == nil)
+    }
+
+    @Test func parsedResultRequiresEveryInstructionField() {
+        var didThrow = false
+
+        do {
+            _ = try SetupApplyResult.decode(#"""
+            {"version":1,"ok":false,"steps":[],"instruction":{"target":"codex","scope":"project","filename":"AGENTS.md","destination":"/tmp/project","command":"jarvis-line instructions print codex --language \"English\""},"error":"runtime start failed"}
+            """#)
+        } catch {
+            didThrow = true
+        }
+
+        #expect(didThrow)
+    }
+
+    @Test func completeParsedResultDecodesInstruction() throws {
+        let result = try SetupApplyResult.decode(#"""
+        {"version":1,"ok":true,"steps":[],"instruction":{"target":"codex","scope":"project","filename":"AGENTS.md","destination":"/tmp/project","command":"jarvis-line instructions print codex --language \"English\"","text":"## Jarvis Line"}}
+        """#)
+
+        #expect(result.instruction?.command == "jarvis-line instructions print codex --language \"English\"")
     }
 
     @Test func cliAcceptsExactly64KiBOfStdin() async throws {

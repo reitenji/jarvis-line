@@ -132,6 +132,60 @@ def test_setup_result_includes_copyable_instruction_text_for_parsed_plan():
     }
 
 
+@pytest.mark.parametrize("language", ["K'iche'", "Chinese (Traditional)", "Sa\u0301mi"])
+def test_safe_custom_language_names_preserve_copyable_instruction_command(language):
+    plan = kokoro_codex_plan(language=language, tts="system", install_kokoro=False)
+
+    result = cli._setup_result(plan, [], ok=True)
+
+    assert result["instruction"]["command"] == (
+        f'jarvis-line instructions print codex --language "{language}"'
+    )
+
+
+@pytest.mark.parametrize(
+    "language",
+    [
+        'English"; touch /tmp/pwned',
+        "English$(touch /tmp/pwned)",
+        "English`touch /tmp/pwned`",
+        "English; touch /tmp/pwned",
+        r"English\\touch",
+        "English\x1f",
+        "English\u0085",
+    ],
+)
+def test_setup_apply_rejects_unsafe_language_before_apply_or_instruction(monkeypatch, capsys, language):
+    payload = {
+        "version": 1,
+        "language": language,
+        "tts": "system",
+        "speak_mode": "final_only",
+        "agent_target": "codex",
+        "instruction_scope": "project",
+        "install_kokoro": False,
+        "install_codex_hook": False,
+        "start_runtime": False,
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    applied = []
+    monkeypatch.setattr(
+        cli,
+        "apply_setup_plan",
+        lambda *_args, **_kwargs: applied.append(True),
+    )
+    monkeypatch.setattr(
+        cli,
+        "instruction_snippet",
+        lambda *_args: pytest.fail("instruction text must not be produced"),
+    )
+
+    assert cli.setup_apply(argparse.Namespace(stdin=True, json_output=True)) == 2
+
+    assert applied == []
+    assert "language name" in json.loads(capsys.readouterr().out)["error"]
+
+
 def test_save_json_leaves_original_and_cleans_temp_when_replace_fails(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     path.write_text('{"old": true}\n', encoding="utf-8")
