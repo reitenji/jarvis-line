@@ -104,7 +104,10 @@ def test_clean_install_and_sbom_checks_are_configured():
     assert "anchore/sbom-action@" in release_workflow
     assert "dependency-graph/sbom" not in release_workflow
     assert "syft-version: v1.42.3" in release_workflow
-    assert "spdxVersion" in ci_workflow
+    assert "path: ./build/sbom-wheel" in ci_workflow
+    assert "path: ./build/sbom-wheel" in release_workflow
+    assert "validate_sbom.py" in ci_workflow
+    assert "validate_sbom.py" in release_workflow
 
 
 def test_ci_avoids_duplicate_feature_push_and_pull_request_matrices():
