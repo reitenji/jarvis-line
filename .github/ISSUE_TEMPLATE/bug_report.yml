@@ -1,37 +1,39 @@
 name: Bug report
-description: Report a Jarvis Line issue with a redacted support bundle.
+description: Report a reproducible Jarvis Line problem with a reviewed support report.
 title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a Jarvis Line issue.
+        Thanks for helping improve Jarvis Line.
 
-        Before submitting, please run:
+        Before submitting, run:
 
         ```bash
         jarvis-line doctor
-        jarvis-line support-bundle --output ./jarvis-line-support.zip
+        jarvis-line support-report --output ./jarvis-line-issue.md
         ```
 
-        Attach `jarvis-line-support.zip` to the issue. Do not paste raw logs.
+        Open the generated Markdown, review it, remove anything you do not want public, and paste the relevant sections below. Do not upload ZIP files, secrets, or raw private logs.
   - type: checkboxes
     id: checklist
     attributes:
       label: Preflight
       options:
-        - label: I ran `jarvis-line doctor`.
+        - label: I ran `jarvis-line doctor`, or I explain below why it could not run.
           required: true
-        - label: I generated and attached a redacted support bundle.
+        - label: I reviewed the generated support report before including it.
           required: true
-        - label: I did not paste raw private logs or secrets.
+        - label: I removed secrets, private paths, and unrelated log content.
+          required: true
+        - label: I searched existing issues and discussions for the same problem.
           required: true
   - type: textarea
     id: summary
     attributes:
       label: What happened?
-      description: Describe the problem in a few sentences.
+      description: Describe the problem and its impact in a few sentences.
     validations:
       required: true
   - type: textarea
@@ -55,11 +57,11 @@ body:
     attributes:
       label: TTS backend
       options:
-        - kokoro
-        - system
-        - macos
-        - command
-        - unknown
+        - Kokoro
+        - System TTS
+        - macOS say
+        - Custom command or API wrapper
+        - Unknown or not applicable
     validations:
       required: true
   - type: dropdown
@@ -74,7 +76,15 @@ body:
     validations:
       required: true
   - type: textarea
+    id: support_report
+    attributes:
+      label: Reviewed support report
+      description: Paste the reviewed contents of `jarvis-line-issue.md`, or explain why the command could not run.
+      placeholder: Paste the reviewed report here. Remove anything you do not want public.
+    validations:
+      required: true
+  - type: textarea
     id: notes
     attributes:
-      label: Extra notes
-      description: Add anything that is not already in the support bundle.
+      label: Additional context
+      description: Add screenshots or details that are not already present in the support report.
