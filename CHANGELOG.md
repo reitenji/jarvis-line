@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add contributor, conduct, security, pull request, and community guidance.
+- Replace the obsolete ZIP support-bundle issue flow with reviewed Markdown support reports and Discussion routing.
+
 ## 0.3.1
 
 - Record queued lifecycle metadata before launching the audio worker so traces stay in causal order.
