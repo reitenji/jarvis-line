@@ -170,6 +170,37 @@ jarvis-line logs tail watcher --lines 40
 1715520001.456 queued-audio phase=final message_id=...
 ```
 
+## `trace`
+
+Inspect the bounded, metadata-only runtime lifecycle:
+
+```bash
+jarvis-line trace --limit 12
+```
+
+```text
+Jarvis Line trace
+- 1715520001000 queued message_id=abc phase=commentary session_id=4f8c2f05a921
+- 1715520001400 speaking message_id=abc phase=commentary queue_delay_ms=400 backend=kokoro
+- 1715520005200 completed message_id=abc phase=commentary duration_ms=3800
+```
+
+Use `--json` for the macOS app or other tools, and `--clear` to remove the trace file.
+
+## `emit`
+
+Submit a spoken event from any agent adapter:
+
+```bash
+jarvis-line emit --source claude --session session-123 --phase final --line "The task is complete."
+```
+
+```text
+Queued Jarvis Line event for claude.
+```
+
+For the versioned standard-input format, see [EVENT-PROTOCOL.md](EVENT-PROTOCOL.md).
+
 ## `kokoro`
 
 ```bash

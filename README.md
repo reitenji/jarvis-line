@@ -50,6 +50,8 @@ Recommended defaults:
 - Uses Kokoro as the recommended local voice engine.
 - Falls back to system TTS if Kokoro is not installed or the user does not want Kokoro.
 - Supports custom TTS commands and API wrappers.
+- Accepts a versioned `emit` event from any agent or editor adapter.
+- Keeps a bounded privacy-safe lifecycle trace for fast diagnosis.
 - Prints agent instructions for `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` so you can paste them where they belong.
 - Generates redacted Markdown support reports for issue descriptions.
 
@@ -68,17 +70,24 @@ Jarvis Line is not a full transcript narrator. It is designed for short spoken a
 ## How It Works
 
 ```text
-agent response
-  -> Jarvis line: ...
-  -> session watcher
+agent response or hook event
+  -> agent adapter / Codex session watcher
+  -> normalized Jarvis Line event
   -> latest-message cache
-  -> notify hook
   -> audio queue
   -> single audio worker
   -> selected TTS engine
 ```
 
 The important part is the queue. Even if multiple sessions finish close together, Jarvis Line speaks one line at a time.
+
+Codex can use the bundled session watcher and notify hook. Other agents can submit the same normalized event directly:
+
+```bash
+jarvis-line emit --source claude --session session-123 --phase commentary --line "The tests are running."
+```
+
+See [docs/EVENT-PROTOCOL.md](docs/EVENT-PROTOCOL.md) for JSON stdin and adapter rules.
 
 ## Quick Start
 

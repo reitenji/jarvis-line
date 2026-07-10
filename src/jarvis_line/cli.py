@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import __version__, diagnostics
+from jarvis_line import __version__, diagnostics, events
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -1380,6 +1380,35 @@ def trace_command(args) -> int:
     return 0
 
 
+def emit_command(args) -> int:
+    try:
+        if getattr(args, "stdin", False):
+            payload_text = sys.stdin.read(65_537)
+            if len(payload_text) > 65_536:
+                raise ValueError("stdin payload exceeds 64 KiB")
+            payload = json.loads(payload_text)
+        else:
+            payload = {
+                "version": 1,
+                "source": getattr(args, "source", None),
+                "session_id": getattr(args, "session", None),
+                "phase": getattr(args, "phase", None),
+                "line": getattr(args, "line", None),
+                "text": getattr(args, "text", None),
+            }
+        event = events.SpeechEvent.from_mapping(payload)
+    except (json.JSONDecodeError, ValueError) as exc:
+        print(f"Invalid event: {exc}", file=sys.stderr)
+        return 2
+
+    queued = events.emit_event(event)
+    if queued:
+        print(f"Queued Jarvis Line event for {event.source}.")
+    else:
+        print(f"Accepted Jarvis Line event for {event.source}; runtime policy skipped playback.")
+    return 0
+
+
 def collect_support_data(args) -> dict[str, Any]:
     full_logs = bool(getattr(args, "full", False))
     since_seconds = parse_since_seconds(getattr(args, "since", None))
@@ -1975,6 +2004,15 @@ def build_parser() -> argparse.ArgumentParser:
     trace.add_argument("--json", action="store_true", dest="json_output")
     trace.add_argument("--clear", action="store_true")
     trace.set_defaults(func=trace_command)
+
+    emit = sub.add_parser("emit", help="Submit a normalized event from any agent.")
+    emit.add_argument("--stdin", action="store_true", help="Read one versioned JSON event from stdin.")
+    emit.add_argument("--source", help="Agent or adapter name, for example claude or gemini.")
+    emit.add_argument("--session", help="Stable session identifier from the source agent.")
+    emit.add_argument("--phase", help="commentary or final")
+    emit.add_argument("--line", help="Short spoken status line.")
+    emit.add_argument("--text", help="Optional longer context retained only in local queue/cache state.")
+    emit.set_defaults(func=emit_command)
 
     kokoro = sub.add_parser("kokoro", help="Manage Kokoro status, dependencies, and config.")
     kokoro_sub = kokoro.add_subparsers(dest="kokoro_command", required=True)
