@@ -12,9 +12,19 @@ For non-English speech, macOS system TTS, Edge TTS, OpenAI TTS, or another custo
 
 ```bash
 jarvis-line kokoro status
+jarvis-line kokoro download --accept-license
+jarvis-line kokoro verify
 jarvis-line kokoro install-deps
 jarvis-line tts use kokoro
 ```
+
+The model download is explicit because the files are large and use their own
+upstream Apache-2.0 license. Jarvis Line downloads only from the pinned upstream
+release, writes only to its managed model directory, and verifies both file size
+and SHA-256 before replacing a destination. Trusted custom model paths remain a
+manual advanced-user configuration.
+See [the Kokoro recipe](recipes/kokoro.md) and
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 Kokoro config supports:
 
@@ -161,6 +171,7 @@ Optional integrations use public packages or system tools:
 | [soundfile](https://pypi.org/project/soundfile/) | Audio file handling for Kokoro fallback playback | Optional | Used when temporary-file playback is needed. |
 | [numpy](https://pypi.org/project/numpy/) | Audio array handling for Kokoro playback | Optional | Installed with the Kokoro extra. |
 | [pytest](https://pypi.org/project/pytest/) | Test suite | Development only | Installed with the `test` extra. |
+| [pip-audit](https://pypi.org/project/pip-audit/) | Dependency vulnerability checks | Security/development only | Pinned in the `security` extra and run by the Security workflow. |
 | [edge-tts](https://pypi.org/project/edge-tts/) | Example custom command TTS backend | Optional | Not installed by Jarvis Line; users can wire it through `tts command`. |
 | [OpenAI TTS](https://platform.openai.com/docs/guides/text-to-speech) | Example API-backed custom TTS | Optional | Not installed or configured by default; use a wrapper command if desired. |
 | macOS `say` | System TTS fallback on macOS | Optional system tool | Built into macOS. |
@@ -179,4 +190,8 @@ Or from a repository checkout:
 python3 -m pip install -e ".[kokoro]"
 ```
 
-Jarvis Line does not redistribute Kokoro model files, voice files, Edge TTS, OpenAI credentials, or third-party API keys. Users are responsible for installing optional backends and following the upstream license/usage terms for the tools they choose.
+Jarvis Line does not bundle Kokoro model files, voice files, Edge TTS, OpenAI
+credentials, or third-party API keys. The optional Kokoro download command
+retrieves pinned files directly from the upstream GitHub release after explicit
+license acceptance. Users remain responsible for following the upstream
+license and usage terms for the tools they choose.
