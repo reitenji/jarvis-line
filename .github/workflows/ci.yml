@@ -40,11 +40,16 @@ jobs:
       - name: Verify clean install and uninstall
         if: matrix.python-version == '3.12'
         run: python scripts/verify_clean_install.py clean-dist
+      - name: Unpack wheel for SBOM cataloging
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          mkdir -p build/sbom-wheel
+          python -m zipfile -e clean-dist/jarvis_line-*.whl build/sbom-wheel
       - name: Generate SPDX SBOM smoke artifact
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          path: ./clean-dist
+          path: ./build/sbom-wheel
           format: spdx-json
           output-file: ./clean-dist/jarvis-line-ci.spdx.json
           syft-version: v1.42.3
@@ -52,7 +57,7 @@ jobs:
           upload-release-assets: false
       - name: Validate SPDX SBOM smoke artifact
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: python -c "import json; data=json.load(open('clean-dist/jarvis-line-ci.spdx.json', encoding='utf-8')); assert data['spdxVersion'].startswith('SPDX-')"
+        run: python scripts/validate_sbom.py clean-dist/jarvis-line-ci.spdx.json
 
   macos-app:
     runs-on: macos-latest
