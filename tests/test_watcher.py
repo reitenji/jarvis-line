@@ -317,6 +317,54 @@ def test_queue_replaces_latest_final(tmp_path, monkeypatch):
     assert [job["jarvis_line"] for job in queue["jobs"]] == ["two", "new one"]
 
 
+def test_queue_trimming_preserves_finals_before_commentary(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {"speak_mode": "commentary_and_final", "max_queue_size": 2},
+    )
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: None)
+
+    assert watcher.queue_jarvis_line("s1", "final_answer", "final one") is True
+    assert watcher.queue_jarvis_line("s2", "commentary", "working") is True
+    assert watcher.queue_jarvis_line("s3", "final_answer", "final three") is True
+
+    queue = watcher.load_json(tmp_path / "queue.json", {})
+    assert [job["jarvis_line"] for job in queue["jobs"]] == ["final one", "final three"]
+
+
+def test_queue_log_is_private_and_trace_records_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {"speak_mode": "final_only", "debug_content_logging": False},
+    )
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: None)
+    events = []
+    monkeypatch.setattr(
+        watcher.diagnostics,
+        "record_event",
+        lambda event, **metadata: events.append((event, metadata)),
+    )
+
+    assert watcher.queue_jarvis_line("/private/session.jsonl", "final", "secret line") is True
+
+    log_text = (tmp_path / "watcher.log").read_text()
+    assert "secret line" not in log_text
+    assert "/private/session.jsonl" not in log_text
+    assert events[-1][0] == "queued"
+    assert events[-1][1]["phase"] == "final"
+    assert "line" not in events[-1][1]
+
+
 def test_final_duplicate_stays_suppressed_after_dedupe_window(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")

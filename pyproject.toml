@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jarvis-line"
-version = "0.2.2"
-description = "Speak short assistant status lines from Codex/Claude sessions."
+version = "0.3.0"
+description = "Speak short status lines from AI coding agents."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -27,7 +27,7 @@ dependencies = []
 
 [project.optional-dependencies]
 kokoro = ["kokoro-onnx", "sounddevice", "soundfile", "numpy"]
-test = ["pytest>=8"]
+test = ["pytest>=8", "tomli>=2; python_version<'3.11'"]
 
 [project.scripts]
 jarvis-line = "jarvis_line.cli:main"

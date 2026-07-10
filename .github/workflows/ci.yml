@@ -27,3 +27,25 @@ jobs:
         run: |
           python -m pip install -e ".[test]"
           python -m pytest -q
+
+  macos-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify version metadata
+        run: python scripts/check_version_consistency.py
+      - name: Test Swift package
+        run: swift test --package-path apps/macos/JarvisLine
+      - name: Verify app and DMG artifacts
+        run: bash scripts/verify-macos-artifacts.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-line-macos-smoke
+          path: |
+            apps/macos/JarvisLine/dist/JarvisLine-macOS.dmg
+            apps/macos/JarvisLine/dist/JarvisLine-macOS.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
