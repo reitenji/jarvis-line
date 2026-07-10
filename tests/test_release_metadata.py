@@ -107,6 +107,14 @@ def test_clean_install_and_sbom_checks_are_configured():
     assert "spdxVersion" in ci_workflow
 
 
+def test_ci_avoids_duplicate_feature_push_and_pull_request_matrices():
+    ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "push:\n    branches: [develop, main]" in ci_workflow
+    assert "pull_request:" in ci_workflow
+    assert "cancel-in-progress: true" in ci_workflow
+
+
 def test_security_audit_checks_optional_dependencies_without_pypi_project_lookup():
     security_workflow = (ROOT / ".github/workflows/security.yml").read_text(
         encoding="utf-8"
