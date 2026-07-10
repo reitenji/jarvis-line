@@ -1245,8 +1245,75 @@ struct DoctorStatus {
     }
 }
 
-struct JarvisLineCLI {
+protocol JarvisLineCommandRunning: Sendable {
+    func run(_ args: [String], stdin: Data?) async throws -> String
+}
+
+extension JarvisLineCommandRunning {
     func run(_ args: [String]) async throws -> String {
+        try await run(args, stdin: nil)
+    }
+}
+
+private final class CLIProcessState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var output = Data()
+    private var error = Data()
+    private var didResume = false
+
+    func setOutput(_ data: Data) {
+        lock.lock()
+        output = data
+        lock.unlock()
+    }
+
+    func setError(_ data: Data) {
+        lock.lock()
+        error = data
+        lock.unlock()
+    }
+
+    func resume(
+        _ continuation: CheckedContinuation<String, Error>,
+        terminationStatus: Int32
+    ) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        let output = String(data: output, encoding: .utf8) ?? ""
+        let error = String(data: error, encoding: .utf8) ?? ""
+        lock.unlock()
+
+        if terminationStatus == 0 {
+            continuation.resume(returning: output)
+        } else {
+            continuation.resume(throwing: CLIError(output + error))
+        }
+    }
+
+    func resume(_ continuation: CheckedContinuation<String, Error>, throwing error: Error) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        lock.unlock()
+        continuation.resume(throwing: error)
+    }
+}
+
+struct JarvisLineCLI: JarvisLineCommandRunning {
+    private static let maximumStdinBytes = SetupPlanPayload.maximumEncodedBytes
+
+    func run(_ args: [String], stdin: Data? = nil) async throws -> String {
+        if let stdin, stdin.count > Self.maximumStdinBytes {
+            throw SetupContractError.payloadTooLarge(stdin.count)
+        }
+
         let executable = findExecutable()
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
@@ -1255,23 +1322,41 @@ struct JarvisLineCLI {
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
+            let inputPipe = stdin == nil ? nil : Pipe()
             process.standardOutput = outputPipe
             process.standardError = errorPipe
+            process.standardInput = inputPipe
+
+            let state = CLIProcessState()
+            let drainGroup = DispatchGroup()
+            drainGroup.enter()
+            drainGroup.enter()
+
+            process.terminationHandler = { proc in
+                drainGroup.notify(queue: .global(qos: .utility)) {
+                    state.resume(continuation, terminationStatus: proc.terminationStatus)
+                }
+            }
 
             do {
                 try process.run()
             } catch {
-                continuation.resume(throwing: error)
+                state.resume(continuation, throwing: error)
                 return
             }
 
-            process.terminationHandler = { proc in
-                let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                if proc.terminationStatus == 0 {
-                    continuation.resume(returning: output)
-                } else {
-                    continuation.resume(throwing: CLIError(output + error))
+            DispatchQueue.global(qos: .utility).async {
+                state.setOutput(outputPipe.fileHandleForReading.readDataToEndOfFile())
+                drainGroup.leave()
+            }
+            DispatchQueue.global(qos: .utility).async {
+                state.setError(errorPipe.fileHandleForReading.readDataToEndOfFile())
+                drainGroup.leave()
+            }
+            if let stdin, let inputPipe {
+                DispatchQueue.global(qos: .utility).async {
+                    defer { try? inputPipe.fileHandleForWriting.close() }
+                    try? inputPipe.fileHandleForWriting.write(contentsOf: stdin)
                 }
             }
         }
