@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from scripts import check_version_consistency
@@ -9,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_repository_versions_are_consistent():
     versions = check_version_consistency.read_versions(ROOT)
 
-    assert versions.package == "0.3.1"
+    assert versions.package == "0.4.0"
     assert versions.module == versions.package
     assert versions.app == versions.package
     assert versions.bundle_build.isdigit()
@@ -31,15 +32,21 @@ def test_version_errors_report_each_mismatch():
     ]
 
 
-def test_workflows_use_current_artifact_action_majors():
+def test_workflows_pin_actions_to_reviewed_commits():
     ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     release_workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(encoding="utf-8")
+    security_workflow = (ROOT / ".github/workflows/security.yml").read_text(encoding="utf-8")
+    workflows = ci_workflow + release_workflow + security_workflow
 
-    assert "actions/upload-artifact@v7" in ci_workflow
-    assert "actions/upload-artifact@v7" in release_workflow
-    assert "actions/download-artifact@v8" in release_workflow
-    assert "actions/upload-artifact@v4" not in ci_workflow + release_workflow
-    assert "actions/download-artifact@v4" not in release_workflow
+    assert "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" in workflows
+    assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" in workflows
+    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflows
+    assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflows
+    assert "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610" in workflows
+    assert all(
+        re.fullmatch(r"[0-9a-f]{40}", reference)
+        for reference in re.findall(r"uses:\s+[^@\s]+@([^\s#]+)", workflows)
+    )
 
 
 def test_community_files_use_current_safe_support_flow():
@@ -68,3 +75,62 @@ def test_community_files_use_current_safe_support_flow():
     assert "/discussions/categories/q-a" in issue_config
     assert "/discussions/categories/ideas" in issue_config
     assert "/security/advisories/new" in issue_config
+
+
+def test_v1_readiness_files_and_preview_labels_are_present():
+    assert (ROOT / "PRIVACY.md").is_file()
+    assert (ROOT / "docs/SUPPORT-MATRIX.md").is_file()
+    assert (ROOT / ".github/dependabot.yml").is_file()
+    assert (ROOT / ".github/workflows/security.yml").is_file()
+
+    package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    app_source = (
+        ROOT / "apps/macos/JarvisLine/Sources/JarvisLineApp.swift"
+    ).read_text(encoding="utf-8")
+    assert "Development Status :: 4 - Beta" in package
+    assert 'versionChip("Preview")' in app_source
+
+
+def test_clean_install_and_sbom_checks_are_configured():
+    install_script = ROOT / "scripts/verify_clean_install.py"
+    ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    release_workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert install_script.is_file()
+    assert "verify_clean_install.py" in ci_workflow
+    assert "jarvis-line.spdx.json" in release_workflow
+    assert "anchore/sbom-action@" in release_workflow
+    assert "dependency-graph/sbom" not in release_workflow
+    assert "syft-version: v1.42.3" in release_workflow
+    assert "spdxVersion" in ci_workflow
+
+
+def test_ci_avoids_duplicate_feature_push_and_pull_request_matrices():
+    ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "push:\n    branches: [develop, main]" in ci_workflow
+    assert "pull_request:" in ci_workflow
+    assert "cancel-in-progress: true" in ci_workflow
+
+
+def test_security_audit_checks_optional_dependencies_without_pypi_project_lookup():
+    security_workflow = (ROOT / ".github/workflows/security.yml").read_text(
+        encoding="utf-8"
+    )
+
+    package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'security = ["pip-audit==2.10.1"]' in package
+    assert 'pip install -e ".[kokoro,security,test]"' in security_workflow
+    assert "pip_audit --local --skip-editable" in security_workflow
+    assert "--strict" not in security_workflow
+
+
+def test_kokoro_documentation_uses_shared_jarvis_home():
+    recipe = (ROOT / "docs/recipes/kokoro.md").read_text(encoding="utf-8")
+    support_matrix = (ROOT / "docs/SUPPORT-MATRIX.md").read_text(encoding="utf-8")
+    assert "~/.jarvis-line/tts" in recipe
+    assert "~/.codex/tts" not in recipe
+    assert "jarvis-line kokoro verify\njarvis-line kokoro status" in recipe
+    assert "PowerShell integration is implemented and smoke-tested" not in support_matrix

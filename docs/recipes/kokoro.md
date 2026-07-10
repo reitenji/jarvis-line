@@ -5,9 +5,9 @@ Kokoro is Jarvis Line's recommended local TTS engine.
 Jarvis Line expects Kokoro runtime files under:
 
 ```text
-~/.codex/tts/kokoro-venv
-~/.codex/tts/kokoro-models/kokoro-v1.0.onnx
-~/.codex/tts/kokoro-models/voices-v1.0.bin
+~/.jarvis-line/tts/kokoro-venv
+~/.jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx
+~/.jarvis-line/tts/kokoro-models/voices-v1.0.bin
 ```
 
 ## Check Status
@@ -23,41 +23,60 @@ This checks:
 - voices file
 - Python dependencies
 
+`status` is a fast readiness check. Use the explicit integrity command when you
+want to hash the official model files:
+
+```bash
+jarvis-line kokoro verify
+```
+
 ## Install Python Dependencies
 
 ```bash
 jarvis-line kokoro install-deps
 ```
 
-This creates `~/.codex/tts/kokoro-venv` if needed and installs:
+This creates `~/.jarvis-line/tts/kokoro-venv` if needed and installs:
 
 - `kokoro-onnx`
 - `sounddevice`
 - `soundfile`
 - `numpy`
 
-Model files are not bundled with Jarvis Line. Put them in the expected paths, or configure custom paths.
+Model files are not bundled with Jarvis Line.
 
-## Add Model Files
+## Download The Official Model Files
 
-Jarvis Line does not download or redistribute Kokoro model files. This keeps the package small and avoids surprising users with large downloads.
-
-Create the model directory:
+Review the upstream
+[`model-files-v1.0` release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0)
+and its Apache-2.0 model license. Then explicitly accept that license:
 
 ```bash
-mkdir -p ~/.codex/tts/kokoro-models
+jarvis-line kokoro download --accept-license
+jarvis-line kokoro verify
 ```
 
-Place these files there:
+The download is optional and is never started by `init`. Jarvis Line pins the
+official file sizes and SHA-256 values. Each file is downloaded to a temporary
+path and moved into place only after verification succeeds. A mismatched
+existing managed file is preserved unless you explicitly use `--force`; even
+then, the replacement must pass verification first. The command writes only to
+Jarvis Line's managed `~/.jarvis-line/tts/kokoro-models` paths and activates
+those paths after both files succeed. Configured custom files elsewhere are not
+overwritten.
+
+You can also obtain the files yourself from the same upstream release and place
+them under:
 
 ```text
-~/.codex/tts/kokoro-models/kokoro-v1.0.onnx
-~/.codex/tts/kokoro-models/voices-v1.0.bin
+~/.jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx
+~/.jarvis-line/tts/kokoro-models/voices-v1.0.bin
 ```
 
-Then verify:
+Then run the integrity check and the fast readiness check:
 
 ```bash
+jarvis-line kokoro verify
 jarvis-line kokoro status
 ```
 
@@ -67,8 +86,8 @@ If your files live somewhere else, configure those paths instead of moving the f
 
 ```bash
 jarvis-line kokoro configure \
-  --model-path ~/.codex/tts/kokoro-models/kokoro-v1.0.onnx \
-  --voices-path ~/.codex/tts/kokoro-models/voices-v1.0.bin \
+  --model-path ~/.jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx \
+  --voices-path ~/.jarvis-line/tts/kokoro-models/voices-v1.0.bin \
   --voice "bm_george:70,bm_lewis:30" \
   --lang en-gb
 ```
@@ -93,7 +112,8 @@ jarvis-line kokoro install-deps
 
 ### `kokoro model missing`
 
-Put `kokoro-v1.0.onnx` at the configured `model_path`, or run:
+Run `jarvis-line kokoro download --accept-license`, put a trusted model at the
+configured `model_path`, or run:
 
 ```bash
 jarvis-line kokoro configure --model-path /path/to/kokoro-v1.0.onnx
@@ -101,7 +121,8 @@ jarvis-line kokoro configure --model-path /path/to/kokoro-v1.0.onnx
 
 ### `kokoro voices missing`
 
-Put `voices-v1.0.bin` at the configured `voices_path`, or run:
+Run `jarvis-line kokoro download --accept-license`, put a trusted voices file at
+the configured `voices_path`, or run:
 
 ```bash
 jarvis-line kokoro configure --voices-path /path/to/voices-v1.0.bin
@@ -114,6 +135,20 @@ Run:
 ```bash
 jarvis-line kokoro install-deps
 ```
+
+### Official asset verification fails
+
+Do not use the file as an official Jarvis Line default. Download it again from
+the pinned release:
+
+```bash
+jarvis-line kokoro download --accept-license --force
+jarvis-line kokoro verify
+```
+
+Custom Kokoro assets are allowed, but they are not expected to match the pinned
+official manifest. Configure trusted custom paths and evaluate their source,
+license, language support, and compatibility yourself.
 
 ### No audio device
 

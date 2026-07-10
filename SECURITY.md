@@ -4,6 +4,10 @@
 
 Security fixes are provided for the latest published GitHub release. Older releases may be asked to upgrade before a report is investigated or a fix is issued.
 
+Jarvis Line is currently beta. Platform and integration maturity is documented
+in [docs/SUPPORT-MATRIX.md](docs/SUPPORT-MATRIX.md), and local data/network
+behavior is documented in [PRIVACY.md](PRIVACY.md).
+
 ## Report a Vulnerability
 
 Do not report security vulnerabilities in public issues or discussions. Use the repository's [private vulnerability reporting form](https://github.com/reitenji/jarvis-line/security/advisories/new).

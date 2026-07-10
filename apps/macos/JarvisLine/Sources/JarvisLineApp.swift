@@ -423,6 +423,7 @@ struct JarvisLinePanel: View {
                 HStack(spacing: 6) {
                     versionChip(model.cliVersion.replacingOccurrences(of: "jarvis-line ", with: "CLI "))
                     versionChip(model.appVersion)
+                    versionChip("Preview")
                 }
             }
             Spacer()
@@ -868,7 +869,7 @@ struct JarvisLinePanel: View {
 
     private func ttsLabel(_ value: String) -> String {
         switch value {
-        case "kokoro": return "Kokoro · bundled default"
+        case "kokoro": return "Kokoro · recommended local"
         case "system": return "System voice"
         case "macos": return "macOS say"
         case "command": return "Custom command"
