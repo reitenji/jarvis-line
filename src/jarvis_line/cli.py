@@ -1010,12 +1010,29 @@ def read_setup_plan_stdin() -> setup_flow.SetupPlan:
     return setup_flow.SetupPlan.from_mapping(payload)
 
 
-def setup_inspect(_args) -> int:
+def setup_inspect(args) -> int:
+    current = load_effective_config({})
+    requested_language = getattr(args, "language", None)
+    try:
+        if requested_language is None:
+            try:
+                language = setup_flow.normalize_language(
+                    current.get("line_language", "English")
+                )
+            except setup_flow.SetupContractError:
+                language = "English"
+        else:
+            language = setup_flow.normalize_language(requested_language)
+    except setup_flow.SetupContractError as exc:
+        print(json.dumps({
+            "version": setup_flow.SETUP_SCHEMA_VERSION,
+            "ok": False,
+            "error": str(exc),
+        }))
+        return 2
+
     environment = detect_setup_environment()
-    inspection = setup_flow.build_inspection(
-        environment,
-        load_effective_config({}),
-    )
+    inspection = setup_flow.build_inspection(environment, current, language=language)
     inspection["config_exists"] = environment.config_exists
     print(json.dumps(inspection, ensure_ascii=False))
     return 0
@@ -1097,9 +1114,15 @@ def _setup_backup_path() -> Path:
 def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
     try:
-        config = setup_flow.build_config(plan, load_effective_config({}))
+        current = load_effective_config({})
+        setup_flow.preflight_backend(plan, detect_setup_environment(), current)
+        config = setup_flow.build_config(plan, current)
     except (EOFError, KeyboardInterrupt):
         raise
+    except setup_flow.SetupContractError as exc:
+        steps.append({"name": "backend_preflight", "ok": False, "error": str(exc)})
+        error = "Kokoro preflight failed" if str(exc).startswith("Kokoro is not ready:") else str(exc)
+        return _setup_result(plan, steps, ok=False, error=error)
     except Exception as exc:
         return _setup_result(plan, steps, ok=False, error=str(exc))
 
@@ -2095,6 +2118,7 @@ def build_parser() -> argparse.ArgumentParser:
         "inspect", help="Inspect setup choices for apps and automation."
     )
     setup_inspect_parser.add_argument("--json", action="store_true", dest="json_output", required=True)
+    setup_inspect_parser.add_argument("--language")
     setup_apply_parser = setup_sub.add_parser("apply", help="Apply a reviewed setup plan.")
     setup_apply_parser.add_argument("--stdin", action="store_true", required=True)
     setup_apply_parser.add_argument("--json", action="store_true", dest="json_output", required=True)

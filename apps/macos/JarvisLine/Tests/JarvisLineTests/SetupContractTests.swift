@@ -81,6 +81,18 @@ struct SetupContractTests {
         #expect(result.instruction?.text == "## Jarvis Line")
     }
 
+    @Test func inspectSetupRequestsRecommendationsForTheSelectedLanguage() async throws {
+        let runner = FakeSetupRunner(
+            inspectionOutput: #"{"version":1,"config_exists":false,"platform":"Darwin","languages":["Turkish"],"backend_options":[],"current":{"language":"Turkish","tts":"system","speak_mode":"final_only"}}"#,
+            applyOutput: ""
+        )
+
+        _ = try await inspectSetup(language: "Turkish", using: runner)
+        let calls = await runner.calls
+
+        #expect(calls.map(\.args) == [["setup", "inspect", "--json", "--language", "Turkish"]])
+    }
+
     @Test func applyResultRejectsUnsupportedVersion() {
         #expect(throws: SetupContractError.self) {
             try SetupApplyResult.decode(#"{"version":2,"ok":false,"steps":[],"instruction":{"target":"codex","scope":"project","filename":"AGENTS.md","destination":"/tmp/project","command":"","text":""}}"#)

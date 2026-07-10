@@ -315,9 +315,14 @@ enum SetupFirstRunPolicy {
 }
 
 func inspectSetup(
+    language: String? = nil,
     using runner: any JarvisLineCommandRunning = JarvisLineCLI()
 ) async throws -> SetupInspection {
-    try SetupInspection.decode(await runner.run(["setup", "inspect", "--json"]))
+    var args = ["setup", "inspect", "--json"]
+    if let language {
+        args += ["--language", language]
+    }
+    return try SetupInspection.decode(await runner.run(args))
 }
 
 func applySetup(

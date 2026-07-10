@@ -103,7 +103,7 @@ class SetupPlan:
             raise SetupContractError(f"unknown field: {unknown[0]}")
         if value.get("version") != SETUP_SCHEMA_VERSION:
             raise SetupContractError("unsupported setup plan version")
-        language = validate_full_language(value.get("language"))
+        language = normalize_language(value.get("language"))
 
         def enum(name: str, allowed: set[str]) -> str:
             selected = value.get(name)
@@ -227,6 +227,33 @@ def backend_options(
             else "Configure a custom command first.",
         },
     ]
+
+
+def preflight_backend(
+    plan: SetupPlan,
+    env: SetupEnvironment,
+    current: Mapping[str, Any],
+) -> None:
+    """Reject backend plans that cannot safely reach the config-write step."""
+    language = normalize_language(plan.language)
+    if plan.tts == "kokoro":
+        if language != "English":
+            raise SetupContractError("guided setup only supports English Kokoro")
+        if env.platform not in {"Darwin", "Linux", "Windows"}:
+            raise SetupContractError("Kokoro is unavailable on this platform")
+        if not plan.install_kokoro and not env.kokoro_ready:
+            raise SetupContractError("Kokoro is not ready: " + env.kokoro_detail)
+        return
+    if plan.tts == "system":
+        if not env.system_tts_ready:
+            raise SetupContractError("system TTS is not ready: " + env.system_tts_detail)
+        return
+    if plan.tts == "macos":
+        if env.platform != "Darwin" or not env.macos_say_ready:
+            raise SetupContractError("macOS say is not ready on this machine")
+        return
+    if plan.tts == "command" and not (plan.command or current.get("command")):
+        raise SetupContractError("custom command TTS requires a reviewed command")
 
 
 def build_inspection(

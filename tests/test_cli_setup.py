@@ -71,6 +71,39 @@ def test_setup_inspect_prints_parseable_versioned_json(monkeypatch, capsys):
     assert payload["current"] == {"tts": "system"}
 
 
+def test_setup_inspect_prefers_valid_configured_line_language(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(
+        cli,
+        "load_effective_config",
+        lambda default=None: {"tts": "system", "line_language": "Turkish"},
+    )
+
+    assert cli.setup_inspect(argparse.Namespace(json_output=True, language=None)) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    options = {option["id"]: option for option in payload["backend_options"]}
+    assert payload["language"] == "Turkish"
+    assert options["kokoro"]["available"] is False
+
+
+def test_setup_inspect_returns_versioned_json_for_invalid_explicit_language(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli,
+        "detect_setup_environment",
+        lambda: pytest.fail("invalid inspect input must not inspect backends"),
+    )
+    monkeypatch.setattr(cli, "load_effective_config", lambda default=None: {"line_language": "English"})
+
+    assert cli.setup_inspect(argparse.Namespace(json_output=True, language="tr")) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "version": 1,
+        "ok": False,
+        "error": 'use a full language name, for example "English" or "Turkish"',
+    }
+
+
 def test_setup_apply_rejects_multibyte_oversized_stdin_before_mutation(monkeypatch, capsys):
     text = "€" * ((setup_flow.MAX_SETUP_PLAN_BYTES // len("€".encode("utf-8"))) + 1)
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(text.encode("utf-8")), encoding="utf-8"))
@@ -296,6 +329,32 @@ def test_apply_kokoro_without_install_requires_current_backend_readiness(monkeyp
     assert result["ok"] is False
     assert result["error"] == "Kokoro preflight failed"
     assert writes == []
+
+
+def test_apply_rejects_invalid_backend_before_backup_write_or_network(monkeypatch, tmp_path):
+    patch_setup_paths(monkeypatch, tmp_path)
+    cli.CONFIG_PATH.write_text('{"tts": "system"}\n', encoding="utf-8")
+    effects = []
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli, "save_json", lambda *_args: effects.append("write"))
+    monkeypatch.setattr(cli, "run_setup_kokoro_install", lambda: effects.append("network") or 0)
+
+    result = cli.apply_setup_plan(
+        kokoro_codex_plan(language="Turkish", install_kokoro=False),
+        json_mode=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "guided setup only supports English Kokoro"
+    assert result["steps"] == [
+        {
+            "name": "backend_preflight",
+            "ok": False,
+            "error": "guided setup only supports English Kokoro",
+        }
+    ]
+    assert effects == []
+    assert not (tmp_path / "jarvis_line_config.json.setup.bak").exists()
 
 
 def test_apply_creates_config_backup_once_before_atomic_write(monkeypatch, tmp_path):

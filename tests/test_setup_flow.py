@@ -45,6 +45,40 @@ def test_inspection_recommends_system_for_turkish():
     assert options["kokoro"]["available"] is False
 
 
+def test_backend_preflight_rejects_non_english_kokoro_even_when_ready():
+    plan = setup_flow.SetupPlan.from_mapping(
+        {**valid_plan(), "language": "Turkish", "install_kokoro": False}
+    )
+
+    with pytest.raises(setup_flow.SetupContractError, match="English"):
+        setup_flow.preflight_backend(plan, environment(), {"model_path": "/custom/model.onnx"})
+
+
+def test_backend_preflight_allows_unready_english_kokoro_when_install_is_approved():
+    plan = setup_flow.SetupPlan.from_mapping(
+        {**valid_plan(), "install_kokoro": True}
+    )
+
+    setup_flow.preflight_backend(
+        plan,
+        environment(kokoro_ready=False, kokoro_detail="model missing"),
+        {},
+    )
+
+
+def test_backend_preflight_accepts_a_reviewed_plan_command():
+    plan = setup_flow.SetupPlan.from_mapping(
+        {
+            **valid_plan(),
+            "tts": "command",
+            "install_kokoro": False,
+            "command": ["custom-tts", "{text}"],
+        }
+    )
+
+    setup_flow.preflight_backend(plan, environment(), {})
+
+
 @pytest.mark.parametrize("language", ["en", "tr"])
 def test_inspection_apis_reject_short_language_codes(language):
     with pytest.raises(setup_flow.SetupContractError, match="full language name"):
