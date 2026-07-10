@@ -45,6 +45,50 @@ def test_inspection_recommends_system_for_turkish():
     assert options["kokoro"]["available"] is False
 
 
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_inspection_apis_reject_short_language_codes(language):
+    with pytest.raises(setup_flow.SetupContractError, match="full language name"):
+        setup_flow.build_inspection(environment(), {}, language=language)
+    with pytest.raises(setup_flow.SetupContractError, match="full language name"):
+        setup_flow.backend_options(environment(), language, {})
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [("english", "English"), ("TURKISH", "Turkish")],
+)
+def test_inspection_accepts_case_normalized_full_language_names(language, expected):
+    inspection = setup_flow.build_inspection(environment(), {}, language=language)
+
+    assert inspection["language"] == expected
+
+
+@pytest.mark.parametrize(
+    ("agent_target", "expected_destination"),
+    [
+        ("agents", "~/.codex/AGENTS.md"),
+        ("codex", "~/.codex/AGENTS.md"),
+        ("claude", "~/.claude/CLAUDE.md"),
+        ("gemini", "~/.gemini/GEMINI.md"),
+    ],
+)
+def test_instruction_guidance_names_global_user_destination(
+    agent_target, expected_destination
+):
+    plan = setup_flow.SetupPlan.from_mapping(
+        {
+            **valid_plan(),
+            "agent_target": agent_target,
+            "instruction_scope": "global",
+        }
+    )
+
+    guidance = setup_flow.instruction_guidance(plan)
+
+    assert guidance["destination"] == expected_destination
+    assert guidance["destination"] != "the current project"
+
+
 def test_plan_rejects_unknown_fields_and_short_language_codes():
     with pytest.raises(setup_flow.SetupContractError, match="unknown field"):
         setup_flow.SetupPlan.from_mapping(

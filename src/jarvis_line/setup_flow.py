@@ -37,11 +37,9 @@ class SetupContractError(ValueError):
 
 
 def normalize_language(value: Any) -> str:
-    text = str(value or "English").strip()
+    text = validate_full_language(value)
     aliases = {
-        "en": "English",
         "english": "English",
-        "tr": "Turkish",
         "turkish": "Turkish",
     }
     return aliases.get(text.casefold(), text)
@@ -281,7 +279,17 @@ def instruction_guidance(plan: SetupPlan) -> dict[str, str | None]:
         "gemini": "GEMINI.md",
     }
     filename = target_files[plan.agent_target]
-    location = plan.project_path or "the current project"
+    global_destinations = {
+        "agents": "~/.codex/AGENTS.md",
+        "codex": "~/.codex/AGENTS.md",
+        "claude": "~/.claude/CLAUDE.md",
+        "gemini": "~/.gemini/GEMINI.md",
+    }
+    location = (
+        global_destinations[plan.agent_target]
+        if plan.instruction_scope == "global"
+        else plan.project_path or "the current project"
+    )
     return {
         "target": plan.agent_target,
         "scope": plan.instruction_scope,
