@@ -14,9 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from jarvis_line import diagnostics, kokoro_say as ks
 from jarvis_line.queue_policy import schedule_job
-
-from jarvis_line import kokoro_say as ks
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -667,27 +666,48 @@ def queue_jarvis_line(session_key: str, phase: str, jarvis_line: str, text: str 
     cfg = runtime_config()
     if cfg.get("speech_enabled") is False:
         append_log(f"skip-queue speech-disabled phase={phase}")
+        diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="speech_disabled")
         return False
     if quiet_day_active(cfg):
         append_log(f"skip-queue quiet-day phase={phase}")
+        diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="quiet_day")
         return False
     if quiet_hours_active(cfg):
         append_log(f"skip-queue quiet-hours phase={phase}")
+        diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="quiet_hours")
         return False
     if not speak_mode_allows(phase, cfg):
         append_log(f"skip-queue speak-mode phase={phase}")
+        diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="speak_mode")
         return False
     jarvis_line = trim_spoken_text(jarvis_line, cfg)
     template = str(cfg.get("message_template") or "{line}")
     jarvis_line = trim_spoken_text(template.replace("{line}", jarvis_line), cfg)
     if not should_speak(session_key, phase, jarvis_line):
-        append_log(f"skip-queue-debounced phase={phase} line={jarvis_line}")
+        context = diagnostics.runtime_log_context(
+            session_key=session_key,
+            line=jarvis_line,
+            include_content=bool(cfg.get("debug_content_logging", False)),
+        )
+        append_log(f"skip-queue-debounced phase={phase} {context}".rstrip())
+        diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="debounced")
         return False
     job_id = enqueue_audio_job(session_key, phase, jarvis_line, text)
     if not job_id:
         return False
     launch_audio_worker()
-    append_log(f"queued-audio phase={phase} job={job_id} line={jarvis_line}")
+    context = diagnostics.runtime_log_context(
+        session_key=session_key,
+        line=jarvis_line,
+        include_content=bool(cfg.get("debug_content_logging", False)),
+    )
+    append_log(f"queued-audio phase={phase} job={job_id} {context}".rstrip())
+    diagnostics.record_event(
+        "queued",
+        session_key=session_key,
+        message_id=job_id,
+        phase=phase,
+    )
     return True
 
 
@@ -1030,7 +1050,7 @@ def notify_trigger(arg_payload: str = "") -> int:
         append_log("notify-skip no-session-file")
         return 0
 
-    append_log(f"notify-turn-complete file={target}")
+    append_log(f"notify-turn-complete {diagnostics.runtime_log_context(session_key=target)}")
     session_key = str(target.resolve())
 
     remember_latest_message(session_key, phase, text, jarvis_line)
@@ -1040,7 +1060,7 @@ def notify_trigger(arg_payload: str = "") -> int:
 
 def watch_file(path: Path, read_existing: bool = False) -> int:
     session_key = str(path.resolve())
-    append_log(f"watch-start file={session_key}")
+    append_log(f"watch-start {diagnostics.runtime_log_context(session_key=session_key)}")
     launch_audio_worker()
     with path.open("r", encoding="utf-8", errors="ignore") as f:
         if not read_existing:
@@ -1084,10 +1104,10 @@ def watch_sessions(read_existing: bool = False) -> int:
                     f = path.open("r", encoding="utf-8", errors="ignore")
                     if not read_existing:
                         if recover_latest_recent_line(path, key, recovery_min_ts_ms):
-                            append_log(f"watch-recover file={key}")
+                            append_log(f"watch-recover {diagnostics.runtime_log_context(session_key=key)}")
                         f.seek(0, os.SEEK_END)
                     handles[key] = f
-                    append_log(f"watch-add file={key}")
+                    append_log(f"watch-add {diagnostics.runtime_log_context(session_key=key)}")
                 except OSError:
                     continue
 
@@ -1099,7 +1119,7 @@ def watch_sessions(read_existing: bool = False) -> int:
                 except Exception:
                     pass
                 handles.pop(key, None)
-                append_log(f"watch-drop file={key}")
+                append_log(f"watch-drop {diagnostics.runtime_log_context(session_key=key)}")
 
             last_refresh = now
 
@@ -1113,7 +1133,7 @@ def watch_sessions(read_existing: bool = False) -> int:
                 except Exception:
                     pass
                 handles.pop(key, None)
-                append_log(f"watch-error file={key}")
+                append_log(f"watch-error {diagnostics.runtime_log_context(session_key=key)}")
                 continue
             if not line:
                 continue

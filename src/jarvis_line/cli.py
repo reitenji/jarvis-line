@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import __version__
+from jarvis_line import __version__, diagnostics
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -1357,6 +1357,29 @@ def logs_tail(args) -> int:
     return 0
 
 
+def trace_command(args) -> int:
+    if getattr(args, "clear", False):
+        diagnostics.clear_events()
+        print("Cleared Jarvis Line trace.")
+        return 0
+    events = diagnostics.read_events(int(getattr(args, "limit", 20) or 20))
+    if getattr(args, "json_output", False):
+        print(json.dumps(events, ensure_ascii=False, indent=2))
+        return 0
+    print("Jarvis Line trace")
+    if not events:
+        print("No trace events recorded.")
+        return 0
+    for event in events:
+        details = " ".join(
+            f"{key}={value}"
+            for key, value in event.items()
+            if key not in {"ts_ms", "event"}
+        )
+        print(f"- {event.get('ts_ms')} {event.get('event')} {details}".rstrip())
+    return 0
+
+
 def collect_support_data(args) -> dict[str, Any]:
     full_logs = bool(getattr(args, "full", False))
     since_seconds = parse_since_seconds(getattr(args, "since", None))
@@ -1946,6 +1969,12 @@ def build_parser() -> argparse.ArgumentParser:
     tail.add_argument("target", choices=("all", "watcher", "audio"), nargs="?", default="all")
     tail.add_argument("--lines", type=int, default=80)
     tail.set_defaults(func=logs_tail)
+
+    trace = sub.add_parser("trace", help="Inspect privacy-safe runtime lifecycle events.")
+    trace.add_argument("--limit", type=int, default=20)
+    trace.add_argument("--json", action="store_true", dest="json_output")
+    trace.add_argument("--clear", action="store_true")
+    trace.set_defaults(func=trace_command)
 
     kokoro = sub.add_parser("kokoro", help="Manage Kokoro status, dependencies, and config.")
     kokoro_sub = kokoro.add_subparsers(dest="kokoro_command", required=True)

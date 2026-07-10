@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import kokoro_say as ks
+from jarvis_line import diagnostics, kokoro_say as ks
 from jarvis_line.queue_policy import dequeue_next
 
 
@@ -436,6 +436,7 @@ def speak_system(line: str, cfg: dict[str, Any]) -> None:
 
 def run_worker() -> int:
     append_log("worker-start")
+    diagnostics.record_event("worker_started", pid=os.getpid())
     update_worker_heartbeat()
     warm_tts_if_configured()
     last_heartbeat = 0.0
@@ -452,10 +453,12 @@ def run_worker() -> int:
             if rss_exit_details is not None:
                 rss_mb, limit_mb = rss_exit_details
                 append_log(f"worker-rss-drained-exit rss_mb={rss_mb:.0f} limit_mb={limit_mb:.0f}")
+                diagnostics.record_event("worker_rss_exit", rss_mb=rss_mb, limit_mb=limit_mb)
                 return 0
             idle_exit_seconds = worker_idle_exit_seconds()
             if idle_exit_seconds and now - idle_since >= idle_exit_seconds:
                 append_log(f"worker-idle-exit idle_seconds={now - idle_since:.0f}")
+                diagnostics.record_event("worker_idle_exit", idle_seconds=round(now - idle_since, 1))
                 return 0
             time.sleep(IDLE_SLEEP_SECONDS)
             continue
@@ -464,19 +467,49 @@ def run_worker() -> int:
         line = str(job.get("jarvis_line") or "").strip()
         phase = str(job.get("phase") or "")
         session_key = str(job.get("session_key") or "")
+        message_id = str(job.get("message_id") or "")
         enqueued_ts_ms = int(job.get("enqueued_ts_ms") or 0)
         queue_delay_ms = max(0, int(time.time() * 1000) - enqueued_ts_ms) if enqueued_ts_ms else 0
         if not line:
             append_log("job-skip empty-line")
             continue
-        append_log(f"job-speak phase={phase} queue_delay_ms={queue_delay_ms} session={session_key} line={line}")
+        cfg = ks.load_config()
+        context = diagnostics.runtime_log_context(
+            session_key=session_key,
+            line=line,
+            include_content=bool(cfg.get("debug_content_logging", False)),
+        )
+        append_log(f"job-speak phase={phase} queue_delay_ms={queue_delay_ms} {context}".rstrip())
+        diagnostics.record_event(
+            "speaking",
+            session_key=session_key,
+            message_id=message_id,
+            phase=phase,
+            queue_delay_ms=queue_delay_ms,
+            backend=str(cfg.get("tts") or "kokoro"),
+        )
         update_worker_heartbeat()
         started = time.perf_counter()
         try:
             speak_line(line)
-            append_log(f"job-done phase={phase} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
+            duration_ms = (time.perf_counter() - started) * 1000
+            append_log(f"job-done phase={phase} duration_ms={duration_ms:.0f}")
+            diagnostics.record_event(
+                "completed",
+                session_key=session_key,
+                message_id=message_id,
+                phase=phase,
+                duration_ms=round(duration_ms),
+            )
         except Exception as exc:
             append_log(f"job-error reason={exc.__class__.__name__}")
+            diagnostics.record_event(
+                "failed",
+                session_key=session_key,
+                message_id=message_id,
+                phase=phase,
+                reason=exc.__class__.__name__,
+            )
         finally:
             update_worker_heartbeat()
             exceeded, rss_mb, limit_mb = rss_limit_exceeded()

@@ -87,3 +87,38 @@ def test_worker_drains_pending_jobs_before_rss_exit(monkeypatch):
     assert audio_worker.run_worker() == 0
     assert spoken == ["one", "two"]
     assert any("worker-rss-drained-exit" in line for line in logs)
+
+
+def test_worker_trace_records_speaking_completion_and_memory_exit(monkeypatch):
+    jobs = [
+        {
+            "message_id": "abc",
+            "jarvis_line": "secret line",
+            "phase": "final",
+            "session_key": "/private/session.jsonl",
+        },
+        None,
+    ]
+    events = []
+
+    monkeypatch.setattr(audio_worker, "dequeue_audio_job", lambda: jobs.pop(0))
+    monkeypatch.setattr(audio_worker, "speak_line", lambda _line: None)
+    monkeypatch.setattr(audio_worker, "rss_limit_exceeded", lambda: (True, 700.0, 512.0))
+    monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
+    monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+    monkeypatch.setattr(
+        audio_worker.diagnostics,
+        "record_event",
+        lambda event, **metadata: events.append((event, metadata)),
+    )
+
+    assert audio_worker.run_worker() == 0
+
+    assert [event for event, _metadata in events] == [
+        "worker_started",
+        "speaking",
+        "completed",
+        "worker_rss_exit",
+    ]
+    assert all("line" not in metadata for _event, metadata in events)
