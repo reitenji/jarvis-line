@@ -130,6 +130,7 @@ final class JarvisLineModel: ObservableObject {
     @Published var status = RuntimeStatus.empty
     @Published var config = JarvisConfigDraft.defaults
     @Published var configContract = JarvisConfigContract.empty
+    @Published var traceEvents: [RuntimeTraceEvent] = []
     @Published var cliVersion = "jarvis-line unknown"
     @Published var systemVoices: [String] = [""]
     @Published var doctorText = ""
@@ -172,6 +173,7 @@ final class JarvisLineModel: ObservableObject {
             doctorText = doctorOutput
             codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             lastOutput = statusOutput
+            await refreshTrace()
         }
     }
 
@@ -252,6 +254,15 @@ final class JarvisLineModel: ObservableObject {
             return
         }
         configContract = contract
+    }
+
+    private func refreshTrace() async {
+        guard let output = try? await cli.run(["trace", "--limit", "12", "--json"]),
+              let data = output.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([RuntimeTraceEvent].self, from: data) else {
+            return
+        }
+        traceEvents = decoded
     }
 
     private func run(label: String, operation: () async throws -> Void) async {
@@ -902,32 +913,12 @@ struct JarvisLinePanel: View {
 
     @ViewBuilder
     private var diagnosticsPanel: some View {
-        if let error = model.errorMessage {
-            PanelSection(title: "Diagnostics", icon: "exclamationmark.triangle") {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(JarvisTheme.error)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else if !model.doctorText.isEmpty {
-            PanelSection(title: "Diagnostics", icon: "stethoscope") {
-                ScrollView {
-                    Text(model.doctorText)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(JarvisTheme.mutedText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(height: mode == .settingsWindow ? 132 : 108)
-                .padding(9)
-                .background(JarvisTheme.console)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(JarvisTheme.cyan.opacity(0.14), lineWidth: 1)
-                )
-            }
+        PanelSection(title: "Runtime diagnostics", icon: "stethoscope") {
+            RuntimeDiagnosticsView(
+                events: model.traceEvents,
+                doctorText: model.doctorText,
+                errorMessage: model.errorMessage
+            )
         }
     }
 
