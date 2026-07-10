@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Drain pending audio jobs before an RSS-triggered worker exit to avoid repeated Kokoro reloads during bursts.
+- Preserve final messages when trimming the queue and rotate playback fairly across active sessions.
+- Add a bounded privacy-safe lifecycle trace and `jarvis-line trace` command.
+- Remove spoken text and absolute session paths from default runtime logs.
+- Add the versioned `jarvis-line emit` protocol for Codex, Claude, Gemini, and custom adapters.
+- Establish a canonical config contract shared by the Python CLI and macOS settings app.
+- Add native runtime diagnostics, Swift tests, app/DMG smoke checks, checksums, and tag artifact automation.
+
 ## 0.1.0b8
 
 - Fixed Jarvis Line speech with newer Codex session history entries where assistant output can appear inside Codex agent history payloads.

@@ -21,7 +21,10 @@ jarvis-line config defaults
 jarvis-line config defaults kokoro
 jarvis-line config schema
 jarvis-line config schema system
+jarvis-line config contract
 ```
+
+`config contract` prints the versioned defaults, field metadata, backend capabilities, and controlled UI options used by both the CLI and macOS manager.
 
 Change common settings:
 
@@ -54,8 +57,9 @@ jarvis-line config set speech_enabled false
 | `max_queue_size` | `8` | Maximum queued audio jobs |
 | `dedupe_window_seconds` | `null` | Optional duplicate suppression override |
 | `audio_worker_idle_exit_seconds` | `60` | Seconds the audio worker may stay idle before exiting to release TTS memory |
-| `audio_worker_max_rss_mb` | `512` | Maximum audio worker RSS in MB before the worker exits after a job |
+| `audio_worker_max_rss_mb` | `512` | Maximum audio worker RSS in MB before it drains the current burst and exits |
 | `speech_enabled` | `true` | Global/project switch for speech |
+| `debug_content_logging` | `false` | Include spoken text in local legacy logs; the structured trace remains metadata-only |
 | `volume` | `0.7` | Playback volume where supported |
 | `final_trigger_mode` | `notify` | Trigger strategy for final responses |
 
@@ -91,6 +95,7 @@ Fresh setup starts from this shape:
   "quiet_hours": null,
   "audio_worker_idle_exit_seconds": 60,
   "audio_worker_max_rss_mb": 512,
+  "debug_content_logging": false,
   "model_path": "~/.jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx",
   "voices_path": "~/.jarvis-line/tts/kokoro-models/voices-v1.0.bin",
   "voice": "bm_george:70,bm_lewis:30",
@@ -139,6 +144,7 @@ Rules:
 - Run `jarvis-line doctor` after editing.
 - Prefer CLI commands for normal changes.
 - Do not store API keys directly in the config.
+- Keep `debug_content_logging` disabled unless you are actively diagnosing a local problem.
 - Put API keys in environment variables or in your own wrapper script.
 - Use `jarvis-line tts capabilities` before adding backend-specific fields.
 
