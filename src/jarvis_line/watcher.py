@@ -695,7 +695,6 @@ def queue_jarvis_line(session_key: str, phase: str, jarvis_line: str, text: str 
     job_id = enqueue_audio_job(session_key, phase, jarvis_line, text)
     if not job_id:
         return False
-    launch_audio_worker()
     context = diagnostics.runtime_log_context(
         session_key=session_key,
         line=jarvis_line,
@@ -708,6 +707,7 @@ def queue_jarvis_line(session_key: str, phase: str, jarvis_line: str, text: str 
         message_id=job_id,
         phase=phase,
     )
+    launch_audio_worker()
     return True
 
 
