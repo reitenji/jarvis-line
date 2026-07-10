@@ -38,7 +38,7 @@ def test_workflows_pin_actions_to_reviewed_commits():
     security_workflow = (ROOT / ".github/workflows/security.yml").read_text(encoding="utf-8")
     workflows = ci_workflow + release_workflow + security_workflow
 
-    assert "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" in workflows
+    assert "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" in workflows
     assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" in workflows
     assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflows
     assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflows
