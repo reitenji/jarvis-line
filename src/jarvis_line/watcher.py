@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from jarvis_line.queue_policy import schedule_job
+
 from jarvis_line import kokoro_say as ks
 
 
@@ -595,29 +597,16 @@ def enqueue_audio_job(session_key: str, phase: str, jarvis_line: str, text: str 
     def mutate(queue):
         jobs = list(queue.get("jobs") or [])
         stale_before = now_ms - (AUDIO_QUEUE_STALE_SECONDS * 1000)
-        jobs = [job for job in jobs if int(job.get("enqueued_ts_ms") or 0) >= stale_before]
-        jobs = [job for job in jobs if job.get("message_id") != job_id]
-        if is_final_phase(phase):
-            jobs = [
-                job for job in jobs
-                if not (job.get("session_key") == session_key and is_final_phase(str(job.get("phase") or "")))
-            ]
-        else:
-            jobs = [
-                job for job in jobs
-                if not (job.get("session_key") == session_key and str(job.get("phase") or "") == phase)
-            ]
-        jobs.append({
+        new_job = {
             "message_id": job_id,
             "session_key": session_key,
             "phase": phase,
             "jarvis_line": jarvis_line,
             "text": text[:4096],
             "enqueued_ts_ms": now_ms,
-        })
+        }
         max_jobs = int(cfg.get("max_queue_size") or AUDIO_QUEUE_MAX_JOBS)
-        if max_jobs > 0 and len(jobs) > max_jobs:
-            jobs = jobs[-max_jobs:]
+        jobs = schedule_job(jobs, new_job, max_jobs, stale_before)
         queue["jobs"] = jobs
         queue["updated_ts_ms"] = now_ms
         return job_id

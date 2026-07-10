@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from jarvis_line import kokoro_say as ks
+from jarvis_line.queue_policy import dequeue_next
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -129,8 +130,12 @@ def dequeue_audio_job() -> dict[str, Any] | None:
 
     def mutate(queue):
         jobs = drop_stale_jobs(list(queue.get("jobs") or []), now_ms)
-        job = jobs.pop(0) if jobs else None
-        queue["jobs"] = jobs
+        job, remaining, last_session_key = dequeue_next(
+            jobs,
+            str(queue.get("last_session_key") or ""),
+        )
+        queue["jobs"] = remaining
+        queue["last_session_key"] = last_session_key
         queue["updated_ts_ms"] = now_ms
         return job
 
@@ -435,6 +440,7 @@ def run_worker() -> int:
     warm_tts_if_configured()
     last_heartbeat = 0.0
     idle_since = time.time()
+    rss_exit_details: tuple[float | None, float] | None = None
     while True:
         now = time.time()
         if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
@@ -443,6 +449,10 @@ def run_worker() -> int:
 
         job = dequeue_audio_job()
         if not job:
+            if rss_exit_details is not None:
+                rss_mb, limit_mb = rss_exit_details
+                append_log(f"worker-rss-drained-exit rss_mb={rss_mb:.0f} limit_mb={limit_mb:.0f}")
+                return 0
             idle_exit_seconds = worker_idle_exit_seconds()
             if idle_exit_seconds and now - idle_since >= idle_exit_seconds:
                 append_log(f"worker-idle-exit idle_seconds={now - idle_since:.0f}")
@@ -462,7 +472,6 @@ def run_worker() -> int:
         append_log(f"job-speak phase={phase} queue_delay_ms={queue_delay_ms} session={session_key} line={line}")
         update_worker_heartbeat()
         started = time.perf_counter()
-        should_exit = False
         try:
             speak_line(line)
             append_log(f"job-done phase={phase} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
@@ -472,11 +481,8 @@ def run_worker() -> int:
             update_worker_heartbeat()
             exceeded, rss_mb, limit_mb = rss_limit_exceeded()
             if exceeded:
-                append_log(f"worker-rss-exit rss_mb={rss_mb:.0f} limit_mb={limit_mb:.0f}")
-                should_exit = True
+                rss_exit_details = (rss_mb, limit_mb)
             idle_since = time.time()
-        if should_exit:
-            return 0
 
 
 if __name__ == "__main__":
