@@ -11,6 +11,8 @@ def test_contract_contains_defaults_fields_and_backends():
     assert contract["defaults"]["tts"] == "kokoro"
     assert contract["defaults"]["debug_content_logging"] is False
     assert contract["fields"]["tts"]["values"] == ["command", "kokoro", "macos", "system"]
+    assert contract["ui_options"]["tts"] == ["kokoro", "system", "macos", "command"]
+    assert 185 in contract["ui_options"]["system_rate"]
     assert "system" in contract["backends"]
     assert isinstance(contract["backends"]["system"]["supports"], list)
 

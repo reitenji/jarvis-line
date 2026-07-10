@@ -9,22 +9,38 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify tag, version, and main ancestry
+        shell: bash
+        run: |
+          python scripts/check_version_consistency.py
+          test "${GITHUB_REF_NAME#v}" = "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "Release tag must point to a commit contained in main." >&2
+            exit 1
+          }
+
   python:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Verify tag and project version
-        shell: bash
-        run: |
-          python scripts/check_version_consistency.py
-          test "${GITHUB_REF_NAME#v}" = "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
       - name: Build Python artifacts
         run: |
-          python -m pip install --upgrade build
+          python -m pip install --upgrade build twine
           python -m build
+          python -m twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
           name: python-artifacts
@@ -32,17 +48,10 @@ jobs:
           if-no-files-found: error
 
   macos:
+    needs: verify
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Verify tag and project version
-        shell: bash
-        run: |
-          python scripts/check_version_consistency.py
-          test "${GITHUB_REF_NAME#v}" = "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
       - name: Test Swift package
         run: swift test --package-path apps/macos/JarvisLine
       - name: Build and verify macOS artifacts

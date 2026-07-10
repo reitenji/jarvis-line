@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-struct RuntimeTraceEvent: Codable, Identifiable {
+struct RuntimeTraceEvent: Codable {
     let timestampMS: Int
     let event: String
     let messageID: String?
@@ -13,10 +13,6 @@ struct RuntimeTraceEvent: Codable, Identifiable {
     let limitMB: Double?
     let backend: String?
     let reason: String?
-
-    var id: String {
-        "\(timestampMS)-\(event)-\(messageID ?? sessionID ?? "runtime")"
-    }
 
     var spokenText: String? { nil }
 
@@ -184,8 +180,10 @@ struct RuntimeDiagnosticsView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(JarvisTheme.subtleText)
         } else {
+            let recentEvents = Array(events.suffix(6).reversed())
             VStack(spacing: 0) {
-                ForEach(Array(events.suffix(6).reversed())) { event in
+                ForEach(Array(recentEvents.enumerated()), id: \.offset) { item in
+                    let event = item.element
                     HStack(spacing: 8) {
                         Image(systemName: icon(for: event.event))
                             .font(.system(size: 10, weight: .semibold))
@@ -205,7 +203,7 @@ struct RuntimeDiagnosticsView: View {
                             .foregroundStyle(JarvisTheme.subtleText)
                     }
                     .padding(.vertical, 5)
-                    if event.id != events.suffix(6).first?.id {
+                    if item.offset < recentEvents.count - 1 {
                         Divider().overlay(JarvisTheme.cyan.opacity(0.08))
                     }
                 }

@@ -704,13 +704,25 @@ struct JarvisLinePanel: View {
                 }
 
                 if model.config.tts == "system" || model.config.tts == "macos" {
-                    Picker("System voice", selection: $model.config.systemVoice) {
+                    Picker(
+                        model.config.tts == "macos" ? "macOS voice" : "System voice",
+                        selection: $model.config.systemVoice
+                    ) {
                         ForEach(model.systemVoices, id: \.self) { value in
                             Text(value.isEmpty ? "System default" : value).tag(value)
                         }
                     }
-                    Picker("System rate", selection: $model.config.systemRate) {
-                        ForEach(model.configContract.intOptions("system_rate", fallback: JarvisConfigDraft.systemRateOptions), id: \.self) { value in
+                    Picker(
+                        model.config.tts == "macos" ? "macOS rate" : "System rate",
+                        selection: $model.config.systemRate
+                    ) {
+                        ForEach(
+                            model.configContract.intOptions(
+                                "system_rate",
+                                fallback: JarvisConfigDraft.systemRateOptions
+                            ),
+                            id: \.self
+                        ) { value in
                             Text("\(value)").tag(value)
                         }
                     }

@@ -16,7 +16,7 @@ struct JarvisConfigDraft {
     ]
     static let kokoroLangOptions = ["en-gb", "en-us", "fr-fr", "it", "ja", "cmn"]
     static let speedOptions = [0.9, 1.0, 1.08, 1.2]
-    static let systemRateOptions = [160, 180, 200, 220, 240]
+    static let systemRateOptions = [160, 180, 185, 200, 220, 240]
     static let updateIntervalOptions = [6, 12, 24, 48, 168]
 
     var tts: String
@@ -208,8 +208,13 @@ struct JarvisConfigDraft {
         voice = Self.string(data["voice"], defaults.voice)
         lang = Self.string(data["lang"], defaults.lang)
         speed = Self.double(data["speed"], defaults.speed)
-        systemVoice = Self.optionalString(data["system_voice"])
-        systemRate = Self.int(data["system_rate"], defaults.systemRate)
+        if tts == "macos" {
+            systemVoice = Self.optionalString(data["macos_voice"])
+            systemRate = Self.int(data["macos_rate"], defaults.systemRate)
+        } else {
+            systemVoice = Self.optionalString(data["system_voice"])
+            systemRate = Self.int(data["system_rate"], defaults.systemRate)
+        }
         command = Self.optionalString(data["command"])
         updateCheckEnabled = Self.bool(data["update_check_enabled"], defaults.updateCheckEnabled)
         updateCheckIntervalHours = Self.int(data["update_check_interval_hours"], defaults.updateCheckIntervalHours)
@@ -288,8 +293,13 @@ struct JarvisConfigDraft {
         updated["voice"] = voice.trimmedOrDefault("bm_george:70,bm_lewis:30")
         updated["lang"] = lang.trimmedOrDefault("en-gb")
         updated["speed"] = speed
-        updated["system_voice"] = systemVoice.trimmedNilOrValue
-        updated["system_rate"] = systemRate
+        if tts == "macos" {
+            updated["macos_voice"] = systemVoice.trimmedNilOrValue
+            updated["macos_rate"] = systemRate
+        } else {
+            updated["system_voice"] = systemVoice.trimmedNilOrValue
+            updated["system_rate"] = systemRate
+        }
         updated["command"] = command.trimmedNilOrValue
         updated["update_check_enabled"] = updateCheckEnabled
         updated["update_check_interval_hours"] = updateCheckIntervalHours
@@ -390,7 +400,9 @@ struct JarvisConfigStore {
         if !issues.isEmpty {
             throw ConfigValidationError(issues: issues)
         }
-        let updated = draft.applying(to: try rawConfig())
+        let base = contract.defaults.isEmpty ? defaultRawConfig() : contract.defaults
+        let current = base.merging(try rawConfig()) { _, userValue in userValue }
+        let updated = draft.applying(to: current)
         let data = try JSONSerialization.data(withJSONObject: updated, options: [.prettyPrinted, .sortedKeys])
         try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: path)

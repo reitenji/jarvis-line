@@ -129,8 +129,15 @@ def record_event(event: str, **metadata: object) -> None:
         payload = json.dumps(entry, ensure_ascii=True, separators=(",", ":"))
         with trace_lock():
             _trim_trace_unlocked()
-            with TRACE_PATH.open("a", encoding="utf-8") as trace_file:
+            file_descriptor = os.open(
+                TRACE_PATH,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                0o600,
+            )
+            with os.fdopen(file_descriptor, "a", encoding="utf-8") as trace_file:
                 trace_file.write(payload + "\n")
+            if os.name != "nt":
+                os.chmod(TRACE_PATH, 0o600)
     except Exception:
         return
 

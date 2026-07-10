@@ -203,6 +203,7 @@ CONFIG_FIELD_HELP = {
 }
 
 UI_OPTIONS = {
+    "tts": ["kokoro", "system", "macos", "command"],
     "line_language": ["English", "Turkish", "French", "Italian", "Japanese", "Chinese"],
     "quiet_hours": [None, "22:00-08:00", "20:00-08:00", "18:00-09:00"],
     "max_spoken_chars": [120, 180, 240, 300],
@@ -212,7 +213,7 @@ UI_OPTIONS = {
     "voice": ["bm_george:70,bm_lewis:30", "bm_george", "bm_lewis"],
     "lang": ["en-gb", "en-us", "fr-fr", "it", "ja", "cmn"],
     "speed": [0.9, 1.0, 1.08, 1.2],
-    "system_rate": [160, 180, 200, 220, 240],
+    "system_rate": [160, 180, 185, 200, 220, 240],
     "update_check_interval_hours": [6, 12, 24, 48, 168],
 }
 

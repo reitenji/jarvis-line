@@ -29,7 +29,7 @@ if [[ ! -d "$APP_DIR" ]]; then
 fi
 
 detach_existing_image
-rm -rf "$DIST_DIR/dmg-root" "$DMG_PATH"
+rm -rf "$DIST_DIR/dmg-root" "$DMG_PATH" "$DMG_PATH.sha256"
 STAGE_DIR="$(mktemp -d "$DIST_DIR/dmg-root.XXXXXX")"
 cleanup() {
   rm -rf "$STAGE_DIR"

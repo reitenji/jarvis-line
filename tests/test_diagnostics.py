@@ -1,5 +1,7 @@
 import argparse
 import json
+import os
+import stat
 
 from jarvis_line import cli, diagnostics
 
@@ -26,6 +28,17 @@ def test_record_event_hashes_session_and_omits_spoken_text(tmp_path, monkeypatch
     assert event["message_id"] == "abc"
     assert "line" not in event
     assert "text" not in event
+
+
+def test_trace_file_is_user_only_on_posix(tmp_path, monkeypatch):
+    if os.name == "nt":
+        return
+    configure_paths(tmp_path, monkeypatch)
+
+    diagnostics.record_event("queued", message_id="abc")
+
+    mode = stat.S_IMODE(diagnostics.TRACE_PATH.stat().st_mode)
+    assert mode == 0o600
 
 
 def test_trace_rotation_preserves_newest_events(tmp_path, monkeypatch):
