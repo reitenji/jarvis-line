@@ -112,3 +112,62 @@ The resulting commit is reported in the task completion status.
 ## Concerns
 
 No blocking concerns remain for Task 1. Interactive prompt helpers and CLI integration are intentionally deferred to the later guided-CLI task. The brief names `instruction_guidance()` but does not define a serialized return schema, so this task supplies a small dictionary shape for later integration; later tasks should keep that shape or codify any required changes with tests.
+
+## Review Fix Addendum
+
+Fixed the two validated Task 1 findings in the owned setup domain files:
+
+- `instruction_guidance()` now reports the global/user destination for every supported target: `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md`, or `~/.gemini/GEMINI.md` as applicable. Global guidance never falls back to `the current project`.
+- `build_inspection()` and `backend_options()` now reject short language codes such as `en` and `tr`. Full language names remain accepted and the existing `English`/`Turkish` case normalization remains supported.
+- No JSON or stdin parsing was added; the 64 KiB bounded-stdin finding remains assigned to Task 2.
+
+### Exact TDD Evidence
+
+RED command:
+
+```text
+.venv/bin/python -m pytest tests/test_setup_flow.py -q
+```
+
+Observed result before the fix:
+
+```text
+6 failed, 5 passed in 0.05s
+```
+
+The six failures were the two short-code cases (`en`, `tr`) and the four global destination cases (`agents`, `codex`, `claude`, `gemini`).
+
+Focused GREEN command:
+
+```text
+.venv/bin/python -m pytest tests/test_setup_flow.py -q
+```
+
+Observed result after the fix:
+
+```text
+...........                                                              [100%]
+11 passed in 0.02s
+```
+
+Full Python suite command:
+
+```text
+.venv/bin/python -m pytest -q
+```
+
+Observed result:
+
+```text
+........................................................................ [ 49%]
+......................................................................   [100%]
+146 passed in 1.59s
+```
+
+Additional verification: `git diff --check` exited `0` with no output.
+
+### Fix Commit
+
+```text
+a7bbb908cdfef00e39fc82926f66655fde74f357 fix: tighten setup inspection contracts
+```
