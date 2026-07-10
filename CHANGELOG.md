@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-10
+
 - Add contributor, conduct, security, pull request, and community guidance.
 - Replace the obsolete ZIP support-bundle issue flow with reviewed Markdown support reports and Discussion routing.
+- Mark the project as beta and publish explicit Preview boundaries for the macOS app, Windows, Linux, and agent/provider adapters.
+- Document local data, network behavior, third-party model licensing, and safe support-report review in a dedicated privacy policy.
+- Add pinned and atomic Kokoro model downloads with explicit license acceptance and SHA-256 verification.
+- Pin GitHub Actions to reviewed commit SHAs, audit optional Python dependencies, configure Dependabot, and attach an SPDX SBOM to releases.
+- Verify built wheels through isolated install, CLI smoke, uninstall, and residue checks on macOS, Linux, and Windows CI.
 
 ## 0.3.1
 

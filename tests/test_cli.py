@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 
 import pytest
 
@@ -178,13 +179,13 @@ def test_update_check_from_git_reports_latest_tag(tmp_path, monkeypatch, capsys)
         "update_source": "git",
         "update_git_repo": "ssh://git@github.com-personal/me/jarvis-line.git",
     })
-    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.3.2")
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.4.1")
 
     rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
     out = capsys.readouterr().out
 
     assert rc == 10
-    assert "Latest version: 0.3.2" in out
+    assert "Latest version: 0.4.1" in out
     assert "Update available" in out
 
 
@@ -552,6 +553,103 @@ def test_kokoro_ready_uses_configured_model_paths(tmp_path, monkeypatch):
 
     assert ready is False
     assert reason == "kokoro voices missing"
+
+
+def test_kokoro_parser_requires_explicit_license_acceptance_for_download():
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["kokoro", "download", "--accept-license", "--force"])
+
+    assert args.accept_license is True
+    assert args.force is True
+    assert args.func is cli.kokoro_download
+
+
+def test_kokoro_download_refuses_without_license_acceptance(capsys):
+    result = cli.kokoro_download(argparse.Namespace(accept_license=False, force=False))
+
+    assert result == 2
+    assert "--accept-license" in capsys.readouterr().err
+
+
+def test_kokoro_download_uses_managed_destinations_and_activates_them(tmp_path, monkeypatch):
+    model = tmp_path / "managed" / "model.onnx"
+    voices = tmp_path / "managed" / "voices.bin"
+    custom_model = tmp_path / "custom" / "model.onnx"
+    custom_voices = tmp_path / "custom" / "voices.bin"
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "KOKORO_MODEL", model)
+    monkeypatch.setattr(cli, "KOKORO_VOICES", voices)
+    cli.save_json(
+        cli.CONFIG_PATH,
+        {"model_path": str(custom_model), "voices_path": str(custom_voices)},
+    )
+    calls = []
+
+    def fake_download(spec, destination, *, force):
+        calls.append((spec.name, destination, force))
+        return "downloaded"
+
+    monkeypatch.setattr(cli.kokoro_assets, "download_verified_asset", fake_download)
+
+    assert cli.kokoro_download(argparse.Namespace(accept_license=True, force=True)) == 0
+    assert calls == [
+        ("kokoro-v1.0.onnx", model, True),
+        ("voices-v1.0.bin", voices, True),
+    ]
+    config = cli.load_json(cli.CONFIG_PATH, {})
+    assert config["model_path"] == str(model)
+    assert config["voices_path"] == str(voices)
+
+
+def test_kokoro_download_does_not_change_config_after_failed_verification(tmp_path, monkeypatch):
+    custom_model = tmp_path / "custom-model.onnx"
+    custom_voices = tmp_path / "custom-voices.bin"
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cli, "KOKORO_MODEL", tmp_path / "managed-model.onnx")
+    monkeypatch.setattr(cli, "KOKORO_VOICES", tmp_path / "managed-voices.bin")
+    original = {"model_path": str(custom_model), "voices_path": str(custom_voices)}
+    cli.save_json(cli.CONFIG_PATH, original)
+
+    def fail_download(spec, destination, *, force):
+        raise ValueError("verification failed")
+
+    monkeypatch.setattr(cli.kokoro_assets, "download_verified_asset", fail_download)
+
+    assert cli.kokoro_download(argparse.Namespace(accept_license=True, force=True)) == 1
+    assert cli.load_json(cli.CONFIG_PATH, {}) == original
+
+
+def test_kokoro_verify_checks_configured_files_against_official_manifest(tmp_path, monkeypatch):
+    model = tmp_path / "model.onnx"
+    voices = tmp_path / "voices.bin"
+    model.write_bytes(b"model")
+    voices.write_bytes(b"voices")
+    monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
+    cli.save_json(cli.CONFIG_PATH, {"model_path": str(model), "voices_path": str(voices)})
+    monkeypatch.setattr(
+        cli.kokoro_assets,
+        "OFFICIAL_ASSETS",
+        {
+            "model": cli.kokoro_assets.AssetSpec(
+                "model.onnx",
+                "https://example.invalid/model.onnx",
+                len(b"model"),
+                hashlib.sha256(b"model").hexdigest(),
+            ),
+            "voices": cli.kokoro_assets.AssetSpec(
+                "voices.bin",
+                "https://example.invalid/voices.bin",
+                len(b"voices"),
+                hashlib.sha256(b"voices").hexdigest(),
+            ),
+        },
+    )
+
+    assert cli.kokoro_verify(argparse.Namespace()) == 0
+
+    voices.write_bytes(b"modified")
+    assert cli.kokoro_verify(argparse.Namespace()) == 1
 
 
 def test_instruction_snippet_language_modes():

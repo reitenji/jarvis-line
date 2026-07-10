@@ -1,6 +1,6 @@
 # Jarvis Line for macOS
 
-Experimental macOS menu bar manager for Jarvis Line.
+Preview macOS menu bar manager for Jarvis Line.
 
 The app does not replace the CLI. It shells out to the installed `jarvis-line`
 command and provides a native control surface for day-to-day management.
@@ -69,5 +69,6 @@ checks the official GitHub release source on the selected interval.
 
 ## Packaging Later
 
-The local app bundle is ad-hoc signed. The next release step is Developer ID
-signing and notarization for a smoother public install experience.
+The local app bundle is ad-hoc signed. The app remains Preview until a Developer
+ID signing and notarization path is available for a smoother public install
+experience.

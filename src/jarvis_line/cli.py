@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import __version__, config_contract, diagnostics, events
+from jarvis_line import __version__, config_contract, diagnostics, events, kokoro_assets
 from jarvis_line.config_contract import (
     BACKEND_CAPABILITIES,
     CONFIG_FIELD_HELP,
@@ -628,6 +628,65 @@ def kokoro_status(_args) -> int:
     else:
         print_next("run `jarvis-line kokoro install-deps`, add model files, or use `jarvis-line tts use system`.")
     return 0 if ready else 1
+
+
+def kokoro_verify(_args) -> int:
+    model_path, voices_path = kokoro_model_paths()
+    results = [
+        ("model", model_path, kokoro_assets.OFFICIAL_ASSETS["model"]),
+        ("voices", voices_path, kokoro_assets.OFFICIAL_ASSETS["voices"]),
+    ]
+    print("Kokoro official asset verification")
+    all_verified = True
+    for label, path, spec in results:
+        verified, reason = kokoro_assets.verify_asset(path, spec)
+        print_check(verified, label, f"{path} - {reason}")
+        all_verified = all_verified and verified
+    print("Source:", kokoro_assets.OFFICIAL_RELEASE_URL)
+    print("Model license:", kokoro_assets.MODEL_LICENSE)
+    if all_verified:
+        print_next("official Kokoro model assets are verified.")
+        return 0
+    print_next("run `jarvis-line kokoro download --accept-license`, or configure trusted custom model paths.")
+    return 1
+
+
+def kokoro_download(args) -> int:
+    if not args.accept_license:
+        print(
+            "Kokoro model files use the Apache-2.0 license. Review the upstream release, "
+            "then rerun with --accept-license.",
+            file=sys.stderr,
+        )
+        print(f"Source: {kokoro_assets.OFFICIAL_RELEASE_URL}", file=sys.stderr)
+        return 2
+
+    print("Kokoro official model download")
+    print("Source:", kokoro_assets.OFFICIAL_RELEASE_URL)
+    print("Model license:", kokoro_assets.MODEL_LICENSE)
+    cfg = load_effective_config()
+    destinations = [
+        ("model", KOKORO_MODEL, kokoro_assets.OFFICIAL_ASSETS["model"]),
+        ("voices", KOKORO_VOICES, kokoro_assets.OFFICIAL_ASSETS["voices"]),
+    ]
+    try:
+        for label, destination, spec in destinations:
+            print(f"Downloading {label}: {spec.name}")
+            result = kokoro_assets.download_verified_asset(
+                spec,
+                destination,
+                force=args.force,
+            )
+            print_check(True, label, f"{destination} - {result}")
+    except (OSError, ValueError) as exc:
+        print(f"Kokoro download failed: {exc}", file=sys.stderr)
+        return 1
+    cfg["model_path"] = str(KOKORO_MODEL)
+    cfg["voices_path"] = str(KOKORO_VOICES)
+    save_json(CONFIG_PATH, cfg)
+    print("Activated verified model paths in:", CONFIG_PATH)
+    print_next("run `jarvis-line kokoro verify`, then `jarvis-line kokoro install-deps`.")
+    return 0
 
 
 def kokoro_install_deps(_args) -> int:
@@ -1583,6 +1642,7 @@ Common commands:
   jarvis-line setup --default        Install a low-friction default setup
   jarvis-line tts use system         Switch to platform system TTS
   jarvis-line kokoro status          Check Kokoro model/runtime readiness
+  jarvis-line kokoro verify          Verify official model files by SHA-256
   jarvis-line logs tail              Inspect watcher and audio worker logs
   jarvis-line support-report         Create redacted issue-report markdown
   jarvis-line update check           Check whether an update is available
@@ -1794,9 +1854,27 @@ def build_parser() -> argparse.ArgumentParser:
     emit.add_argument("--text", help="Optional longer context retained only in local queue/cache state.")
     emit.set_defaults(func=emit_command)
 
-    kokoro = sub.add_parser("kokoro", help="Manage Kokoro status, dependencies, and config.")
+    kokoro = sub.add_parser("kokoro", help="Manage Kokoro assets, dependencies, and config.")
     kokoro_sub = kokoro.add_subparsers(dest="kokoro_command", required=True)
     kokoro_sub.add_parser("status").set_defaults(func=kokoro_status)
+    kokoro_sub.add_parser("verify", help="Verify configured files against pinned official assets.").set_defaults(
+        func=kokoro_verify
+    )
+    kokoro_download_parser = kokoro_sub.add_parser(
+        "download",
+        help="Download pinned official model files and verify their size and SHA-256.",
+    )
+    kokoro_download_parser.add_argument(
+        "--accept-license",
+        action="store_true",
+        help="Confirm that you reviewed and accept the upstream Apache-2.0 model license.",
+    )
+    kokoro_download_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace existing files only after the downloaded replacements pass verification.",
+    )
+    kokoro_download_parser.set_defaults(func=kokoro_download)
     kokoro_sub.add_parser("install-deps").set_defaults(func=kokoro_install_deps)
     kokoro_config = kokoro_sub.add_parser("configure")
     kokoro_config.add_argument("--model-path")

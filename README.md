@@ -24,12 +24,17 @@ Then it sends that line to one audio worker and speaks it with your selected TTS
 
 It is built for long-running agent work: test loops, code reviews, refactors, debugging sessions, background tasks, and any workflow where you want a short spoken summary when the agent finishes.
 
+> **Release status:** Jarvis Line `0.4.0` is beta. The macOS CLI/runtime is the
+> primary validated surface. The macOS manager app, Windows, and Linux remain
+> Preview while they collect broader real-device evidence. See the
+> [support matrix](docs/SUPPORT-MATRIX.md) and [privacy guide](PRIVACY.md).
+
 ## TL;DR
 
 Install Jarvis Line from the GitHub release tag, initialize it, then make sure your agent instruction language matches the TTS voice language.
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.3.1"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.4.0"
 jarvis-line init --codex --language "English"
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
@@ -184,6 +189,15 @@ jarvis-line tts use system
 jarvis-line tts use command --command 'my-tts --text {text_json}'
 ```
 
+Official Kokoro model files are not bundled. Review the upstream source and
+license, then download and verify the pinned assets explicitly:
+
+```bash
+jarvis-line kokoro download --accept-license
+jarvis-line kokoro verify
+jarvis-line kokoro install-deps
+```
+
 Kokoro is the recommended default for English. System TTS is the recommended fallback if Kokoro is not ready or if you prefer your OS voice.
 
 For backend-specific setup, macOS Read & Speak guidance, custom command placeholders, and public dependency notes, see [docs/TTS.md](docs/TTS.md).
@@ -238,7 +252,7 @@ Top-level commands shown by `jarvis-line --help`:
 | `jarvis-line restart` | Restarts the watcher and audio worker runtime |
 | `jarvis-line queue` | Inspects or clears queued spoken lines |
 | `jarvis-line logs` | Prints redacted watcher and audio worker logs |
-| `jarvis-line kokoro` | Checks Kokoro readiness, installs Kokoro Python dependencies, or configures model paths |
+| `jarvis-line kokoro` | Downloads/verifies pinned official assets, checks readiness, installs dependencies, or configures model paths |
 | `jarvis-line support-report` | Creates reviewed Markdown for GitHub issues |
 | `jarvis-line install` | Installs hooks for supported agents; currently Codex hooks are supported |
 | `jarvis-line uninstall` | Removes installed hooks |
@@ -318,6 +332,10 @@ Do not paste raw logs into issues. Use `support-report`, review the Markdown, th
 
 Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately according to [SECURITY.md](SECURITY.md), never in a public issue or discussion.
 
+Jarvis Line's local data and network behavior is documented in
+[PRIVACY.md](PRIVACY.md). Optional package/model attribution is listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Development
 
 Install locally:
@@ -367,7 +385,7 @@ feature/* or fix/*
 
 Branch roles:
 
-- `main`: release-ready code only. Public installs should prefer version tags such as `v0.3.1`.
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.4.0`.
 - `develop`: integration branch for reviewed changes before release.
 - `feature/*`: new features.
 - `fix/*`: bug fixes.
@@ -389,7 +407,7 @@ jarvis-line support-report --output ./jarvis-line-issue.md
 
 ## Release Status
 
-The current release is `0.3.1`. Changes listed under `Unreleased` are validated on feature/develop branches before the next version tag is created.
+The current release is `0.4.0`. Changes listed under `Unreleased` are validated on feature/develop branches before the next version tag is created.
 
 Release-ready project pieces:
 
@@ -409,21 +427,25 @@ Release-ready project pieces:
 - agent-neutral versioned event protocol
 - shared CLI/macOS configuration contract
 - update check/apply/install/configure commands
+- pinned and atomic Kokoro asset download/verification
+- clean wheel install/uninstall checks on macOS, Linux, and Windows CI
+- dependency auditing, Dependabot configuration, and release SBOM generation
 - fallback TTS and command retry/env/cwd settings
 - instruction replace/doctor/style commands
 - issue template that requests a reviewed redacted support report
 - system TTS fallback for users who do not want Kokoro
-- experimental macOS menu bar manager app
+- Preview macOS menu bar manager app
 - Swift tests, app/DMG smoke verification, and SHA-256 release checksums
 
 Release caveat:
 
-- Kokoro model files are not bundled; users must place them locally or configure custom paths.
+- Kokoro model files are not bundled; users can explicitly download verified
+  pinned assets or configure trusted custom paths.
 - Local DMGs are ad-hoc signed but not Apple-notarized until a Developer ID release process is configured.
 
 ## macOS Manager App
 
-An experimental macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
+A Preview macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
 It keeps the CLI as the core engine and provides native controls for status,
 start/stop/restart, repair, test voice, hook install, settings, config file
 access, structured runtime diagnostics, and logs.

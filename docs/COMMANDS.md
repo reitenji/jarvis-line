@@ -82,8 +82,8 @@ jarvis-line update check
 ```
 
 ```text
-Current version: 0.3.1
-Latest version: 0.3.1
+Current version: 0.4.0
+Latest version: 0.4.0
 Jarvis Line is up to date.
 ```
 
@@ -94,8 +94,8 @@ jarvis-line update check --source git --repo https://github.com/reitenji/jarvis-
 ```
 
 ```text
-Current version: 0.3.1
-Latest version: 0.3.1
+Current version: 0.4.0
+Latest version: 0.4.0
 Jarvis Line is up to date.
 ```
 
@@ -107,8 +107,8 @@ jarvis-line update apply
 
 ```text
 Current version: 0.1.0b8
-Latest version: 0.3.1
-Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.3.1
+Latest version: 0.4.0
+Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.4.0
 Next: run `jarvis-line --version` and `jarvis-line doctor`.
 ```
 
@@ -203,6 +203,8 @@ For the versioned standard-input format, see [EVENT-PROTOCOL.md](EVENT-PROTOCOL.
 
 ## `kokoro`
 
+Fast readiness check:
+
 ```bash
 jarvis-line kokoro status
 ```
@@ -215,6 +217,47 @@ Kokoro status
 [OK] dependencies - ready
 Next: run `jarvis-line tts use kokoro` or `jarvis-line tts test`.
 ```
+
+Download the pinned upstream model assets after reviewing and accepting their
+Apache-2.0 license:
+
+```bash
+jarvis-line kokoro download --accept-license
+```
+
+```text
+Kokoro official model download
+Source: https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0
+Model license: Apache-2.0
+Downloading model: kokoro-v1.0.onnx
+[OK] model - ~/.jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx - downloaded
+Downloading voices: voices-v1.0.bin
+[OK] voices - ~/.jarvis-line/tts/kokoro-models/voices-v1.0.bin - downloaded
+Activated verified model paths in: ~/.codex/hooks/jarvis_line_config.json
+Next: run `jarvis-line kokoro verify`, then `jarvis-line kokoro install-deps`.
+```
+
+Verify configured files against the pinned official size and SHA-256 manifest:
+
+```bash
+jarvis-line kokoro verify
+```
+
+```text
+Kokoro official asset verification
+[OK] model - ~/.jarvis-line/tts/kokoro-models/kokoro-v1.0.onnx - verified
+[OK] voices - ~/.jarvis-line/tts/kokoro-models/voices-v1.0.bin - verified
+Source: https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0
+Model license: Apache-2.0
+Next: official Kokoro model assets are verified.
+```
+
+`download` writes only to Jarvis Line's managed model directory and activates
+those paths after both assets succeed. It preserves an existing mismatched
+managed file unless `--force` is supplied. `--force` still replaces it only
+after the new temporary file passes integrity verification. Custom models are
+supported through manual configuration but will not match the official manifest
+unless they are byte-for-byte the pinned release assets.
 
 ## `support-report`
 
