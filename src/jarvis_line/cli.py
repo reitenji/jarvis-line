@@ -632,6 +632,30 @@ def kokoro_ready() -> tuple[bool, str]:
     return True, "ready"
 
 
+def managed_kokoro_ready() -> tuple[bool, str]:
+    assets = [
+        ("model", KOKORO_MODEL, kokoro_assets.OFFICIAL_ASSETS["model"]),
+        ("voices", KOKORO_VOICES, kokoro_assets.OFFICIAL_ASSETS["voices"]),
+    ]
+    for label, path, spec in assets:
+        verified, reason = kokoro_assets.verify_asset(path, spec)
+        if not verified:
+            return False, f"managed Kokoro {label} {reason}"
+    if not KOKORO_PY.exists():
+        return False, "kokoro venv python missing"
+    try:
+        subprocess.run(
+            [str(KOKORO_PY), "-c", "import kokoro_onnx, sounddevice, soundfile, numpy"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=True,
+        )
+    except Exception:
+        return False, "kokoro python dependencies missing"
+    return True, "ready"
+
+
 def kokoro_status(_args) -> int:
     model_path, voices_path = kokoro_model_paths()
     ready, reason = kokoro_ready()
@@ -963,8 +987,21 @@ def detect_setup_environment() -> setup_flow.SetupEnvironment:
 
 
 def read_setup_plan_stdin() -> setup_flow.SetupPlan:
-    text = sys.stdin.read(setup_flow.MAX_SETUP_PLAN_BYTES + 1)
-    if len(text) > setup_flow.MAX_SETUP_PLAN_BYTES:
+    limit = setup_flow.MAX_SETUP_PLAN_BYTES
+    binary_stdin = getattr(sys.stdin, "buffer", None)
+    if binary_stdin is not None:
+        raw = binary_stdin.read(limit + 1)
+        if len(raw) > limit:
+            raise setup_flow.SetupContractError("setup plan exceeds 64 KiB")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise setup_flow.SetupContractError("setup plan must be valid UTF-8") from exc
+    else:
+        text = sys.stdin.read(limit + 1)
+        if len(text.encode("utf-8")) > limit:
+            raise setup_flow.SetupContractError("setup plan exceeds 64 KiB")
+    if len(text.encode("utf-8")) > limit:
         raise setup_flow.SetupContractError("setup plan exceeds 64 KiB")
     try:
         payload = json.loads(text)
@@ -1010,7 +1047,18 @@ def _run_setup_callable(callback, *, json_mode: bool):
 
 
 def run_setup_kokoro_install() -> int:
-    return kokoro_install_deps(argparse.Namespace(), quiet=True)
+    try:
+        for destination, spec in (
+            (KOKORO_MODEL, kokoro_assets.OFFICIAL_ASSETS["model"]),
+            (KOKORO_VOICES, kokoro_assets.OFFICIAL_ASSETS["voices"]),
+        ):
+            kokoro_assets.download_verified_asset(spec, destination, force=False)
+        if kokoro_install_deps(argparse.Namespace(), quiet=True) != 0:
+            return 1
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return 1
+    ready, _reason = managed_kokoro_ready()
+    return 0 if ready else 1
 
 
 def setup_doctor_json() -> dict[str, Any]:
@@ -1021,7 +1069,23 @@ def setup_doctor_json() -> dict[str, Any]:
         payload = json.loads(output.getvalue())
     except json.JSONDecodeError:
         return {"ok": False, "error": "doctor did not produce JSON"}
-    return {"ok": code == 0, "result": payload}
+    selected_tts = payload.get("selected_tts")
+    selected_checks = {
+        "kokoro": payload.get("kokoro", {}),
+        "system": payload.get("system_tts", {}),
+        "macos": payload.get("macos_say", {}),
+        "command": payload.get("command_tts", {}),
+    }
+    selected_backend_ok = bool(selected_checks.get(selected_tts, {}).get("ok"))
+    runtime_ok = bool(payload.get("watcher", {}).get("ok")) and bool(
+        payload.get("audio_worker", {}).get("ok")
+    )
+    return {
+        "ok": code == 0 and selected_backend_ok and runtime_ok,
+        "selected_backend_ok": selected_backend_ok,
+        "runtime_ok": runtime_ok,
+        "result": payload,
+    }
 
 
 def _setup_backup_path() -> Path:
@@ -1045,8 +1109,17 @@ def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str
         steps.append({"name": name, "ok": ok, "code": code})
         return ok
 
-    if plan.install_kokoro and not run_step("kokoro_preflight", run_setup_kokoro_install):
-        return _setup_result(plan, steps, ok=False, error="Kokoro preflight failed")
+    if plan.tts == "kokoro":
+        if plan.install_kokoro:
+            config["model_path"] = str(KOKORO_MODEL)
+            config["voices_path"] = str(KOKORO_VOICES)
+            if not run_step("kokoro_preflight", run_setup_kokoro_install):
+                return _setup_result(plan, steps, ok=False, error="Kokoro preflight failed")
+        else:
+            ready, detail = kokoro_ready()
+            steps.append({"name": "kokoro_preflight", "ok": ready, "detail": detail})
+            if not ready:
+                return _setup_result(plan, steps, ok=False, error="Kokoro preflight failed")
 
     backup = _setup_backup_path()
     try:
@@ -1069,17 +1142,19 @@ def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str
     ):
         return _setup_result(plan, steps, ok=False, error="runtime start failed")
 
-    if plan.test_voice and not run_step(
-        "voice_test", lambda: tts_test(argparse.Namespace(text="Jarvis line setup is ready."), quiet=True)
-    ):
-        return _setup_result(plan, steps, ok=False, error="voice test failed")
-
     try:
         doctor_payload = _run_setup_callable(setup_doctor_json, json_mode=json_mode)
         steps.append({"name": "doctor", "ok": bool(doctor_payload.get("ok", False)), "result": doctor_payload})
     except Exception as exc:
         steps.append({"name": "doctor", "ok": False, "error": str(exc)})
         return _setup_result(plan, steps, ok=False, error="doctor failed")
+    if not doctor_payload.get("ok", False):
+        return _setup_result(plan, steps, ok=False, error="doctor failed")
+
+    if plan.test_voice and not run_step(
+        "voice_test", lambda: tts_test(argparse.Namespace(text="Jarvis line setup is ready."), quiet=True)
+    ):
+        return _setup_result(plan, steps, ok=False, error="voice test failed")
     return _setup_result(plan, steps, ok=True)
 
 
@@ -1256,6 +1331,8 @@ def doctor(_args) -> int:
     worker_idle_ok = not worker_ok and queue_jobs == 0 and idle_exit_seconds > 0
     worker_health_ok = worker_ok or worker_idle_ok
     warnings = validate_config(cfg)
+    macos_say_ok = platform.system() == "Darwin" and bool(shutil.which("say"))
+    command_tts_ok = bool(cfg.get("command")) and not warnings
     if getattr(_args, "json_output", False):
         print(json.dumps({
             "config": CONFIG_PATH.exists(),
@@ -1264,6 +1341,8 @@ def doctor(_args) -> int:
             "audio_worker_script": WORKER_PATH.exists(),
             "kokoro": {"ok": ready, "detail": reason},
             "system_tts": {"ok": system_ready, "detail": system_reason},
+            "macos_say": {"ok": macos_say_ok},
+            "command_tts": {"ok": command_tts_ok},
             "watcher": {"ok": watcher_ok, "pid": watcher.get("pid")},
             "audio_worker": {
                 "ok": worker_health_ok,
@@ -1286,7 +1365,7 @@ def doctor(_args) -> int:
     print_check(ready, "kokoro", reason)
     print_check(system_ready, "system TTS fallback", system_reason)
     system = platform.system()
-    print_check(system == "Darwin" and bool(shutil.which("say")), "macOS say fallback")
+    print_check(macos_say_ok, "macOS say fallback")
     if system == "Linux":
         linux_ok, linux_detail = linux_player_ready()
         print_check(linux_ok, "Linux tempfile player", linux_detail)

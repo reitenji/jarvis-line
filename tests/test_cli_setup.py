@@ -45,6 +45,20 @@ def patch_setup_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
 
 
+def healthy_doctor():
+    return {
+        "ok": True,
+        "selected_backend_ok": True,
+        "runtime_ok": True,
+        "result": {
+            "selected_tts": "kokoro",
+            "kokoro": {"ok": True},
+            "watcher": {"ok": True},
+            "audio_worker": {"ok": True},
+        },
+    }
+
+
 def test_setup_inspect_prints_parseable_versioned_json(monkeypatch, capsys):
     monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
     monkeypatch.setattr(cli, "load_effective_config", lambda default=None: {"tts": "system"})
@@ -57,8 +71,9 @@ def test_setup_inspect_prints_parseable_versioned_json(monkeypatch, capsys):
     assert payload["current"] == {"tts": "system"}
 
 
-def test_setup_apply_rejects_oversized_stdin_before_mutation(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "stdin", io.StringIO("x" * 65_537))
+def test_setup_apply_rejects_multibyte_oversized_stdin_before_mutation(monkeypatch, capsys):
+    text = "€" * ((setup_flow.MAX_SETUP_PLAN_BYTES // len("€".encode("utf-8"))) + 1)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(text.encode("utf-8")), encoding="utf-8"))
     writes = []
     monkeypatch.setattr(cli, "save_json", lambda *_args: writes.append(True))
 
@@ -93,7 +108,7 @@ def test_apply_writes_config_once_after_preflight(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "save_json", lambda path, data: calls.append(("write", path, data["tts"])))
     monkeypatch.setattr(cli, "install_codex", lambda _args: calls.append("hook") or 0)
     monkeypatch.setattr(cli, "launch_runtime", lambda _args, selected: calls.append(("runtime", selected)) or 0)
-    monkeypatch.setattr(cli, "setup_doctor_json", lambda: {"selected_tts": "kokoro"})
+    monkeypatch.setattr(cli, "setup_doctor_json", healthy_doctor)
 
     result = cli.apply_setup_plan(kokoro_codex_plan(), json_mode=True)
 
@@ -106,11 +121,87 @@ def test_apply_writes_config_once_after_preflight(monkeypatch, tmp_path):
     ]
 
 
+def test_run_setup_kokoro_install_downloads_managed_assets_before_dependencies(monkeypatch):
+    calls = []
+
+    def download(spec, destination, *, force):
+        calls.append(("download", spec.name, destination, force))
+        return "downloaded"
+
+    monkeypatch.setattr(cli.kokoro_assets, "download_verified_asset", download)
+    monkeypatch.setattr(
+        cli,
+        "kokoro_install_deps",
+        lambda _args, quiet: calls.append(("dependencies", quiet)) or 0,
+    )
+    monkeypatch.setattr(cli, "managed_kokoro_ready", lambda: (True, "ready"), raising=False)
+
+    assert cli.run_setup_kokoro_install() == 0
+
+    assert calls == [
+        ("download", "kokoro-v1.0.onnx", cli.KOKORO_MODEL, False),
+        ("download", "voices-v1.0.bin", cli.KOKORO_VOICES, False),
+        ("dependencies", True),
+    ]
+
+
+def test_apply_stops_before_config_write_when_managed_kokoro_is_not_ready(monkeypatch, tmp_path):
+    patch_setup_paths(monkeypatch, tmp_path)
+    writes = []
+    monkeypatch.setattr(cli.kokoro_assets, "download_verified_asset", lambda *_args, **_kwargs: "downloaded")
+    monkeypatch.setattr(cli, "kokoro_install_deps", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(cli, "managed_kokoro_ready", lambda: (False, "imports missing"), raising=False)
+    monkeypatch.setattr(cli, "save_json", lambda *_args: writes.append(True))
+
+    result = cli.apply_setup_plan(kokoro_codex_plan(), json_mode=True)
+
+    assert result["ok"] is False
+    assert result["error"] == "Kokoro preflight failed"
+    assert writes == []
+
+
+def test_apply_installed_kokoro_writes_managed_paths(monkeypatch, tmp_path):
+    patch_setup_paths(monkeypatch, tmp_path)
+    written = []
+    monkeypatch.setattr(cli, "load_effective_config", lambda _default=None: {
+        "tts": "system",
+        "model_path": "/custom/model.onnx",
+        "voices_path": "/custom/voices.bin",
+    })
+    monkeypatch.setattr(cli, "run_setup_kokoro_install", lambda: 0)
+    monkeypatch.setattr(cli, "save_json", lambda _path, config: written.append(config))
+    monkeypatch.setattr(cli, "install_codex", lambda _args: 0)
+    monkeypatch.setattr(cli, "launch_runtime", lambda _args, _selected: 0)
+    monkeypatch.setattr(cli, "setup_doctor_json", healthy_doctor)
+
+    result = cli.apply_setup_plan(kokoro_codex_plan(), json_mode=True)
+
+    assert result["ok"] is True
+    assert written[0]["model_path"] == str(cli.KOKORO_MODEL)
+    assert written[0]["voices_path"] == str(cli.KOKORO_VOICES)
+
+
+def test_apply_kokoro_without_install_requires_current_backend_readiness(monkeypatch, tmp_path):
+    patch_setup_paths(monkeypatch, tmp_path)
+    writes = []
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (False, "model missing"))
+    monkeypatch.setattr(cli, "save_json", lambda *_args: writes.append(True))
+
+    result = cli.apply_setup_plan(
+        kokoro_codex_plan(install_kokoro=False, install_codex_hook=False, start_runtime=False),
+        json_mode=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "Kokoro preflight failed"
+    assert writes == []
+
+
 def test_apply_creates_config_backup_once_before_atomic_write(monkeypatch, tmp_path):
     patch_setup_paths(monkeypatch, tmp_path)
     cli.CONFIG_PATH.write_text('{"tts": "system"}\n', encoding="utf-8")
     backup = tmp_path / "jarvis_line_config.json.setup.bak"
-    monkeypatch.setattr(cli, "setup_doctor_json", lambda: {})
+    monkeypatch.setattr(cli, "setup_doctor_json", healthy_doctor)
 
     first = cli.apply_setup_plan(kokoro_codex_plan(install_kokoro=False, install_codex_hook=False, start_runtime=False), json_mode=True)
 
@@ -139,13 +230,77 @@ def test_setup_apply_keeps_json_stdout_clean_when_helpers_print(monkeypatch, tmp
         "start_runtime": plan.start_runtime,
     })))
     monkeypatch.setattr(cli, "install_codex", lambda _args: print("hook noise") or 0)
-    monkeypatch.setattr(cli, "setup_doctor_json", lambda: print("doctor noise") or {})
+    monkeypatch.setattr(cli, "setup_doctor_json", lambda: print("doctor noise") or healthy_doctor())
 
     assert cli.setup_apply(argparse.Namespace(stdin=True, json_output=True)) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["version"] == 1
+
+
+def test_apply_runs_healthy_doctor_before_optional_voice_test(monkeypatch, tmp_path):
+    patch_setup_paths(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "setup_doctor_json", lambda: calls.append("doctor") or healthy_doctor())
+    monkeypatch.setattr(
+        cli,
+        "tts_test",
+        lambda _args, quiet: calls.append("voice") or 0,
+    )
+
+    result = cli.apply_setup_plan(
+        kokoro_codex_plan(
+            install_kokoro=False,
+            install_codex_hook=False,
+            start_runtime=False,
+            test_voice=True,
+        ),
+        json_mode=True,
+    )
+
+    assert result["ok"] is True
+    assert calls == ["doctor", "voice"]
+
+
+def test_setup_doctor_rejects_success_exit_when_selected_backend_is_unhealthy(monkeypatch):
+    def doctor_with_unhealthy_backend(_args):
+        print(json.dumps({
+            "selected_tts": "kokoro",
+            "kokoro": {"ok": False},
+            "system_tts": {"ok": True},
+            "watcher": {"ok": True},
+            "audio_worker": {"ok": True},
+        }))
+        return 0
+
+    monkeypatch.setattr(cli, "doctor", doctor_with_unhealthy_backend)
+
+    result = cli.setup_doctor_json()
+
+    assert result["ok"] is False
+    assert result["selected_backend_ok"] is False
+    assert result["runtime_ok"] is True
+
+
+def test_setup_doctor_rejects_success_exit_when_runtime_is_unhealthy(monkeypatch):
+    def doctor_with_unhealthy_runtime(_args):
+        print(json.dumps({
+            "selected_tts": "kokoro",
+            "kokoro": {"ok": True},
+            "watcher": {"ok": False},
+            "audio_worker": {"ok": True},
+        }))
+        return 0
+
+    monkeypatch.setattr(cli, "doctor", doctor_with_unhealthy_runtime)
+
+    result = cli.setup_doctor_json()
+
+    assert result["ok"] is False
+    assert result["selected_backend_ok"] is True
+    assert result["runtime_ok"] is False
 
 
 def test_setup_parser_routes_machine_commands_and_preserves_default():
