@@ -45,36 +45,62 @@ struct JarvisConfigDraft {
     var updateGitRef: String
 
     var blockingIssues: [String] {
-        var issues: [String] = []
+        blockingIssues(using: .empty)
+    }
 
-        if !Self.ttsOptions.contains(tts) {
+    func blockingIssues(using contract: JarvisConfigContract) -> [String] {
+        var issues: [String] = []
+        let ttsOptions = contract.stringOptions("tts", fallback: Self.ttsOptions)
+        let speakModeOptions = contract.stringOptions("speak_mode", fallback: Self.speakModeOptions)
+        let fallbackOptions = ["none"] + contract.stringOptions(
+            "fallback_tts",
+            fallback: Self.fallbackOptions.filter { $0 != "none" }
+        )
+        let lineLanguageOptions = contract.stringOptions("line_language", fallback: Self.lineLanguageOptions)
+        let quietHourOptions = [""] + contract.stringOptions(
+            "quiet_hours",
+            fallback: Self.quietHourOptions.filter { !$0.isEmpty }
+        )
+        let maxSpokenCharsOptions = contract.intOptions("max_spoken_chars", fallback: Self.maxSpokenCharsOptions)
+        let maxQueueSizeOptions = contract.intOptions("max_queue_size", fallback: Self.maxQueueSizeOptions)
+        let warmTextOptions = contract.stringOptions("warm_tts_text", fallback: Self.warmTextOptions)
+        let kokoroLangOptions = contract.stringOptions("lang", fallback: Self.kokoroLangOptions)
+        let kokoroVoiceOptions = contract.stringOptions("voice", fallback: Self.kokoroVoiceOptions)
+        let speedOptions = contract.doubleOptions("speed", fallback: Self.speedOptions)
+        let systemRateOptions = contract.intOptions("system_rate", fallback: Self.systemRateOptions)
+        let updateIntervalOptions = contract.intOptions(
+            "update_check_interval_hours",
+            fallback: Self.updateIntervalOptions
+        )
+
+        if !ttsOptions.contains(tts) {
             issues.append("Choose a supported TTS backend.")
         }
-        if !Self.speakModeOptions.contains(speakMode) {
+        if !speakModeOptions.contains(speakMode) {
             issues.append("Choose a supported speak mode.")
         }
-        if !Self.fallbackOptions.contains(fallbackTTS) {
+        if !fallbackOptions.contains(fallbackTTS) {
             issues.append("Choose a supported fallback TTS.")
         }
         if fallbackTTS != "none" && fallbackTTS == tts {
             issues.append("Fallback TTS must be different from the primary TTS.")
         }
 
-        if !Self.lineLanguageOptions.contains(lineLanguage) {
+        if !lineLanguageOptions.contains(lineLanguage) {
             issues.append("Choose a supported line language.")
         }
 
         if assistantName != "Jarvis" {
             issues.append("Assistant name is fixed to Jarvis in the app.")
         }
-        if !Self.quietHourOptions.contains(quietHours) {
+        if !quietHourOptions.contains(quietHours) {
             issues.append("Choose a quiet-hours preset.")
         }
 
-        if !Self.maxSpokenCharsOptions.contains(maxSpokenChars) {
+        if !maxSpokenCharsOptions.contains(maxSpokenChars) {
             issues.append("Choose a supported spoken length preset.")
         }
-        if !Self.maxQueueSizeOptions.contains(maxQueueSize) {
+        if !maxQueueSizeOptions.contains(maxQueueSize) {
             issues.append("Choose a supported queue size preset.")
         }
         if !(0...1).contains(volume) {
@@ -82,24 +108,24 @@ struct JarvisConfigDraft {
         }
 
         if tts == "kokoro" {
-            if !Self.warmTextOptions.contains(warmTTSText) {
+            if !warmTextOptions.contains(warmTTSText) {
                 issues.append("Choose a supported warm-up text preset.")
             }
-            if !Self.kokoroLangOptions.contains(lang) {
+            if !kokoroLangOptions.contains(lang) {
                 issues.append("Kokoro language must be one of en-us, en-gb, fr-fr, it, ja, or cmn.")
             }
             if !kokoroLanguageMatchesLineLanguage {
                 issues.append("Kokoro language code must match the selected line language.")
             }
-            if !Self.kokoroVoiceOptions.contains(voice) {
+            if !kokoroVoiceOptions.contains(voice) {
                 issues.append("Choose a supported Kokoro voice preset.")
             }
-            if !Self.speedOptions.contains(where: { abs($0 - speed) < 0.001 }) {
+            if !speedOptions.contains(where: { abs($0 - speed) < 0.001 }) {
                 issues.append("Choose a supported Kokoro speed preset.")
             }
         }
 
-        if (tts == "system" || tts == "macos") && !Self.systemRateOptions.contains(systemRate) {
+        if (tts == "system" || tts == "macos") && !systemRateOptions.contains(systemRate) {
             issues.append("Choose a supported system voice rate preset.")
         }
 
@@ -116,7 +142,7 @@ struct JarvisConfigDraft {
             }
         }
 
-        if !Self.updateIntervalOptions.contains(updateCheckIntervalHours) {
+        if !updateIntervalOptions.contains(updateCheckIntervalHours) {
             issues.append("Choose a supported update interval preset.")
         }
 
@@ -339,19 +365,28 @@ struct JarvisConfigDraft {
 }
 
 struct JarvisConfigStore {
-    let path = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex/hooks/jarvis_line_config.json")
+    let path: URL
+
+    init(path: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex/hooks/jarvis_line_config.json")) {
+        self.path = path
+    }
 
     var displayPath: String {
-        "~/.codex/hooks/jarvis_line_config.json"
+        path.path.replacingOccurrences(
+            of: FileManager.default.homeDirectoryForCurrentUser.path,
+            with: "~"
+        )
     }
 
-    func load() throws -> JarvisConfigDraft {
-        JarvisConfigDraft(try rawConfig())
+    func load(defaults: [String: Any]? = nil) throws -> JarvisConfigDraft {
+        let base = defaults ?? defaultRawConfig()
+        let merged = base.merging(try rawConfig()) { _, userValue in userValue }
+        return JarvisConfigDraft(merged)
     }
 
-    func save(_ draft: JarvisConfigDraft) throws {
-        let issues = draft.blockingIssues
+    func save(_ draft: JarvisConfigDraft, contract: JarvisConfigContract = .empty) throws {
+        let issues = draft.blockingIssues(using: contract)
         if !issues.isEmpty {
             throw ConfigValidationError(issues: issues)
         }
@@ -363,7 +398,7 @@ struct JarvisConfigStore {
 
     private func rawConfig() throws -> [String: Any] {
         guard FileManager.default.fileExists(atPath: path.path) else {
-            return defaultRawConfig()
+            return [:]
         }
         let data = try Data(contentsOf: path)
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]

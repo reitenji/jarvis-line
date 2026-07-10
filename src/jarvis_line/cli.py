@@ -12,7 +12,16 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import __version__, diagnostics, events
+from jarvis_line import __version__, config_contract, diagnostics, events
+from jarvis_line.config_contract import (
+    BACKEND_CAPABILITIES,
+    CONFIG_FIELD_HELP,
+    DEFAULT_COMMAND_CONFIG,
+    DEFAULT_GIT_REPO,
+    DEFAULT_KOKORO_CONFIG,
+    DEFAULT_MACOS_CONFIG,
+    DEFAULT_SYSTEM_CONFIG,
+)
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -35,240 +44,6 @@ KOKORO_VENV = TTS_HOME / "kokoro-venv"
 KOKORO_PY = KOKORO_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 KOKORO_MODEL = TTS_HOME / "kokoro-models" / "kokoro-v1.0.onnx"
 KOKORO_VOICES = TTS_HOME / "kokoro-models" / "voices-v1.0.bin"
-DEFAULT_GIT_REPO = "https://github.com/reitenji/jarvis-line.git"
-
-
-DEFAULT_KOKORO_CONFIG = {
-    "tts": "kokoro",
-    "speak_mode": "final_only",
-    "line_prefixes": ["Jarvis line:"],
-    "speak_without_prefix": False,
-    "line_language": "English",
-    "max_spoken_chars": 240,
-    "quiet_hours": None,
-    "quiet_days": [],
-    "max_queue_size": 8,
-    "dedupe_window_seconds": None,
-    "fallback_tts": None,
-    "warm_tts": True,
-    "warm_tts_text": "Ready.",
-    "audio_worker_idle_exit_seconds": 60,
-    "audio_worker_max_rss_mb": 512,
-    "message_template": "{line}",
-    "assistant_name": "Jarvis",
-    "speech_enabled": True,
-    "update_check_enabled": True,
-    "update_check_interval_hours": 24,
-    "update_index_url": "https://pypi.org/pypi/jarvis-line/json",
-    "update_source": "git",
-    "update_git_repo": DEFAULT_GIT_REPO,
-    "update_git_ref": "latest",
-    "last_update_check_ts": 0,
-    "model_path": str(KOKORO_MODEL),
-    "voices_path": str(KOKORO_VOICES),
-    "voice": "bm_george:70,bm_lewis:30",
-    "lang": "en-gb",
-    "speed": 1.08,
-    "volume": 0.7,
-    "play_by_default": True,
-    "final_trigger_mode": "notify",
-    "playback_mode": "tempfile",
-    "fallback_playback_mode": "tempfile",
-    "delete_after_play": True,
-    "temp_dir": str(TTS_HOME / "generated"),
-}
-
-
-DEFAULT_MACOS_CONFIG = {
-    **DEFAULT_KOKORO_CONFIG,
-    "tts": "macos",
-    "macos_voice": "Daniel",
-    "macos_rate": 185,
-}
-
-
-DEFAULT_SYSTEM_CONFIG = {
-    **DEFAULT_KOKORO_CONFIG,
-    "tts": "system",
-    "system_voice": None,
-    "system_rate": None,
-}
-
-
-DEFAULT_COMMAND_CONFIG = {
-    **DEFAULT_KOKORO_CONFIG,
-    "tts": "command",
-    "command_mode": "play",
-    "command": [],
-    "player": [],
-    "command_timeout_seconds": 60,
-    "command_output_suffix": ".wav",
-    "command_env": {},
-    "command_cwd": None,
-    "command_retries": 0,
-}
-
-
-COMMON_CONFIG_KEYS = {
-    "tts",
-    "speak_mode",
-    "line_prefixes",
-    "speak_without_prefix",
-    "line_language",
-    "max_spoken_chars",
-    "quiet_hours",
-    "quiet_days",
-    "max_queue_size",
-    "dedupe_window_seconds",
-    "fallback_tts",
-    "warm_tts",
-    "warm_tts_text",
-    "audio_worker_idle_exit_seconds",
-    "audio_worker_max_rss_mb",
-    "message_template",
-    "assistant_name",
-    "speech_enabled",
-    "update_check_enabled",
-    "update_check_interval_hours",
-    "update_index_url",
-    "update_source",
-    "update_git_repo",
-    "update_git_ref",
-    "last_update_check_ts",
-    "play_by_default",
-    "final_trigger_mode",
-    "volume",
-    "delete_after_play",
-    "temp_dir",
-}
-
-
-BACKEND_CAPABILITIES = {
-    "kokoro": {
-        "supports": COMMON_CONFIG_KEYS | {
-            "model_path",
-            "voices_path",
-            "voice",
-            "lang",
-            "speed",
-            "playback_mode",
-            "fallback_playback_mode",
-        },
-        "unsupported": {"macos_voice", "macos_rate", "system_voice", "system_rate"},
-        "description": "Local Kokoro ONNX voice. Supports voice mix, lang, speed, stream/tempfile playback.",
-    },
-    "macos": {
-        "supports": COMMON_CONFIG_KEYS | {"macos_voice", "macos_rate"},
-        "unsupported": {
-            "model_path",
-            "voices_path",
-            "voice",
-            "lang",
-            "speed",
-            "playback_mode",
-            "fallback_playback_mode",
-            "system_voice",
-            "system_rate",
-        },
-        "description": "macOS say fallback. Supports macos_voice and macos_rate; Kokoro model/lang/speed fields are ignored.",
-    },
-    "system": {
-        "supports": COMMON_CONFIG_KEYS | {"system_voice", "system_rate"},
-        "unsupported": {
-            "model_path",
-            "voices_path",
-            "voice",
-            "lang",
-            "speed",
-            "playback_mode",
-            "fallback_playback_mode",
-            "macos_voice",
-            "macos_rate",
-        },
-        "description": "Platform default TTS fallback. Uses say on macOS, PowerShell SpeechSynthesizer on Windows, or spd-say/espeak on Linux.",
-    },
-    "command": {
-        "supports": COMMON_CONFIG_KEYS | {
-            "command_mode",
-            "command",
-            "player",
-            "command_timeout_seconds",
-            "command_output_suffix",
-            "command_env",
-            "command_cwd",
-            "command_retries",
-        },
-        "unsupported": {
-            "model_path",
-            "voices_path",
-            "voice",
-            "lang",
-            "speed",
-            "playback_mode",
-            "fallback_playback_mode",
-            "macos_voice",
-            "macos_rate",
-            "system_voice",
-            "system_rate",
-        },
-        "description": "Custom command backend. Use placeholders {text}, {text_json}, and {output}. Advanced custom_* and backend_* keys are allowed.",
-    },
-}
-
-
-CONFIG_FIELD_HELP = {
-    "tts": {"type": "string", "description": "Selected TTS backend.", "values": sorted(BACKEND_CAPABILITIES.keys())},
-    "speak_mode": {"type": "string", "description": "When Jarvis Line should speak.", "values": ["final_only", "commentary_and_final", "off"]},
-    "line_prefixes": {"type": "array[string]", "description": "Accepted spoken-line prefixes."},
-    "speak_without_prefix": {"type": "boolean", "description": "Speak a short derived status from assistant messages even when no explicit Jarvis line is present."},
-    "line_language": {"type": "string", "description": "Expected language for generated Jarvis lines, for example English, Turkish, German, or Brazilian Portuguese."},
-    "max_spoken_chars": {"type": "integer", "description": "Maximum spoken summary length."},
-    "quiet_hours": {"type": "string|null", "description": "Optional quiet-hours range, for example 22:00-08:00."},
-    "quiet_days": {"type": "array[string]", "description": "Optional days where speech is skipped, for example saturday,sunday."},
-    "max_queue_size": {"type": "integer", "description": "Maximum queued audio jobs."},
-    "dedupe_window_seconds": {"type": "integer|null", "description": "Override duplicate suppression window."},
-    "fallback_tts": {"type": "string|null", "description": "Fallback TTS backend if the selected backend fails.", "values": ["system", "macos", "command", None]},
-    "warm_tts": {"type": "boolean", "description": "Preload the selected TTS engine in the audio worker to reduce first-speech delay."},
-    "warm_tts_text": {"type": "string", "description": "Short text used for silent Kokoro stream warm-up."},
-    "audio_worker_idle_exit_seconds": {"type": "integer", "description": "Seconds the audio worker can stay idle before exiting to release TTS memory."},
-    "audio_worker_max_rss_mb": {"type": "integer", "description": "Maximum audio worker RSS in MB before the worker exits after a job."},
-    "message_template": {"type": "string", "description": "Template for spoken output. Use {line} for the Jarvis line."},
-    "assistant_name": {"type": "string", "description": "Assistant/persona name used in generated instructions."},
-    "speech_enabled": {"type": "boolean", "description": "Project/user switch for all Jarvis Line speech."},
-    "update_check_enabled": {"type": "boolean", "description": "Whether doctor may show update notices."},
-    "update_check_interval_hours": {"type": "integer", "description": "Minimum interval between doctor update checks."},
-    "update_index_url": {"type": "string", "description": "Package index JSON URL used for update checks."},
-    "update_source": {"type": "string", "description": "Default update install source.", "values": ["pypi", "git"]},
-    "update_git_repo": {"type": "string|null", "description": "Git repository URL used by git-based updates."},
-    "update_git_ref": {"type": "string", "description": "Git ref used by git-based updates."},
-    "last_update_check_ts": {"type": "integer", "description": "Last update check unix timestamp."},
-    "model_path": {"type": "string", "description": "Kokoro ONNX model path."},
-    "voices_path": {"type": "string", "description": "Kokoro voices file path."},
-    "voice": {"type": "string", "description": "Kokoro voice or weighted voice mix."},
-    "lang": {"type": "string", "description": "Kokoro language code."},
-    "speed": {"type": "number", "description": "Kokoro speech speed."},
-    "volume": {"type": "number", "description": "Playback volume where supported."},
-    "play_by_default": {"type": "boolean", "description": "Play audio unless explicitly disabled."},
-    "final_trigger_mode": {"type": "string", "description": "Final response trigger strategy."},
-    "playback_mode": {"type": "string", "description": "Kokoro playback mode.", "values": ["stream", "tempfile"]},
-    "fallback_playback_mode": {"type": "string", "description": "Kokoro fallback playback mode.", "values": ["tempfile"]},
-    "delete_after_play": {"type": "boolean", "description": "Delete generated temporary audio after playback."},
-    "temp_dir": {"type": "string", "description": "Temporary/generated audio directory."},
-    "system_voice": {"type": "string|null", "description": "Platform system TTS voice, where supported."},
-    "system_rate": {"type": "integer|null", "description": "Platform system TTS rate, where supported."},
-    "macos_voice": {"type": "string", "description": "macOS say voice name."},
-    "macos_rate": {"type": "integer", "description": "macOS say speech rate."},
-    "command_mode": {"type": "string", "description": "Custom command mode.", "values": ["play", "file"]},
-    "command": {"type": "string|array[string]", "description": "Custom TTS command."},
-    "player": {"type": "string|array[string]", "description": "Player command for file mode."},
-    "command_timeout_seconds": {"type": "number", "description": "Custom command timeout."},
-    "command_output_suffix": {"type": "string", "description": "Output suffix for command file mode."},
-    "command_env": {"type": "object", "description": "Extra environment variables for custom command backend."},
-    "command_cwd": {"type": "string|null", "description": "Working directory for custom command backend."},
-    "command_retries": {"type": "integer", "description": "Retry count for custom command failures."},
-}
-
-
 LANGUAGE_PROFILES = {
     "English": {
         "instruction_language": "English",
@@ -1638,6 +1413,11 @@ def config_schema(args) -> int:
     return 0
 
 
+def config_contract_command(_args) -> int:
+    print(json.dumps(config_contract.contract_document(), ensure_ascii=False, indent=2))
+    return 0
+
+
 def parse_config_value(value: str) -> Any:
     lowered = value.lower()
     if lowered in ("true", "false"):
@@ -2061,6 +1841,9 @@ def build_parser() -> argparse.ArgumentParser:
     schema = config_sub.add_parser("schema")
     schema.add_argument("preset", nargs="?", choices=("kokoro", "system", "macos", "command"))
     schema.set_defaults(func=config_schema)
+    config_sub.add_parser("contract", help="Print the versioned CLI/app config contract.").set_defaults(
+        func=config_contract_command
+    )
     profiles = config_sub.add_parser("profile")
     profile_sub = profiles.add_subparsers(dest="profile_command", required=True)
     profile_sub.add_parser("list").set_defaults(func=profile_list)

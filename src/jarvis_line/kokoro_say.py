@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from jarvis_line.config_contract import default_config
+
 
 CONFIG_PATH = Path.home() / ".codex" / "hooks" / "jarvis_line_config.json"
 LEGACY_CONFIG_PATH = Path.home() / ".codex" / "hooks" / "kokoro_tts_config.json"
@@ -33,13 +35,16 @@ def Kokoro(*args, **kwargs):
 
 
 def load_config() -> dict:
+    defaults = default_config()
     try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        value = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        return {**defaults, **value} if isinstance(value, dict) else defaults
     except Exception:
         try:
-            return json.loads(LEGACY_CONFIG_PATH.read_text(encoding="utf-8"))
+            value = json.loads(LEGACY_CONFIG_PATH.read_text(encoding="utf-8"))
+            return {**defaults, **value} if isinstance(value, dict) else defaults
         except Exception:
-            return {}
+            return defaults
 
 
 def parse_voice_mix(spec: str) -> list[tuple[str, float]]:
