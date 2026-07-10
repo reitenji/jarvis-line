@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
+import io
 import json
 import os
 import platform
@@ -7,12 +9,13 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import __version__, config_contract, diagnostics, events, kokoro_assets
+from jarvis_line import __version__, config_contract, diagnostics, events, kokoro_assets, setup_flow
 from jarvis_line.config_contract import (
     BACKEND_CAPABILITIES,
     CONFIG_FIELD_HELP,
@@ -95,7 +98,21 @@ def load_json(path: Path, default):
 
 def save_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        if os.name != "nt":
+            path.chmod(0o600)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def load_effective_config(default=None) -> dict[str, Any]:
@@ -689,10 +706,16 @@ def kokoro_download(args) -> int:
     return 0
 
 
-def kokoro_install_deps(_args) -> int:
+def kokoro_install_deps(_args, quiet: bool = False) -> int:
     KOKORO_VENV.parent.mkdir(parents=True, exist_ok=True)
+    output = subprocess.DEVNULL if quiet else None
     if not KOKORO_PY.exists():
-        subprocess.run([sys.executable, "-m", "venv", str(KOKORO_VENV)], check=True)
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(KOKORO_VENV)],
+            check=True,
+            stdout=output,
+            stderr=output,
+        )
     subprocess.run(
         [
             str(KOKORO_PY),
@@ -707,7 +730,11 @@ def kokoro_install_deps(_args) -> int:
             "numpy",
         ],
         check=True,
+        stdout=output,
+        stderr=output,
     )
+    if quiet:
+        return 0
     print("Installed Kokoro Python dependencies into:", KOKORO_VENV)
     print("Model path expected:", KOKORO_MODEL)
     print("Voices path expected:", KOKORO_VOICES)
@@ -921,6 +948,168 @@ def setup_default(args) -> int:
     return launch_runtime(args, selected)
 
 
+def detect_setup_environment() -> setup_flow.SetupEnvironment:
+    kokoro_ok, kokoro_detail = kokoro_ready()
+    system_ok, system_detail = system_tts_ready()
+    return setup_flow.SetupEnvironment(
+        platform=platform.system(),
+        config_exists=CONFIG_PATH.exists(),
+        kokoro_ready=kokoro_ok,
+        kokoro_detail=kokoro_detail,
+        system_tts_ready=system_ok,
+        system_tts_detail=system_detail,
+        macos_say_ready=platform.system() == "Darwin" and bool(shutil.which("say")),
+    )
+
+
+def read_setup_plan_stdin() -> setup_flow.SetupPlan:
+    text = sys.stdin.read(setup_flow.MAX_SETUP_PLAN_BYTES + 1)
+    if len(text) > setup_flow.MAX_SETUP_PLAN_BYTES:
+        raise setup_flow.SetupContractError("setup plan exceeds 64 KiB")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise setup_flow.SetupContractError("setup plan must be valid JSON") from exc
+    return setup_flow.SetupPlan.from_mapping(payload)
+
+
+def setup_inspect(_args) -> int:
+    environment = detect_setup_environment()
+    inspection = setup_flow.build_inspection(
+        environment,
+        load_effective_config({}),
+    )
+    inspection["config_exists"] = environment.config_exists
+    print(json.dumps(inspection, ensure_ascii=False))
+    return 0
+
+
+def _setup_result(
+    plan: setup_flow.SetupPlan,
+    steps: list[dict[str, Any]],
+    *,
+    ok: bool,
+    error: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "version": setup_flow.SETUP_SCHEMA_VERSION,
+        "ok": ok,
+        "steps": steps,
+        "instruction": setup_flow.instruction_guidance(plan),
+    }
+    if error:
+        result["error"] = error
+    return result
+
+
+def _run_setup_callable(callback, *, json_mode: bool):
+    if not json_mode:
+        return callback()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        return callback()
+
+
+def run_setup_kokoro_install() -> int:
+    return kokoro_install_deps(argparse.Namespace(), quiet=True)
+
+
+def setup_doctor_json() -> dict[str, Any]:
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+        code = doctor(argparse.Namespace(json_output=True, fix=False))
+    try:
+        payload = json.loads(output.getvalue())
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "doctor did not produce JSON"}
+    return {"ok": code == 0, "result": payload}
+
+
+def _setup_backup_path() -> Path:
+    return CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.setup.bak")
+
+
+def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str, Any]:
+    steps: list[dict[str, Any]] = []
+    try:
+        config = setup_flow.build_config(plan, load_effective_config({}))
+    except Exception as exc:
+        return _setup_result(plan, steps, ok=False, error=str(exc))
+
+    def run_step(name: str, callback) -> bool:
+        try:
+            code = _run_setup_callable(callback, json_mode=json_mode)
+        except Exception as exc:
+            steps.append({"name": name, "ok": False, "error": str(exc)})
+            return False
+        ok = code == 0
+        steps.append({"name": name, "ok": ok, "code": code})
+        return ok
+
+    if plan.install_kokoro and not run_step("kokoro_preflight", run_setup_kokoro_install):
+        return _setup_result(plan, steps, ok=False, error="Kokoro preflight failed")
+
+    backup = _setup_backup_path()
+    try:
+        if CONFIG_PATH.exists() and not backup.exists():
+            backup.write_bytes(CONFIG_PATH.read_bytes())
+            steps.append({"name": "config_backup", "ok": True, "path": str(backup)})
+        save_json(CONFIG_PATH, config)
+        steps.append({"name": "config_write", "ok": True})
+    except Exception as exc:
+        steps.append({"name": "config_write", "ok": False, "error": str(exc)})
+        return _setup_result(plan, steps, ok=False, error="config write failed")
+
+    if plan.install_codex_hook and not run_step(
+        "codex_hook", lambda: install_codex(argparse.Namespace())
+    ):
+        return _setup_result(plan, steps, ok=False, error="Codex hook install failed")
+
+    if plan.start_runtime and not run_step(
+        "runtime", lambda: launch_runtime(argparse.Namespace(test=False), plan.tts)
+    ):
+        return _setup_result(plan, steps, ok=False, error="runtime start failed")
+
+    if plan.test_voice and not run_step(
+        "voice_test", lambda: tts_test(argparse.Namespace(text="Jarvis line setup is ready."), quiet=True)
+    ):
+        return _setup_result(plan, steps, ok=False, error="voice test failed")
+
+    try:
+        doctor_payload = _run_setup_callable(setup_doctor_json, json_mode=json_mode)
+        steps.append({"name": "doctor", "ok": bool(doctor_payload.get("ok", False)), "result": doctor_payload})
+    except Exception as exc:
+        steps.append({"name": "doctor", "ok": False, "error": str(exc)})
+        return _setup_result(plan, steps, ok=False, error="doctor failed")
+    return _setup_result(plan, steps, ok=True)
+
+
+def setup_apply(args) -> int:
+    if not getattr(args, "stdin", False) or not getattr(args, "json_output", False):
+        print(json.dumps({"version": setup_flow.SETUP_SCHEMA_VERSION, "ok": False, "error": "setup apply requires --stdin --json"}))
+        return 2
+    try:
+        plan = read_setup_plan_stdin()
+    except setup_flow.SetupContractError as exc:
+        print(json.dumps({"version": setup_flow.SETUP_SCHEMA_VERSION, "ok": False, "error": str(exc)}))
+        return 2
+    try:
+        result = apply_setup_plan(plan, json_mode=True)
+    except Exception as exc:
+        result = _setup_result(plan, [], ok=False, error=str(exc))
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["ok"] else 1
+
+
+def setup_command(args) -> int:
+    if getattr(args, "setup_command", None) == "inspect":
+        return setup_inspect(args)
+    if getattr(args, "setup_command", None) == "apply":
+        return setup_apply(args)
+    if getattr(args, "default", False):
+        return setup_default(args)
+    return setup_wizard(args)
+
+
 def init_project(args) -> int:
     setup_rc = setup_default(argparse.Namespace(test=getattr(args, "test", False)))
     if setup_rc != 0:
@@ -999,14 +1188,20 @@ def tts_use(args) -> int:
     return 0
 
 
-def tts_test(args) -> int:
+def tts_test(args, quiet: bool = False) -> int:
     cfg = load_effective_config()
     text = args.text or "Jarvis line test is ready."
     backend = str(cfg.get("tts") or "kokoro")
+    output = subprocess.DEVNULL if quiet else None
     if backend == "macos":
         voice = str(cfg.get("macos_voice") or "Daniel")
         rate = str(cfg.get("macos_rate") or 185)
-        proc = subprocess.run(["say", "-v", voice, "-r", rate, text], timeout=20)
+        proc = subprocess.run(
+            ["say", "-v", voice, "-r", rate, text],
+            timeout=20,
+            stdout=output,
+            stderr=output,
+        )
         return proc.returncode
     if backend == "system":
         proc = subprocess.run(
@@ -1016,19 +1211,32 @@ def tts_test(args) -> int:
                 "speak_system(sys.argv[1], json.loads(sys.argv[2]))"
             ), text, json.dumps(cfg, ensure_ascii=False)],
             timeout=60,
+            stdout=output,
+            stderr=output,
         )
         return proc.returncode
     if backend == "command":
         command = cfg.get("command")
         if not command:
-            print("Command backend has no command configured.")
+            if not quiet:
+                print("Command backend has no command configured.")
             return 1
         import shlex
         parts = command if isinstance(command, list) else shlex.split(str(command))
         parts = [str(part).replace("{text}", text).replace("{text_json}", json.dumps(text, ensure_ascii=False)) for part in parts]
-        proc = subprocess.run(parts, timeout=float(cfg.get("command_timeout_seconds") or 60))
+        proc = subprocess.run(
+            parts,
+            timeout=float(cfg.get("command_timeout_seconds") or 60),
+            stdout=output,
+            stderr=output,
+        )
         return proc.returncode
-    proc = subprocess.run([str(KOKORO_PY), "-m", "jarvis_line.kokoro_say", "--text", text, "--play"], timeout=60)
+    proc = subprocess.run(
+        [str(KOKORO_PY), "-m", "jarvis_line.kokoro_say", "--text", text, "--play"],
+        timeout=60,
+        stdout=output,
+        stderr=output,
+    )
     return proc.returncode
 
 
@@ -1769,7 +1977,15 @@ def build_parser() -> argparse.ArgumentParser:
     setup = sub.add_parser("setup", help="Configure Jarvis Line.")
     setup.add_argument("--default", action="store_true", help="Use the recommended low-friction setup.")
     setup.add_argument("--test", action="store_true", help="Play a short test phrase after setup.")
-    setup.set_defaults(func=lambda args: setup_default(args) if args.default else setup_wizard(args))
+    setup_sub = setup.add_subparsers(dest="setup_command")
+    setup_inspect_parser = setup_sub.add_parser(
+        "inspect", help="Inspect setup choices for apps and automation."
+    )
+    setup_inspect_parser.add_argument("--json", action="store_true", dest="json_output", required=True)
+    setup_apply_parser = setup_sub.add_parser("apply", help="Apply a reviewed setup plan.")
+    setup_apply_parser.add_argument("--stdin", action="store_true", required=True)
+    setup_apply_parser.add_argument("--json", action="store_true", dest="json_output", required=True)
+    setup.set_defaults(func=setup_command)
 
     init = sub.add_parser("init", help="One-command setup for a project.")
     init.add_argument("--language", type=parse_language_arg, default="English")
