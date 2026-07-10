@@ -85,6 +85,53 @@ def test_setup_apply_rejects_multibyte_oversized_stdin_before_mutation(monkeypat
     assert "64 KiB" in payload["error"]
 
 
+def test_setup_apply_accepts_exactly_64kib_stdin_without_mutation(monkeypatch, capsys):
+    plan = kokoro_codex_plan(install_kokoro=False, install_codex_hook=False, start_runtime=False)
+    payload = {
+        "version": plan.version,
+        "language": plan.language,
+        "tts": plan.tts,
+        "speak_mode": plan.speak_mode,
+        "agent_target": plan.agent_target,
+        "instruction_scope": plan.instruction_scope,
+        "project_path": plan.project_path,
+        "install_kokoro": plan.install_kokoro,
+        "install_codex_hook": plan.install_codex_hook,
+        "start_runtime": plan.start_runtime,
+    }
+    text = json.dumps(payload, separators=(",", ":"))
+    raw = (text + " " * (setup_flow.MAX_SETUP_PLAN_BYTES - len(text.encode("utf-8")))).encode("utf-8")
+    assert len(raw) == setup_flow.MAX_SETUP_PLAN_BYTES
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8"))
+    writes = []
+    applied = []
+    monkeypatch.setattr(cli, "save_json", lambda *_args: writes.append(True))
+    monkeypatch.setattr(
+        cli,
+        "apply_setup_plan",
+        lambda received, *, json_mode: applied.append((received, json_mode)) or cli._setup_result(received, [], ok=True),
+    )
+
+    assert cli.setup_apply(argparse.Namespace(stdin=True, json_output=True)) == 0
+
+    assert writes == []
+    assert len(applied) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_setup_result_includes_copyable_instruction_text_for_parsed_plan():
+    result = cli._setup_result(kokoro_codex_plan(), [], ok=True)
+
+    assert result["instruction"] == {
+        "target": "codex",
+        "scope": "project",
+        "filename": "AGENTS.md",
+        "destination": "/tmp/project",
+        "command": 'jarvis-line instructions print codex --language "English"',
+        "text": cli.instruction_snippet("codex", "English"),
+    }
+
+
 def test_save_json_leaves_original_and_cleans_temp_when_replace_fails(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     path.write_text('{"old": true}\n', encoding="utf-8")

@@ -179,23 +179,54 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
 }
 
 struct SetupInstructionResult: Decodable, Sendable {
-    let command: String
-    let filename: String
+    let target: String
     let scope: String
+    let filename: String
+    let destination: String
+    let command: String
     let text: String
 
+    static let empty = SetupInstructionResult(
+        target: "",
+        scope: "",
+        filename: "",
+        destination: "",
+        command: "",
+        text: ""
+    )
+
     private enum CodingKeys: String, CodingKey {
-        case command
-        case filename
+        case target
         case scope
+        case filename
+        case destination
+        case command
         case text
+    }
+
+    init(
+        target: String,
+        scope: String,
+        filename: String,
+        destination: String,
+        command: String,
+        text: String
+    ) {
+        self.target = target
+        self.scope = scope
+        self.filename = filename
+        self.destination = destination
+        self.command = command
+        self.text = text
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
-        filename = try container.decodeIfPresent(String.self, forKey: .filename) ?? ""
+        target = try container.decodeIfPresent(String.self, forKey: .target) ?? ""
         scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? ""
+        filename = try container.decodeIfPresent(String.self, forKey: .filename) ?? ""
+        destination = try container.decodeIfPresent(String.self, forKey: .destination) ?? ""
+        command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
     }
 }
@@ -233,6 +264,23 @@ struct SetupApplyResult: Decodable, Sendable {
     let steps: [SetupResultStep]
     let instruction: SetupInstructionResult
     let error: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case ok
+        case steps
+        case instruction
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        steps = try container.decodeIfPresent([SetupResultStep].self, forKey: .steps) ?? []
+        instruction = try container.decodeIfPresent(SetupInstructionResult.self, forKey: .instruction) ?? .empty
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
 
     static func decode(_ text: String) throws -> Self {
         let decoder = JSONDecoder()
@@ -275,11 +323,19 @@ func applySetup(
     _ plan: SetupPlanPayload,
     using runner: any JarvisLineCommandRunning = JarvisLineCLI()
 ) async throws -> SetupApplyResult {
-    let output = try await runner.run(
-        ["setup", "apply", "--stdin", "--json"],
-        stdin: try plan.encoded()
-    )
-    return try SetupApplyResult.decode(output)
+    let stdin = try plan.encoded()
+    do {
+        let output = try await runner.run(
+            ["setup", "apply", "--stdin", "--json"],
+            stdin: stdin
+        )
+        return try SetupApplyResult.decode(output)
+    } catch let error as CLIError {
+        if let result = try? SetupApplyResult.decode(error.stdout) {
+            return result
+        }
+        throw error
+    }
 }
 
 private struct SetupEnvironment: Decodable {

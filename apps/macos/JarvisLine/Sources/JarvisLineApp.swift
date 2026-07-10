@@ -1255,7 +1255,7 @@ extension JarvisLineCommandRunning {
     }
 }
 
-private final class CLIProcessState: @unchecked Sendable {
+final class CLIProcessState: @unchecked Sendable {
     private let lock = NSLock()
     private var output = Data()
     private var error = Data()
@@ -1290,7 +1290,7 @@ private final class CLIProcessState: @unchecked Sendable {
         if terminationStatus == 0 {
             continuation.resume(returning: output)
         } else {
-            continuation.resume(throwing: CLIError(output + error))
+            continuation.resume(throwing: CLIError(stdout: output, stderr: error))
         }
     }
 
@@ -1308,13 +1308,18 @@ private final class CLIProcessState: @unchecked Sendable {
 
 struct JarvisLineCLI: JarvisLineCommandRunning {
     private static let maximumStdinBytes = SetupPlanPayload.maximumEncodedBytes
+    private let executable: String?
+
+    init(executable: String? = nil) {
+        self.executable = executable
+    }
 
     func run(_ args: [String], stdin: Data? = nil) async throws -> String {
         if let stdin, stdin.count > Self.maximumStdinBytes {
             throw SetupContractError.payloadTooLarge(stdin.count)
         }
 
-        let executable = findExecutable()
+        let executable = executable ?? findExecutable()
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
@@ -1410,11 +1415,24 @@ struct JarvisLineCLI: JarvisLineCommandRunning {
     }
 }
 
-struct CLIError: LocalizedError {
-    let message: String
+struct CLIError: LocalizedError, Sendable {
+    let stdout: String
+    let stderr: String
 
     init(_ message: String) {
-        self.message = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.init(stdout: "", stderr: message)
+    }
+
+    init(stdout: String, stderr: String) {
+        self.stdout = stdout
+        self.stderr = stderr
+    }
+
+    var message: String {
+        [stdout, stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var errorDescription: String? {

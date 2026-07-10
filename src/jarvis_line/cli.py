@@ -1028,11 +1028,13 @@ def _setup_result(
     ok: bool,
     error: str | None = None,
 ) -> dict[str, Any]:
+    instruction = setup_flow.instruction_guidance(plan)
+    instruction["text"] = instruction_snippet(plan.agent_target, plan.language)
     result: dict[str, Any] = {
         "version": setup_flow.SETUP_SCHEMA_VERSION,
         "ok": ok,
         "steps": steps,
-        "instruction": setup_flow.instruction_guidance(plan),
+        "instruction": instruction,
     }
     if error:
         result["error"] = error
