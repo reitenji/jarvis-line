@@ -55,6 +55,73 @@ def test_setup_default_warns_and_falls_back_to_system(tmp_path, monkeypatch, cap
     assert "Selected TTS: system" in out
 
 
+def test_setup_default_uses_system_for_turkish_even_when_kokoro_is_ready(monkeypatch):
+    current = {"tts": "kokoro", "line_language": "Turkish", "custom_setting": True}
+    saved = []
+    launched = []
+    loads = []
+    monkeypatch.setattr(cli, "load_effective_config", lambda default=None: loads.append(default) or current)
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "system_tts_ready", lambda: (True, "say"))
+    monkeypatch.setattr(cli, "save_json", lambda path, cfg: saved.append((path, cfg)))
+    monkeypatch.setattr(cli, "launch_runtime", lambda _args, selected: launched.append(selected) or 0)
+
+    assert cli.setup_default(argparse.Namespace(test=False)) == 0
+
+    assert loads == [{}]
+    assert saved[0][1]["tts"] == "system"
+    assert saved[0][1]["line_language"] == "Turkish"
+    assert saved[0][1]["custom_setting"] is True
+    assert launched == ["system"]
+
+
+def test_setup_default_leaves_turkish_unchanged_when_system_tts_is_unavailable(monkeypatch, capsys):
+    current = {"tts": "kokoro", "line_language": "Turkish"}
+    monkeypatch.setattr(cli, "load_effective_config", lambda default=None: current)
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "system_tts_ready", lambda: (False, "say missing"))
+    monkeypatch.setattr(cli, "save_json", lambda *_args: pytest.fail("must not save"))
+    monkeypatch.setattr(cli, "launch_runtime", lambda *_args: pytest.fail("must not launch"))
+
+    assert cli.setup_default(argparse.Namespace(test=False)) == 1
+
+    assert "System TTS is not ready for Turkish: say missing" in capsys.readouterr().out
+
+
+def test_setup_default_keeps_english_kokoro_behavior(monkeypatch):
+    current = {"tts": "system", "line_language": "English", "custom_setting": True}
+    saved = []
+    launched = []
+    monkeypatch.setattr(cli, "load_effective_config", lambda default=None: current)
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "system_tts_ready", lambda: pytest.fail("must not check system TTS"))
+    monkeypatch.setattr(cli, "save_json", lambda path, cfg: saved.append((path, cfg)))
+    monkeypatch.setattr(cli, "launch_runtime", lambda _args, selected: launched.append(selected) or 0)
+
+    assert cli.setup_default(argparse.Namespace(test=False)) == 0
+
+    assert saved[0][1]["tts"] == "kokoro"
+    assert saved[0][1]["line_language"] == "English"
+    assert saved[0][1]["custom_setting"] is True
+    assert launched == ["kokoro"]
+
+
+def test_setup_default_falls_back_to_english_for_invalid_configured_language(monkeypatch):
+    saved = []
+    launched = []
+    monkeypatch.setattr(cli, "load_effective_config", lambda default=None: {"line_language": "tr"})
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "system_tts_ready", lambda: pytest.fail("must not check system TTS"))
+    monkeypatch.setattr(cli, "save_json", lambda path, cfg: saved.append((path, cfg)))
+    monkeypatch.setattr(cli, "launch_runtime", lambda _args, selected: launched.append(selected) or 0)
+
+    assert cli.setup_default(argparse.Namespace(test=False)) == 0
+
+    assert saved[0][1]["tts"] == "kokoro"
+    assert saved[0][1]["line_language"] == "English"
+    assert launched == ["kokoro"]
+
+
 def test_init_project_runs_setup_without_agent_hook_by_default(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
@@ -179,13 +246,13 @@ def test_update_check_from_git_reports_latest_tag(tmp_path, monkeypatch, capsys)
         "update_source": "git",
         "update_git_repo": "ssh://git@github.com-personal/me/jarvis-line.git",
     })
-    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.4.1")
+    monkeypatch.setattr(cli, "fetch_latest_git_version", lambda repo: "0.5.1")
 
     rc = cli.update_check(argparse.Namespace(source=None, index_url=None, repo=None))
     out = capsys.readouterr().out
 
     assert rc == 10
-    assert "Latest version: 0.4.1" in out
+    assert "Latest version: 0.5.1" in out
     assert "Update available" in out
 
 

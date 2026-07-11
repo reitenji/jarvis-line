@@ -1,8 +1,10 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var showSettingsWindow: (() -> Void)?
+    static var showSetupWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.applyDockVisibility(JarvisAppPreferences.showDockIcon)
@@ -118,6 +120,22 @@ struct JarvisLineApp: App {
                 SettingsWindowController.shared.show(model: model)
             }
         }
+        AppDelegate.showSetupWindow = {
+            Task { @MainActor in
+                SetupAssistantWindowController.shared.show(mainModel: model)
+            }
+        }
+        model.onInitialSetupInspection = { [weak model] inspection in
+            guard let model,
+                  SetupAssistantFirstRunController.shouldOffer(
+                      configExists: inspection.configExists,
+                      wasOffered: SetupAssistantFirstRunController.wasOffered()
+                  ) else {
+                return
+            }
+            SetupAssistantFirstRunController.markOffered()
+            SetupAssistantWindowController.shared.show(mainModel: model, inspection: inspection)
+        }
     }
 
     var body: some Scene {
@@ -162,9 +180,12 @@ final class JarvisLineModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var codexHookInstalled = false
     @Published var showDockIcon = JarvisAppPreferences.showDockIcon
+    @Published private(set) var setupRequired = false
 
     private let cli = JarvisLineCLI()
     private let configStore = JarvisConfigStore()
+    private var setupInspectionState = SetupFirstRunInspectionState()
+    var onInitialSetupInspection: ((SetupInspection) -> Void)?
 
     var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -198,7 +219,13 @@ final class JarvisLineModel: ObservableObject {
             codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             lastOutput = statusOutput
             await refreshTrace()
+            await refreshSetupRequirementIfNeeded()
         }
+    }
+
+    func setupCompleted() async {
+        setupRequired = false
+        await refresh()
     }
 
     func start() async {
@@ -293,6 +320,17 @@ final class JarvisLineModel: ObservableObject {
             return
         }
         traceEvents = decoded
+    }
+
+    private func refreshSetupRequirementIfNeeded() async {
+        guard setupInspectionState.beginInspection() else { return }
+        guard let inspection = try? await inspectSetup(using: cli) else {
+            setupInspectionState.recordFailedInspection()
+            return
+        }
+        setupInspectionState.recordSuccessfulInspection()
+        setupRequired = !inspection.configExists
+        onInitialSetupInspection?(inspection)
     }
 
     private func run(label: String, operation: () async throws -> Void) async {
@@ -534,6 +572,16 @@ struct JarvisLinePanel: View {
     private var quickView: some View {
         VStack(alignment: .leading, spacing: 13) {
             heroStatus
+            if model.setupRequired {
+                Button {
+                    AppDelegate.showSetupWindow?()
+                } label: {
+                    Label("Complete Setup", systemImage: "checklist")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(JarvisTheme.gold)
+            }
             compactStatus
             commandDeck
         }
@@ -626,6 +674,11 @@ struct JarvisLinePanel: View {
 
     private var runtimeSettings: some View {
         Form {
+            Button {
+                AppDelegate.showSetupWindow?()
+            } label: {
+                Label("Run Setup Assistant...", systemImage: "checklist")
+            }
             Toggle("Show in Dock", isOn: Binding(
                 get: { model.showDockIcon },
                 set: { model.setDockIconVisible($0) }
@@ -1245,36 +1298,232 @@ struct DoctorStatus {
     }
 }
 
-struct JarvisLineCLI {
+protocol JarvisLineCommandRunning: Sendable {
+    func run(_ args: [String], stdin: Data?) async throws -> String
+}
+
+extension JarvisLineCommandRunning {
     func run(_ args: [String]) async throws -> String {
-        let executable = findExecutable()
+        try await run(args, stdin: nil)
+    }
+}
+
+final class CLIProcessState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var output = Data()
+    private var error = Data()
+    private var didResume = false
+    private var timeoutTimer: DispatchSourceTimer?
+
+    func armTimeout(
+        after seconds: TimeInterval,
+        process: Process,
+        processGroupIsolated: Bool,
+        continuation: CheckedContinuation<String, Error>
+    ) {
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.timeout(
+                continuation,
+                after: seconds,
+                process: process,
+                processGroupIsolated: processGroupIsolated
+            )
+        }
+        timer.schedule(deadline: .now() + seconds)
+
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            timer.activate()
+            timer.cancel()
+            return
+        }
+        timeoutTimer = timer
+        lock.unlock()
+        timer.activate()
+    }
+
+    private func timeout(
+        _ continuation: CheckedContinuation<String, Error>,
+        after seconds: TimeInterval,
+        process: Process,
+        processGroupIsolated: Bool
+    ) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        let timeoutTimer = timeoutTimer
+        self.timeoutTimer = nil
+        lock.unlock()
+        timeoutTimer?.setEventHandler {}
+        timeoutTimer?.cancel()
+
+        let pid = process.processIdentifier
+        if processGroupIsolated {
+            if Darwin.kill(-pid, SIGKILL) != 0, process.isRunning {
+                Darwin.kill(pid, SIGKILL)
+            }
+        } else if process.isRunning {
+            process.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                if process.isRunning {
+                    Darwin.kill(pid, SIGKILL)
+                }
+            }
+        }
+        continuation.resume(
+            throwing: SetupContractError.commandTimedOut(
+                max(1, Int(seconds.rounded(.up)))
+            )
+        )
+    }
+
+    func setOutput(_ data: Data) {
+        lock.lock()
+        output = data
+        lock.unlock()
+    }
+
+    func setError(_ data: Data) {
+        lock.lock()
+        error = data
+        lock.unlock()
+    }
+
+    func resume(
+        _ continuation: CheckedContinuation<String, Error>,
+        terminationStatus: Int32
+    ) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        let timeoutTimer = timeoutTimer
+        self.timeoutTimer = nil
+        let output = String(data: output, encoding: .utf8) ?? ""
+        let error = String(data: error, encoding: .utf8) ?? ""
+        lock.unlock()
+        timeoutTimer?.setEventHandler {}
+        timeoutTimer?.cancel()
+
+        if terminationStatus == 0 {
+            continuation.resume(returning: output)
+        } else {
+            continuation.resume(throwing: CLIError(stdout: output, stderr: error))
+        }
+    }
+
+    func resume(_ continuation: CheckedContinuation<String, Error>, throwing error: Error) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        let timeoutTimer = timeoutTimer
+        self.timeoutTimer = nil
+        lock.unlock()
+        timeoutTimer?.setEventHandler {}
+        timeoutTimer?.cancel()
+        continuation.resume(throwing: error)
+    }
+}
+
+struct JarvisLineCLI: JarvisLineCommandRunning {
+    private static let maximumStdinBytes = SetupPlanPayload.maximumEncodedBytes
+    private let executable: String?
+    private let timeoutSeconds: TimeInterval?
+    private let isolateProcessGroup: Bool?
+
+    init(
+        executable: String? = nil,
+        timeoutSeconds: TimeInterval? = nil,
+        isolateProcessGroup: Bool? = nil
+    ) {
+        self.executable = executable
+        self.timeoutSeconds = timeoutSeconds
+        self.isolateProcessGroup = isolateProcessGroup
+    }
+
+    func run(_ args: [String], stdin: Data? = nil) async throws -> String {
+        if let stdin, stdin.count > Self.maximumStdinBytes {
+            throw SetupContractError.payloadTooLarge(stdin.count)
+        }
+
+        let executable = executable ?? findExecutable()
+        let timeout = timeoutSeconds ?? defaultTimeout(for: args)
+        let processGroupIsolated = isolateProcessGroup
+            ?? (URL(fileURLWithPath: executable).lastPathComponent == "jarvis-line")
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = args
+            if processGroupIsolated {
+                var environment = ProcessInfo.processInfo.environment
+                environment["JARVIS_LINE_ISOLATE_PROCESS_GROUP"] = "1"
+                process.environment = environment
+            }
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
+            let inputPipe = stdin == nil ? nil : Pipe()
             process.standardOutput = outputPipe
             process.standardError = errorPipe
+            process.standardInput = inputPipe
+
+            let state = CLIProcessState()
+            let drainGroup = DispatchGroup()
+            drainGroup.enter()
+            drainGroup.enter()
+
+            process.terminationHandler = { proc in
+                drainGroup.notify(queue: .global(qos: .utility)) {
+                    state.resume(continuation, terminationStatus: proc.terminationStatus)
+                }
+            }
 
             do {
                 try process.run()
             } catch {
-                continuation.resume(throwing: error)
+                state.resume(continuation, throwing: error)
                 return
             }
+            state.armTimeout(
+                after: timeout,
+                process: process,
+                processGroupIsolated: processGroupIsolated,
+                continuation: continuation
+            )
 
-            process.terminationHandler = { proc in
-                let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                if proc.terminationStatus == 0 {
-                    continuation.resume(returning: output)
-                } else {
-                    continuation.resume(throwing: CLIError(output + error))
+            DispatchQueue.global(qos: .utility).async {
+                state.setOutput(outputPipe.fileHandleForReading.readDataToEndOfFile())
+                drainGroup.leave()
+            }
+            DispatchQueue.global(qos: .utility).async {
+                state.setError(errorPipe.fileHandleForReading.readDataToEndOfFile())
+                drainGroup.leave()
+            }
+            if let stdin, let inputPipe {
+                DispatchQueue.global(qos: .utility).async {
+                    defer { try? inputPipe.fileHandleForWriting.close() }
+                    try? inputPipe.fileHandleForWriting.write(contentsOf: stdin)
                 }
             }
         }
+    }
+
+    private func defaultTimeout(for args: [String]) -> TimeInterval {
+        if args.starts(with: ["setup", "apply"]) {
+            return 15 * 60
+        }
+        return 60
     }
 
     private func findExecutable() -> String {
@@ -1325,11 +1574,24 @@ struct JarvisLineCLI {
     }
 }
 
-struct CLIError: LocalizedError {
-    let message: String
+struct CLIError: LocalizedError, Sendable {
+    let stdout: String
+    let stderr: String
 
     init(_ message: String) {
-        self.message = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.init(stdout: "", stderr: message)
+    }
+
+    init(stdout: String, stderr: String) {
+        self.stdout = stdout
+        self.stderr = stderr
+    }
+
+    var message: String {
+        [stdout, stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var errorDescription: String? {

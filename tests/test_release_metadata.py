@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_repository_versions_are_consistent():
     versions = check_version_consistency.read_versions(ROOT)
 
-    assert versions.package == "0.4.0"
+    assert versions.package == "0.5.0"
     assert versions.module == versions.package
     assert versions.app == versions.package
     assert versions.bundle_build.isdigit()
@@ -137,3 +137,18 @@ def test_kokoro_documentation_uses_shared_jarvis_home():
     assert "~/.codex/tts" not in recipe
     assert "jarvis-line kokoro verify\njarvis-line kokoro status" in recipe
     assert "PowerShell integration is implemented and smoke-tested" not in support_matrix
+
+
+def test_guided_setup_documentation_is_present():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    commands = (ROOT / "docs/COMMANDS.md").read_text(encoding="utf-8")
+    app_readme = (ROOT / "apps/macos/JarvisLine/README.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "jarvis-line setup" in readme
+    assert "jarvis-line setup --default" in readme
+    assert "setup inspect --language" in commands
+    assert "setup apply --stdin --json" in commands
+    assert "Setup Assistant" in app_readme
+    assert "never edits agent Markdown" in app_readme

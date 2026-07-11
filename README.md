@@ -24,21 +24,32 @@ Then it sends that line to one audio worker and speaks it with your selected TTS
 
 It is built for long-running agent work: test loops, code reviews, refactors, debugging sessions, background tasks, and any workflow where you want a short spoken summary when the agent finishes.
 
-> **Release status:** Jarvis Line `0.4.0` is beta. The macOS CLI/runtime is the
+> **Release status:** Jarvis Line `0.5.0` is beta. The macOS CLI/runtime is the
 > primary validated surface. The macOS manager app, Windows, and Linux remain
 > Preview while they collect broader real-device evidence. See the
 > [support matrix](docs/SUPPORT-MATRIX.md) and [privacy guide](PRIVACY.md).
 
 ## TL;DR
 
-Install Jarvis Line from the GitHub release tag, initialize it, then make sure your agent instruction language matches the TTS voice language.
+Install Jarvis Line from the GitHub release tag, run the guided setup, then paste the generated instruction into the project or global instruction file your agent actually reads.
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.4.0"
-jarvis-line init --codex --language "English"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.5.0"
+jarvis-line setup
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
 ```
+
+`jarvis-line setup` asks for language, compatible TTS, speech behavior, agent,
+instruction scope, hook installation, runtime start, and an optional voice test.
+It shows one review screen and requires an explicit Apply confirmation before
+changing anything. The generic agent target is selected by default; the Codex
+hook remains off unless you choose Codex and enable it. For a non-interactive
+local default, use `jarvis-line setup --default`.
+
+On macOS, the Preview manager app provides the same flow in **Settings > Run
+Setup Assistant...**. Existing configured users are not interrupted; the app
+offers the assistant once only when no Jarvis Line config exists.
 
 Recommended defaults:
 
@@ -59,6 +70,7 @@ Recommended defaults:
 - Keeps a bounded privacy-safe lifecycle trace for fast diagnosis.
 - Prints agent instructions for `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` so you can paste them where they belong.
 - Generates redacted Markdown support reports for issue descriptions.
+- Includes a reviewed CLI setup wizard and a native macOS Setup Assistant.
 
 ## Who This Is For
 
@@ -96,22 +108,43 @@ See [docs/EVENT-PROTOCOL.md](docs/EVENT-PROTOCOL.md) for JSON stdin and adapter 
 
 ## Quick Start
 
-Install the package, then run:
+Install the package, then start the recommended guided flow:
 
 ```bash
-jarvis-line init --language "English"
+jarvis-line setup
 ```
 
-For Codex hook integration, add `--codex`:
+The wizard uses full language names, asks the CLI for compatible TTS choices,
+and presents one final plan before it can write config, install a hook, start the
+runtime, download explicitly accepted Kokoro assets, or play a voice test.
+
+It never edits `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. At completion, run the
+printed `jarvis-line instructions print ...` command, review its output, and
+paste it into the exact project or global destination shown by setup.
+
+Custom command/API TTS remains an advanced path. Configure and review it first
+with `jarvis-line tts use command --command ...`; guided setup can select that
+existing command but never accepts or echoes a new command, environment secret,
+or working directory through its app/automation bridge.
+
+For the fastest non-interactive local setup:
 
 ```bash
-jarvis-line init --codex --language "English"
+jarvis-line setup --default
 ```
 
 From this repository checkout, use:
 
 ```bash
-PYTHONPATH=src python3 -m jarvis_line.cli init --codex --language "English"
+PYTHONPATH=src python3 -m jarvis_line.cli setup
+```
+
+### Legacy `init` Flow
+
+`init` remains available for scripts and explicit agent-target options:
+
+```bash
+jarvis-line init --codex --language "English"
 ```
 
 What `jarvis-line init --language "English"` does:
@@ -385,7 +418,7 @@ feature/* or fix/*
 
 Branch roles:
 
-- `main`: release-ready code only. Public installs should prefer version tags such as `v0.4.0`.
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.5.0`.
 - `develop`: integration branch for reviewed changes before release.
 - `feature/*`: new features.
 - `fix/*`: bug fixes.
@@ -407,7 +440,7 @@ jarvis-line support-report --output ./jarvis-line-issue.md
 
 ## Release Status
 
-The current release is `0.4.0`. Changes listed under `Unreleased` are validated on feature/develop branches before the next version tag is created.
+The current release is `0.5.0`. Changes listed under `Unreleased` are validated on feature/develop branches before the next version tag is created.
 
 Release-ready project pieces:
 
