@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a reviewed interactive `jarvis-line setup` wizard with controlled language, TTS, speech, agent, scope, hook, runtime, and voice-test choices.
+- Add versioned and 64 KiB-bounded `setup inspect --json` and `setup apply --stdin --json` contracts for native apps and automation.
+- Validate language, platform, backend readiness, and custom commands before any setup mutation or network work.
+- Add a native macOS Setup Assistant with one-time first-run offering, Settings relaunch, explicit Kokoro consent, project-folder selection, and manual instruction copy.
+- Keep agent Markdown files user-owned; guided setup generates instructions but never writes `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
+- Add Python 3.11 compatibility coverage for the expanded CLI setup surface.
+
 ## 0.4.0 - 2026-07-10
 
 - Add contributor, conduct, security, pull request, and community guidance.

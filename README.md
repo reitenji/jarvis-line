@@ -31,14 +31,23 @@ It is built for long-running agent work: test loops, code reviews, refactors, de
 
 ## TL;DR
 
-Install Jarvis Line from the GitHub release tag, initialize it, then make sure your agent instruction language matches the TTS voice language.
+Install Jarvis Line from the GitHub release tag, run the guided setup, then paste the generated instruction into the project or global instruction file your agent actually reads.
 
 ```bash
 python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.4.0"
-jarvis-line init --codex --language "English"
+jarvis-line setup
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
 ```
+
+`jarvis-line setup` asks for language, compatible TTS, speech behavior, agent,
+instruction scope, hook installation, runtime start, and an optional voice test.
+It shows one review screen before changing anything. For a non-interactive local
+default, use `jarvis-line setup --default`.
+
+On macOS, the Preview manager app provides the same flow in **Settings > Run
+Setup Assistant...**. Existing configured users are not interrupted; the app
+offers the assistant once only when no Jarvis Line config exists.
 
 Recommended defaults:
 
@@ -59,6 +68,7 @@ Recommended defaults:
 - Keeps a bounded privacy-safe lifecycle trace for fast diagnosis.
 - Prints agent instructions for `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` so you can paste them where they belong.
 - Generates redacted Markdown support reports for issue descriptions.
+- Includes a reviewed CLI setup wizard and a native macOS Setup Assistant.
 
 ## Who This Is For
 
@@ -96,22 +106,38 @@ See [docs/EVENT-PROTOCOL.md](docs/EVENT-PROTOCOL.md) for JSON stdin and adapter 
 
 ## Quick Start
 
-Install the package, then run:
+Install the package, then start the recommended guided flow:
 
 ```bash
-jarvis-line init --language "English"
+jarvis-line setup
 ```
 
-For Codex hook integration, add `--codex`:
+The wizard uses full language names, asks the CLI for compatible TTS choices,
+and presents one final plan before it can write config, install a hook, start the
+runtime, download explicitly accepted Kokoro assets, or play a voice test.
+
+It never edits `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. At completion, copy the
+generated instruction, choose project or global scope, and paste it into the
+instruction file your agent reads.
+
+For the fastest non-interactive local setup:
 
 ```bash
-jarvis-line init --codex --language "English"
+jarvis-line setup --default
 ```
 
 From this repository checkout, use:
 
 ```bash
-PYTHONPATH=src python3 -m jarvis_line.cli init --codex --language "English"
+PYTHONPATH=src python3 -m jarvis_line.cli setup
+```
+
+### Legacy `init` Flow
+
+`init` remains available for scripts and explicit agent-target options:
+
+```bash
+jarvis-line init --codex --language "English"
 ```
 
 What `jarvis-line init --language "English"` does:
