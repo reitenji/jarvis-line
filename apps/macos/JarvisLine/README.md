@@ -5,6 +5,44 @@ Preview macOS menu bar manager for Jarvis Line.
 The app does not replace the CLI. It shells out to the installed `jarvis-line`
 command and provides a native control surface for day-to-day management.
 
+## Setup Assistant
+
+The native Setup Assistant uses the same versioned setup engine as the CLI. On
+first launch it is offered once only when Jarvis Line has no config. Existing
+configured users are not interrupted.
+
+Open it any time from **Settings > Runtime > Run Setup Assistant...**. If setup
+is still required, the menu bar quick panel also shows **Complete Setup**.
+
+The assistant guides you through:
+
+1. Full spoken language name
+2. Language- and platform-compatible TTS backend
+3. Final-only, commentary + final, or disabled speech
+4. Codex, Claude, Gemini, or generic agent target
+5. Project or global instruction scope
+6. One reviewed Apply action
+
+Kokoro download/install requires explicit license consent. Project scope uses a
+native folder picker instead of a free-form path. Network work and voice tests
+run only when selected and only after Apply. Closing the assistant before Apply
+does not change Jarvis Line.
+
+The generic agent target is the default. Codex hook installation starts off and
+must be enabled separately after choosing Codex. The assistant never receives or
+displays custom-command secrets; it can only select a custom backend that was
+already configured through the advanced CLI path.
+
+Native CLI calls are bounded so a stalled subprocess cannot lock the assistant
+indefinitely. Regular calls time out after 60 seconds; the reviewed setup Apply
+flow allows up to 15 minutes for an approved Kokoro download/install. App-owned
+CLI work runs in an isolated process group, so timeout cleanup terminates its
+installer descendants before returning to Review with a retryable error.
+
+The Setup Assistant never edits agent Markdown. When setup completes, use
+**Copy Instructions**, review the generated block, and paste it into the chosen
+`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` yourself.
+
 ## Run
 
 ```bash
@@ -60,6 +98,7 @@ will close older running copies from build or DMG staging folders.
 - A detailed high-resolution alpha app icon for Finder, Dock, and packaged DMG installs
 - A separate detailed brand mark inside the app panel
 - Native menu bar status icon so running and queued states stay easy to read
+- Native guided Setup Assistant with first-run detection and Settings relaunch
 
 The Settings window edits common config values without requiring users to open
 the JSON file. Unknown/custom config keys are preserved on save. The app favors
