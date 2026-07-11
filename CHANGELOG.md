@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-07-11
+
 - Add a reviewed interactive `jarvis-line setup` wizard with controlled language, TTS, speech, agent, scope, hook, runtime, and voice-test choices.
 - Add versioned and 64 KiB-bounded `setup inspect --json` and `setup apply --stdin --json` contracts for native apps and automation.
 - Validate language, platform, backend readiness, explicit Kokoro license acceptance, and preconfigured custom-command selection before any setup mutation or network work.

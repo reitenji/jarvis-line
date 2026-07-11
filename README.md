@@ -24,7 +24,7 @@ Then it sends that line to one audio worker and speaks it with your selected TTS
 
 It is built for long-running agent work: test loops, code reviews, refactors, debugging sessions, background tasks, and any workflow where you want a short spoken summary when the agent finishes.
 
-> **Release status:** Jarvis Line `0.4.0` is beta. The macOS CLI/runtime is the
+> **Release status:** Jarvis Line `0.5.0` is beta. The macOS CLI/runtime is the
 > primary validated surface. The macOS manager app, Windows, and Linux remain
 > Preview while they collect broader real-device evidence. See the
 > [support matrix](docs/SUPPORT-MATRIX.md) and [privacy guide](PRIVACY.md).
@@ -34,7 +34,7 @@ It is built for long-running agent work: test loops, code reviews, refactors, de
 Install Jarvis Line from the GitHub release tag, run the guided setup, then paste the generated instruction into the project or global instruction file your agent actually reads.
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.4.0"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.5.0"
 jarvis-line setup
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
@@ -418,7 +418,7 @@ feature/* or fix/*
 
 Branch roles:
 
-- `main`: release-ready code only. Public installs should prefer version tags such as `v0.4.0`.
+- `main`: release-ready code only. Public installs should prefer version tags such as `v0.5.0`.
 - `develop`: integration branch for reviewed changes before release.
 - `feature/*`: new features.
 - `fix/*`: bug fixes.
@@ -440,7 +440,7 @@ jarvis-line support-report --output ./jarvis-line-issue.md
 
 ## Release Status
 
-The current release is `0.4.0`. Changes listed under `Unreleased` are validated on feature/develop branches before the next version tag is created.
+The current release is `0.5.0`. Changes listed under `Unreleased` are validated on feature/develop branches before the next version tag is created.
 
 Release-ready project pieces:
 
