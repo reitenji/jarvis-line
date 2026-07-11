@@ -331,7 +331,7 @@ final class SetupAssistantModel: ObservableObject {
     }
 
     private static func languageValidationMessage(for value: String) -> String? {
-        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\r\n"))
         guard !text.isEmpty, text.unicodeScalars.count <= 80 else { return "Enter a full language name (up to 80 characters)." }
         if text.unicodeScalars.allSatisfy({ $0.isASCII && CharacterSet.letters.contains($0) }) && text.count <= 3 {
             return "Use a full language name, for example English or Turkish."
