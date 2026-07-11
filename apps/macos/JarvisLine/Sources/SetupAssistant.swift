@@ -98,6 +98,10 @@ final class SetupAssistantModel: ObservableObject {
         plan.language.caseInsensitiveCompare("English") != .orderedSame
     }
 
+    var languageValidationMessage: String? {
+        Self.languageValidationMessage(for: plan.language)
+    }
+
     var reviewActions: [String] {
         var actions = ["Write the reviewed Jarvis Line configuration", "Run a local health check"]
         if plan.installKokoro {
@@ -121,7 +125,7 @@ final class SetupAssistantModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
-            applyInspection(try await inspectSetup(using: runner))
+            applyInspection(try await inspect())
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -155,7 +159,7 @@ final class SetupAssistantModel: ObservableObject {
         do {
             let language = plan.language
             let priorBackendID = plan.tts
-            let updatedInspection = try await inspectSetup(language: language, using: runner)
+            let updatedInspection = try await inspect(language: language)
             inspection = updatedInspection
             let available = updatedInspection.backendOptions.filter(\.available)
             let selected = available.first(where: { $0.id == priorBackendID })
@@ -186,6 +190,14 @@ final class SetupAssistantModel: ObservableObject {
         plan.agentTarget = target
         if target != "codex" {
             plan.installCodexHook = false
+        }
+    }
+
+    func setInstructionScope(_ scope: String) {
+        guard ["project", "global"].contains(scope) else { return }
+        plan.instructionScope = scope
+        if scope == "global" {
+            plan.projectPath = nil
         }
     }
 
@@ -264,6 +276,13 @@ final class SetupAssistantModel: ObservableObject {
         }
     }
 
+    static func instructionDestination(for instruction: SetupInstructionResult) -> String {
+        guard instruction.scope == "project" else { return instruction.destination }
+        return URL(fileURLWithPath: instruction.destination)
+            .appendingPathComponent(instruction.filename)
+            .path
+    }
+
     private func applyInspection(_ inspection: SetupInspection) {
         self.inspection = inspection
         plan = SetupPlanPayload(inspection: inspection)
@@ -279,14 +298,89 @@ final class SetupAssistantModel: ObservableObject {
             ?? "Setup could not be completed. Review the choices and try again."
     }
 
+    private func inspect(language: String? = nil) async throws -> SetupInspection {
+        var args = ["setup", "inspect", "--json"]
+        if let language {
+            args += ["--language", language]
+        }
+
+        do {
+            let output = try await runner.run(args)
+            if let message = Self.cliErrorMessage(in: output) {
+                throw SetupAssistantUserError(message: message)
+            }
+            return try SetupInspection.decode(output)
+        } catch let error as CLIError {
+            if let message = Self.cliErrorMessage(in: error.stdout) {
+                throw SetupAssistantUserError(message: message)
+            }
+            throw error
+        }
+    }
+
     private static func isValidFullLanguage(_ value: String) -> Bool {
+        languageValidationMessage(for: value) == nil
+    }
+
+    private static func languageValidationMessage(for value: String) -> String? {
         let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, text.count <= 80 else { return false }
+        guard !text.isEmpty, text.unicodeScalars.count <= 80 else { return "Enter a full language name (up to 80 characters)." }
         if text.unicodeScalars.allSatisfy({ $0.isASCII && CharacterSet.letters.contains($0) }) && text.count <= 3 {
+            return "Use a full language name, for example English or Turkish."
+        }
+        let allowedPunctuation = CharacterSet(charactersIn: " -'’()")
+        for scalar in text.unicodeScalars {
+            if Self.isControlCategory(scalar) {
+                return "Language name is invalid."
+            }
+            if CharacterSet.letters.contains(scalar) || Self.isCombiningMark(scalar) || allowedPunctuation.contains(scalar) {
+                continue
+            }
+            return "Language name contains unsupported characters."
+        }
+        return nil
+    }
+
+    private static func isCombiningMark(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark:
+            return true
+        default:
             return false
         }
-        return !text.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
     }
+
+    private static func isControlCategory(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .control, .format, .privateUse, .surrogate, .unassigned:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func cliErrorMessage(in output: String) -> String? {
+        guard let payload = try? JSONDecoder().decode(SetupAssistantCLIErrorPayload.self, from: Data(output.utf8)),
+              payload.version == 1,
+              payload.ok == false,
+              let error = payload.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !error.isEmpty else {
+            return nil
+        }
+        return error
+    }
+}
+
+private struct SetupAssistantCLIErrorPayload: Decodable {
+    let version: Int
+    let ok: Bool?
+    let error: String?
+}
+
+private struct SetupAssistantUserError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
 }
 
 enum SetupAssistantFirstRunController {
@@ -302,6 +396,36 @@ enum SetupAssistantFirstRunController {
 
     static func markOffered(defaults: UserDefaults = .standard) {
         defaults.set(true, forKey: offeredKey)
+    }
+}
+
+struct SetupFirstRunInspectionState {
+    private enum Status {
+        case pending
+        case inspecting
+        case complete
+    }
+
+    private var status: Status = .pending
+
+    var needsInspection: Bool {
+        status == .pending
+    }
+
+    mutating func beginInspection() -> Bool {
+        guard status == .pending else { return false }
+        status = .inspecting
+        return true
+    }
+
+    mutating func recordFailedInspection() {
+        guard status == .inspecting else { return }
+        status = .pending
+    }
+
+    mutating func recordSuccessfulInspection() {
+        guard status == .inspecting else { return }
+        status = .complete
     }
 }
 
@@ -467,6 +591,11 @@ struct SetupAssistantView: View {
                     set: { model.setOtherLanguage($0) }
                 ))
                 .textFieldStyle(.roundedBorder)
+                if let message = model.languageValidationMessage {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(JarvisTheme.error)
+                }
             }
         }
     }
@@ -566,7 +695,10 @@ struct SetupAssistantView: View {
                 Text("Generic").tag("agents")
             }
             .pickerStyle(.segmented)
-            Picker("Scope", selection: $model.plan.instructionScope) {
+            Picker("Scope", selection: Binding(
+                get: { model.plan.instructionScope },
+                set: { model.setInstructionScope($0) }
+            )) {
                 Text("Project").tag("project")
                 Text("Global").tag("global")
             }
@@ -635,7 +767,7 @@ struct SetupAssistantView: View {
                     .foregroundStyle(step.ok ? JarvisTheme.cyan : JarvisTheme.error)
             }
             if let instruction = model.result?.instruction {
-                Text("Review and paste the generated instruction into \(instruction.destination)/\(instruction.filename).")
+                Text("Review and paste the generated instruction into \(SetupAssistantModel.instructionDestination(for: instruction)).")
                     .font(.system(size: 13))
                     .foregroundStyle(JarvisTheme.mutedText)
                     .fixedSize(horizontal: false, vertical: true)

@@ -183,7 +183,7 @@ final class JarvisLineModel: ObservableObject {
 
     private let cli = JarvisLineCLI()
     private let configStore = JarvisConfigStore()
-    private var didInspectSetupOnLaunch = false
+    private var setupInspectionState = SetupFirstRunInspectionState()
     var onInitialSetupInspection: ((SetupInspection) -> Void)?
 
     var appVersion: String {
@@ -322,9 +322,12 @@ final class JarvisLineModel: ObservableObject {
     }
 
     private func refreshSetupRequirementIfNeeded() async {
-        guard !didInspectSetupOnLaunch else { return }
-        didInspectSetupOnLaunch = true
-        guard let inspection = try? await inspectSetup(using: cli) else { return }
+        guard setupInspectionState.beginInspection() else { return }
+        guard let inspection = try? await inspectSetup(using: cli) else {
+            setupInspectionState.recordFailedInspection()
+            return
+        }
+        setupInspectionState.recordSuccessfulInspection()
         setupRequired = !inspection.configExists
         onInitialSetupInspection?(inspection)
     }

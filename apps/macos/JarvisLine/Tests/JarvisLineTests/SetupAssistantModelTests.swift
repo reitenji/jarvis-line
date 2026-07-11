@@ -70,12 +70,33 @@ struct SetupAssistantModelTests {
     @Test func projectScopeRequiresSelectedDirectory() async {
         let model = SetupAssistantModel(runner: AssistantFakeRunner(inspections: [], applyOutput: Self.successResult))
         model.step = .agent
-        model.plan.instructionScope = "project"
+        model.setInstructionScope("project")
         model.plan.projectPath = nil
 
         #expect(!model.canContinue)
         model.selectProjectDirectory(URL(fileURLWithPath: "/tmp/project", isDirectory: true))
         #expect(model.canContinue)
+    }
+
+    @Test func globalScopeClearsProjectPathBeforeApplying() async throws {
+        let runner = AssistantFakeRunner(
+            inspections: [Self.englishInspection(currentTTS: "system")],
+            applyOutput: Self.successResult
+        )
+        let model = SetupAssistantModel(runner: runner)
+
+        await model.load()
+        model.selectProjectDirectory(URL(fileURLWithPath: "/tmp/project", isDirectory: true))
+        model.setInstructionScope("global")
+        model.step = .review
+        await model.apply()
+
+        let lastApplyPayload = await runner.lastApplyPayload
+        let payload = try #require(lastApplyPayload)
+        let json = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+        #expect(model.plan.projectPath == nil)
+        #expect(json["instruction_scope"] as? String == "global")
+        #expect(json["project_path"] == nil || json["project_path"] is NSNull)
     }
 
     @Test func applySubmitsReviewedSnakeCasePlanAndCompletesOnce() async throws {
@@ -101,7 +122,7 @@ struct SetupAssistantModelTests {
         #expect(model.result?.ok == true)
         #expect(json["agent_target"] as? String == "codex")
         #expect(json["instruction_scope"] as? String == "project")
-        #expect(json["instruction_path"] == nil)
+        #expect(json["project_path"] as? String == "/tmp/project")
         let applyCallCount = await runner.applyCallCount
         #expect(applyCallCount == 1)
         #expect(completionCount == 1)
@@ -129,6 +150,84 @@ struct SetupAssistantModelTests {
         #expect(SetupAssistantFirstRunController.shouldOffer(configExists: false, wasOffered: false))
         #expect(!SetupAssistantFirstRunController.shouldOffer(configExists: true, wasOffered: false))
         #expect(!SetupAssistantFirstRunController.shouldOffer(configExists: false, wasOffered: true))
+    }
+
+    @Test func firstRunInspectionRetriesUntilOneSuccessfulCheck() {
+        var state = SetupFirstRunInspectionState()
+
+        #expect(state.needsInspection)
+        #expect(state.beginInspection())
+        state.recordFailedInspection()
+        #expect(state.needsInspection)
+        #expect(state.beginInspection())
+        state.recordSuccessfulInspection()
+        #expect(!state.needsInspection)
+    }
+
+    @Test func otherLanguageValidationRejectsUnsafeInputBeforeInspect() async {
+        let runner = AssistantFakeRunner(inspections: [], applyOutput: Self.successResult)
+        let model = SetupAssistantModel(runner: runner)
+        model.step = .language
+        model.setOtherLanguage("English/Spanish")
+
+        #expect(!model.canContinue)
+        #expect(model.languageValidationMessage == "Language name contains unsupported characters.")
+        await model.continueFromLanguage()
+        let calls = await runner.calls
+        #expect(calls.isEmpty)
+
+        model.setOtherLanguage("K'iche'")
+        #expect(model.canContinue)
+        #expect(model.languageValidationMessage == nil)
+
+        model.setOtherLanguage("English\u{200B}")
+        #expect(!model.canContinue)
+        #expect(model.languageValidationMessage == "Language name is invalid.")
+
+        model.setOtherLanguage(String(repeating: "a\u{0301}", count: 41))
+        #expect(!model.canContinue)
+        #expect(model.languageValidationMessage == "Enter a full language name (up to 80 characters).")
+    }
+
+    @Test func inspectionErrorUsesVersionedCLIMessage() async {
+        let runner = AssistantFakeRunner(
+            inspections: [#"{"version":1,"ok":false,"error":"use a full language name, for example English"}"#],
+            applyOutput: Self.successResult
+        )
+        let model = SetupAssistantModel(runner: runner)
+
+        await model.load()
+
+        #expect(model.errorMessage == "use a full language name, for example English")
+    }
+
+    @Test func instructionDestinationKeepsGlobalFilePathAndAppendsProjectFilenameOnce() {
+        let global = SetupInstructionResult(
+            target: "codex",
+            scope: "global",
+            filename: "AGENTS.md",
+            destination: "~/.codex/AGENTS.md",
+            command: "",
+            text: ""
+        )
+        let project = SetupInstructionResult(
+            target: "codex",
+            scope: "project",
+            filename: "AGENTS.md",
+            destination: "/tmp/project",
+            command: "",
+            text: ""
+        )
+
+        #expect(SetupAssistantModel.instructionDestination(for: global) == "~/.codex/AGENTS.md")
+        #expect(SetupAssistantModel.instructionDestination(for: project) == "/tmp/project/AGENTS.md")
+    }
+
+    @Test func successResultFixtureDecodesAsVersionedJSON() throws {
+        let result = try SetupApplyResult.decode(Self.successResult)
+
+        #expect(result.ok)
+        #expect(result.instruction?.command == "jarvis-line instructions print codex --language \"English\"")
     }
 
     private static func englishInspection(currentTTS: String, kokoroReady: Bool = true) -> String {
