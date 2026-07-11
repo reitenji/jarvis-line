@@ -673,8 +673,10 @@ struct JarvisLinePanel: View {
 
     private var runtimeSettings: some View {
         Form {
-            Button("Run Setup Assistant...") {
+            Button {
                 AppDelegate.showSetupWindow?()
+            } label: {
+                Label("Run Setup Assistant...", systemImage: "checklist")
             }
             Toggle("Show in Dock", isOn: Binding(
                 get: { model.showDockIcon },

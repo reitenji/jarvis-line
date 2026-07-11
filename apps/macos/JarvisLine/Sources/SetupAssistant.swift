@@ -116,7 +116,7 @@ final class SetupAssistantModel: ObservableObject {
         if plan.testVoice {
             actions.append("Play the approved voice test")
         }
-        actions.append("Print instructions for manual review and paste")
+        actions.append("Generate instructions for manual review and paste")
         return actions
     }
 
@@ -492,18 +492,22 @@ struct SetupAssistantView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    stepContent
-                    if let errorMessage = model.errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(JarvisTheme.error)
-                            .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 0) {
+                progressRail
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        stepContent
+                        if let errorMessage = model.errorMessage {
+                            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(JarvisTheme.error)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(24)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
             }
             Divider()
             footer
@@ -515,25 +519,105 @@ struct SetupAssistantView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(JarvisTheme.cyan)
+            brandMark
             VStack(alignment: .leading, spacing: 3) {
                 Text("Jarvis Line")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(JarvisTheme.primaryText)
-                Text("Setup Assistant  •  \(model.step.title)")
+                Text("Setup Assistant")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(JarvisTheme.mutedText)
             }
             Spacer()
-            Text("\(min(model.step.rawValue + 1, 6)) of 6")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(JarvisTheme.goldSoft)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(model.step.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.primaryText)
+                Text("Step \(min(model.step.rawValue + 1, 6)) of 6")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(JarvisTheme.goldSoft)
+            }
         }
         .padding(.horizontal, 22)
-        .padding(.vertical, 16)
+        .padding(.vertical, 13)
         .background(JarvisTheme.panelTop)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(JarvisTheme.cyan.opacity(0.24))
+                .frame(height: 1)
+        }
+    }
+
+    private var brandMark: some View {
+        Group {
+            if let image = NSImage(named: "BrandMark") ?? NSImage(named: "AppIcon") {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(3)
+            } else {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.cyan)
+            }
+        }
+        .frame(width: 42, height: 42)
+    }
+
+    private var progressRail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(setupSteps.enumerated()), id: \.offset) { index, step in
+                HStack(spacing: 9) {
+                    Image(systemName: progressIcon(for: index))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(progressColor(for: index))
+                        .frame(width: 18, height: 18)
+                    Text(step.title)
+                        .font(.system(size: 12, weight: index == currentSetupIndex ? .semibold : .medium))
+                        .foregroundStyle(index <= currentSetupIndex ? JarvisTheme.primaryText : JarvisTheme.mutedText)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if index < setupSteps.count - 1 {
+                    Rectangle()
+                        .fill(index < currentSetupIndex ? JarvisTheme.cyan.opacity(0.45) : JarvisTheme.surfaceRaised)
+                        .frame(width: 1, height: 20)
+                        .padding(.leading, 8)
+                }
+            }
+            Spacer(minLength: 16)
+            Label("Local setup", systemImage: "lock.shield")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(JarvisTheme.goldSoft)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 22)
+        .frame(width: 160, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(JarvisTheme.panelTop.opacity(0.58))
+    }
+
+    private var setupSteps: [SetupAssistantModel.Step] {
+        [.welcome, .language, .voice, .speech, .agent, .review]
+    }
+
+    private var currentSetupIndex: Int {
+        min(model.step.rawValue, setupSteps.count - 1)
+    }
+
+    private func progressIcon(for index: Int) -> String {
+        if model.step == .complete || model.step == .applying || index < currentSetupIndex {
+            return "checkmark.circle.fill"
+        }
+        return index == currentSetupIndex ? "circle.inset.filled" : "circle"
+    }
+
+    private func progressColor(for index: Int) -> Color {
+        if model.step == .complete || index <= currentSetupIndex {
+            return JarvisTheme.cyan
+        }
+        return JarvisTheme.mutedText.opacity(0.72)
     }
 
     @ViewBuilder
@@ -762,7 +846,7 @@ struct SetupAssistantView: View {
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(JarvisTheme.primaryText)
             ForEach(model.result?.steps ?? [], id: \.id) { step in
-                Label(step.detail.isEmpty ? step.id.replacingOccurrences(of: "_", with: " ") : step.detail, systemImage: step.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                Label(completionLabel(for: step), systemImage: step.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .font(.system(size: 13))
                     .foregroundStyle(step.ok ? JarvisTheme.cyan : JarvisTheme.error)
             }
@@ -787,26 +871,34 @@ struct SetupAssistantView: View {
             } else if model.step == .complete {
                 Spacer()
                 if model.canCopyInstructions {
-                    Button("Copy Instructions") {
+                    Button {
                         model.copyInstructions()
+                    } label: {
+                        Label("Copy Instructions", systemImage: "doc.on.doc")
                     }
                 }
-                Button("Test Voice") {
+                Button {
                     Task { await model.testVoice() }
+                } label: {
+                    Label("Test Voice", systemImage: "speaker.wave.2")
                 }
                 .disabled(model.isBusy)
-                Button("Done") {
+                Button {
                     dismiss()
+                } label: {
+                    Label("Done", systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(JarvisTheme.cyan)
             } else {
-                Button("Back") {
+                Button {
                     model.back()
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
                 }
                 .disabled(model.step == .welcome || !model.canClose)
                 Spacer()
-                Button(model.step == .review ? "Apply" : model.step == .welcome ? "Get Started" : "Continue") {
+                Button {
                     if model.step == .language {
                         Task { await model.continueFromLanguage() }
                     } else if model.step == .review {
@@ -814,6 +906,8 @@ struct SetupAssistantView: View {
                     } else {
                         model.next()
                     }
+                } label: {
+                    Label(primaryActionTitle, systemImage: primaryActionIcon)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(JarvisTheme.cyan)
@@ -823,6 +917,16 @@ struct SetupAssistantView: View {
         .padding(.horizontal, 22)
         .padding(.vertical, 14)
         .background(JarvisTheme.panelTop)
+    }
+
+    private var primaryActionTitle: String {
+        if model.step == .review { return "Apply Setup" }
+        if model.step == .welcome { return "Get Started" }
+        return "Continue"
+    }
+
+    private var primaryActionIcon: String {
+        model.step == .review ? "checkmark.circle.fill" : "arrow.right"
     }
 
     private func sectionTitle(_ title: String, detail: String) -> some View {
@@ -872,6 +976,23 @@ struct SetupAssistantView: View {
         switch target {
         case "agents": return "Generic AGENTS.md"
         default: return target.capitalized
+        }
+    }
+
+    private func completionLabel(for step: SetupResultStep) -> String {
+        if !step.ok, !step.detail.isEmpty {
+            return step.detail
+        }
+        switch step.id {
+        case "kokoro_preflight": return "Kokoro voice is ready"
+        case "config_backup": return "Previous configuration backed up"
+        case "config_write": return "Configuration saved"
+        case "codex_hook": return "Codex hook installed"
+        case "runtime": return "Jarvis Line started"
+        case "doctor": return "Health check passed"
+        case "voice_test": return "Voice test completed"
+        default:
+            return step.id.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 }
