@@ -13,7 +13,7 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from jarvis_line import __version__, config_contract, diagnostics, events, kokoro_assets, setup_flow
 from jarvis_line.config_contract import (
