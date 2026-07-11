@@ -19,6 +19,23 @@ detach_existing_image() {
   fi
 }
 
+verify_image() {
+  local attempt output status
+  for attempt in 1 2 3 4 5; do
+    if output="$(hdiutil verify "$DMG_PATH" 2>&1)"; then
+      return 0
+    else
+      status=$?
+    fi
+    if [[ "$output" != *"Resource temporarily unavailable"* || "$attempt" -eq 5 ]]; then
+      printf '%s\n' "$output" >&2
+      return "$status"
+    fi
+    echo "DMG verification is temporarily unavailable; retrying ($attempt/5)." >&2
+    sleep "$attempt"
+  done
+}
+
 cd "$ROOT_DIR"
 if [[ "${SKIP_APP_BUILD:-0}" != "1" ]]; then
   "$ROOT_DIR/scripts/package-app.sh"
@@ -48,7 +65,7 @@ hdiutil create \
   -format UDZO \
   "$DMG_PATH" >/dev/null
 
-hdiutil verify "$DMG_PATH" >/dev/null
+verify_image
 (
   cd "$DIST_DIR"
   shasum -a 256 "$DMG_NAME" > "$DMG_NAME.sha256"

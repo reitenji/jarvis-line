@@ -2,11 +2,14 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-07-11
+
 - Add a reviewed interactive `jarvis-line setup` wizard with controlled language, TTS, speech, agent, scope, hook, runtime, and voice-test choices.
 - Add versioned and 64 KiB-bounded `setup inspect --json` and `setup apply --stdin --json` contracts for native apps and automation.
 - Validate language, platform, backend readiness, explicit Kokoro license acceptance, and preconfigured custom-command selection before any setup mutation or network work.
 - Redact command secrets and local paths from setup inspection, and reject new custom commands from the native/automation bridge.
 - Add a native macOS Setup Assistant with one-time first-run offering, Settings relaunch, explicit Kokoro consent, project-folder selection, manual instruction copy, and bounded process-group cleanup.
+- Retry DMG verification only when macOS reports temporary resource contention, while preserving hard failures for invalid images.
 - Keep agent Markdown files user-owned; guided setup generates instructions but never writes `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
 - Add Python 3.11 compatibility coverage for the expanded CLI setup surface.
 
