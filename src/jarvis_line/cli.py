@@ -950,24 +950,43 @@ def launch_runtime(args, selected: str) -> int:
 
 
 def setup_default(args) -> int:
-    ready, reason = kokoro_ready()
-    if ready:
-        cfg = config_for_preset("kokoro", load_effective_config({}))
-        save_json(CONFIG_PATH, cfg)
-        selected = "kokoro"
-    else:
+    current = load_effective_config({})
+    try:
+        language = setup_flow.normalize_language(current.get("line_language"))
+    except setup_flow.SetupContractError:
+        language = "English"
+
+    if language != "English":
         system_ready, system_reason = system_tts_ready()
         if not system_ready:
-            print(f"[WARN] Kokoro is not ready: {reason}")
-            print(f"[WARN] System TTS fallback is not ready: {system_reason}")
-            print_next("install Kokoro with `jarvis-line kokoro install-deps`, or configure `jarvis-line tts use command --command ...`.")
+            print(f"[WARN] System TTS is not ready for {language}: {system_reason}")
+            print_next("install or enable system TTS, or configure `jarvis-line tts use command --command ...`.")
             return 1
-        print(f"[WARN] Kokoro is not ready: {reason}")
-        print("Kokoro is the recommended default voice. Falling back to system TTS for now.")
-        print_next("keep system TTS, or install Kokoro and run `jarvis-line tts use kokoro`.")
-        cfg = config_for_preset("system", load_effective_config({}))
+        cfg = config_for_preset("system", current)
+        cfg["line_language"] = language
         save_json(CONFIG_PATH, cfg)
         selected = "system"
+    else:
+        ready, reason = kokoro_ready()
+        if ready:
+            cfg = config_for_preset("kokoro", current)
+            cfg["line_language"] = language
+            save_json(CONFIG_PATH, cfg)
+            selected = "kokoro"
+        else:
+            system_ready, system_reason = system_tts_ready()
+            if not system_ready:
+                print(f"[WARN] Kokoro is not ready: {reason}")
+                print(f"[WARN] System TTS fallback is not ready: {system_reason}")
+                print_next("install Kokoro with `jarvis-line kokoro install-deps`, or configure `jarvis-line tts use command --command ...`.")
+                return 1
+            print(f"[WARN] Kokoro is not ready: {reason}")
+            print("Kokoro is the recommended default voice. Falling back to system TTS for now.")
+            print_next("keep system TTS, or install Kokoro and run `jarvis-line tts use kokoro`.")
+            cfg = config_for_preset("system", current)
+            cfg["line_language"] = language
+            save_json(CONFIG_PATH, cfg)
+            selected = "system"
 
     return launch_runtime(args, selected)
 
