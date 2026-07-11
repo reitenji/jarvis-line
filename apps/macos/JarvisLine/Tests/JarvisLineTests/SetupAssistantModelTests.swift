@@ -170,10 +170,12 @@ struct SetupAssistantModelTests {
         var state = SetupFirstRunInspectionState()
 
         #expect(state.needsInspection)
-        #expect(state.beginInspection())
+        let firstAttempt = state.beginInspection()
+        #expect(firstAttempt)
         state.recordFailedInspection()
         #expect(state.needsInspection)
-        #expect(state.beginInspection())
+        let retryAttempt = state.beginInspection()
+        #expect(retryAttempt)
         state.recordSuccessfulInspection()
         #expect(!state.needsInspection)
     }

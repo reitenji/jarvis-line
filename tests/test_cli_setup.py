@@ -2,6 +2,7 @@ import argparse
 import io
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -256,7 +257,7 @@ def test_print_setup_result_names_instruction_command_and_destination(capsys):
 
     output = capsys.readouterr().out
     assert 'jarvis-line instructions print codex --language "English"' in output
-    assert "/tmp/project/AGENTS.md" in output
+    assert str(Path("/tmp/project") / "AGENTS.md") in output
 
 
 @pytest.mark.parametrize("language", ["K'iche'", "Chinese (Traditional)", "Sa\u0301mi"])
@@ -504,6 +505,8 @@ def test_apply_creates_config_backup_once_before_atomic_write(monkeypatch, tmp_p
     patch_setup_paths(monkeypatch, tmp_path)
     cli.CONFIG_PATH.write_text('{"tts": "system"}\n', encoding="utf-8")
     backup = tmp_path / "jarvis_line_config.json.setup.bak"
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
     monkeypatch.setattr(cli, "setup_doctor_json", healthy_doctor)
 
     first = cli.apply_setup_plan(kokoro_codex_plan(install_kokoro=False, install_codex_hook=False, start_runtime=False), json_mode=True)
@@ -520,6 +523,8 @@ def test_apply_creates_config_backup_once_before_atomic_write(monkeypatch, tmp_p
 def test_setup_apply_keeps_json_stdout_clean_when_helpers_print(monkeypatch, tmp_path, capsys):
     patch_setup_paths(monkeypatch, tmp_path)
     plan = kokoro_codex_plan(install_kokoro=False, install_codex_hook=True, start_runtime=False)
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
         "version": plan.version,
         "language": plan.language,
@@ -529,6 +534,7 @@ def test_setup_apply_keeps_json_stdout_clean_when_helpers_print(monkeypatch, tmp
         "instruction_scope": plan.instruction_scope,
         "project_path": plan.project_path,
         "install_kokoro": plan.install_kokoro,
+        "accept_kokoro_license": plan.accept_kokoro_license,
         "install_codex_hook": plan.install_codex_hook,
         "start_runtime": plan.start_runtime,
     })))
@@ -582,6 +588,7 @@ def test_apply_skips_runtime_health_gate_when_runtime_start_is_not_requested(
             "audio_worker": {"ok": False},
         },
     }
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
     monkeypatch.setattr(cli, "setup_doctor_json", lambda: stopped_runtime_doctor)
 
     result = cli.apply_setup_plan(
