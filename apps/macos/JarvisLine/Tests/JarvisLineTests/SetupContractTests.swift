@@ -44,7 +44,11 @@ struct SetupContractTests {
 
         #expect(text.contains("\"agent_target\""))
         #expect(text.contains("\"install_codex_hook\""))
+        #expect(text.contains("\"accept_kokoro_license\""))
         #expect(!text.contains("instruction_path"))
+        #expect(!text.contains("\"command\""))
+        #expect(SetupPlanPayload.defaults.agentTarget == "agents")
+        #expect(!SetupPlanPayload.defaults.installCodexHook)
     }
 
     @Test func firstRunPolicyOffersOnlyOnceWithoutConfig() {
@@ -58,7 +62,7 @@ struct SetupContractTests {
         let runner = FakeSetupRunner(
             inspectionOutput: #"{"version":1,"config_exists":false,"platform":"Darwin","languages":["English"],"backend_options":[],"current":{"language":"English","tts":"system","speak_mode":"final_only"}}"#,
             applyOutput: #"""
-            {"version":1,"ok":true,"steps":[{"name":"config_write","ok":true}],"instruction":{"target":"codex","command":"jarvis-line instructions print codex --language \"English\"","filename":"AGENTS.md","scope":"project","destination":"/tmp/project","text":"## Jarvis Line"}}
+            {"version":1,"ok":true,"steps":[{"name":"config_write","ok":true}],"instruction":{"target":"agents","command":"jarvis-line instructions print agents --language \"English\"","filename":"AGENTS.md","scope":"project","destination":"/tmp/project","text":"## Jarvis Line"}}
             """#
         )
 
@@ -72,10 +76,11 @@ struct SetupContractTests {
             ["setup", "inspect", "--json"],
             ["setup", "apply", "--stdin", "--json"],
         ])
-        #expect(encoded["agent_target"] as? String == "codex")
+        #expect(encoded["agent_target"] as? String == "agents")
         #expect(encoded["instruction_path"] == nil)
+        #expect(encoded["command"] == nil)
         #expect(result.steps.first?.id == "config_write")
-        #expect(result.instruction?.target == "codex")
+        #expect(result.instruction?.target == "agents")
         #expect(result.instruction?.filename == "AGENTS.md")
         #expect(result.instruction?.destination == "/tmp/project")
         #expect(result.instruction?.text == "## Jarvis Line")
@@ -214,6 +219,48 @@ struct SetupContractTests {
         }
 
         #expect(output == "first")
+    }
+
+    @Test func cliTerminatesACommandThatExceedsItsDeadline() async {
+        let runner = JarvisLineCLI(executable: "/bin/sleep", timeoutSeconds: 0.05)
+        let clock = ContinuousClock()
+        let started = clock.now
+        var timedOut = false
+
+        do {
+            _ = try await runner.run(["5"])
+        } catch let error as SetupContractError {
+            if case .commandTimedOut(_) = error {
+                timedOut = true
+            }
+        } catch {
+            Issue.record("Expected setup command timeout, received: \(error)")
+        }
+
+        #expect(timedOut)
+        #expect(started.duration(to: clock.now) < .seconds(2))
+    }
+
+    @Test func cliTimeoutTerminatesTheIsolatedDescendantProcessGroup() async {
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let child = "import pathlib,time;time.sleep(1);pathlib.Path(r'\(marker.path)').touch()"
+        let parent = "import os,subprocess,sys,time;os.setsid();subprocess.Popen([sys.executable,'-c',\"\(child)\"]);time.sleep(5)"
+        let runner = JarvisLineCLI(
+            executable: "/usr/bin/python3",
+            timeoutSeconds: 0.1,
+            isolateProcessGroup: true
+        )
+
+        do {
+            _ = try await runner.run(["-c", parent])
+        } catch is SetupContractError {
+            // Expected timeout.
+        } catch {
+            Issue.record("Expected setup command timeout, received: \(error)")
+        }
+        try? await Task.sleep(for: .seconds(1.5))
+
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 }
 

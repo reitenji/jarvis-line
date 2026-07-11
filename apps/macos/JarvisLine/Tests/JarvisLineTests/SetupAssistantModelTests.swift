@@ -120,7 +120,8 @@ struct SetupAssistantModelTests {
         let json = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
         #expect(model.step == .complete)
         #expect(model.result?.ok == true)
-        #expect(json["agent_target"] as? String == "codex")
+        #expect(json["agent_target"] as? String == "agents")
+        #expect(json["install_codex_hook"] as? Bool == false)
         #expect(json["instruction_scope"] as? String == "project")
         #expect(json["project_path"] as? String == "/tmp/project")
         let applyCallCount = await runner.applyCallCount
@@ -144,6 +145,19 @@ struct SetupAssistantModelTests {
         #expect(model.errorMessage == "setup plan must be valid JSON")
         #expect(model.result?.instruction == nil)
         #expect(!model.canCopyInstructions)
+    }
+
+    @Test func codexHookRequiresAnExplicitCodexChoiceAndSeparateApproval() async {
+        let model = SetupAssistantModel(runner: AssistantFakeRunner(inspections: [], applyOutput: Self.successResult))
+
+        #expect(model.plan.agentTarget == "agents")
+        #expect(!model.plan.installCodexHook)
+        model.setAgentTarget("codex")
+        #expect(!model.plan.installCodexHook)
+        model.plan.installCodexHook = true
+        #expect(model.plan.installCodexHook)
+        model.setAgentTarget("claude")
+        #expect(!model.plan.installCodexHook)
     }
 
     @Test func firstRunOfferPolicyUsesAuthoritativeConfigAndStoredPreference() {
@@ -227,7 +241,7 @@ struct SetupAssistantModelTests {
         let result = try SetupApplyResult.decode(Self.successResult)
 
         #expect(result.ok)
-        #expect(result.instruction?.command == "jarvis-line instructions print codex --language \"English\"")
+        #expect(result.instruction?.command == "jarvis-line instructions print agents --language \"English\"")
     }
 
     private static func englishInspection(currentTTS: String, kokoroReady: Bool = true) -> String {
@@ -243,7 +257,7 @@ struct SetupAssistantModelTests {
     }
 
     private static let successResult = #"""
-    {"version":1,"ok":true,"steps":[{"name":"config_write","ok":true}],"instruction":{"target":"codex","scope":"project","filename":"AGENTS.md","destination":"/tmp/project","command":"jarvis-line instructions print codex --language \"English\"","text":"## Jarvis Line"}}
+    {"version":1,"ok":true,"steps":[{"name":"config_write","ok":true}],"instruction":{"target":"agents","scope":"project","filename":"AGENTS.md","destination":"/tmp/project","command":"jarvis-line instructions print agents --language \"English\"","text":"## Jarvis Line"}}
     """#
 }
 

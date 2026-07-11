@@ -107,11 +107,11 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
     var agentTarget: String
     var instructionScope: String
     var installKokoro: Bool
+    var acceptKokoroLicense: Bool
     var installCodexHook: Bool
     var startRuntime: Bool
     var testVoice: Bool
     var projectPath: String?
-    var command: String?
 
     init(
         version: Int = 1,
@@ -121,11 +121,11 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
         agentTarget: String,
         instructionScope: String,
         installKokoro: Bool,
+        acceptKokoroLicense: Bool,
         installCodexHook: Bool,
         startRuntime: Bool,
         testVoice: Bool,
-        projectPath: String?,
-        command: String?
+        projectPath: String?
     ) {
         self.version = version
         self.language = language
@@ -134,25 +134,25 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
         self.agentTarget = agentTarget
         self.instructionScope = instructionScope
         self.installKokoro = installKokoro
+        self.acceptKokoroLicense = acceptKokoroLicense
         self.installCodexHook = installCodexHook
         self.startRuntime = startRuntime
         self.testVoice = testVoice
         self.projectPath = projectPath
-        self.command = command
     }
 
     static let defaults = SetupPlanPayload(
         language: "English",
         tts: "system",
         speakMode: "final_only",
-        agentTarget: "codex",
+        agentTarget: "agents",
         instructionScope: "project",
         installKokoro: false,
-        installCodexHook: true,
+        acceptKokoroLicense: false,
+        installCodexHook: false,
         startRuntime: true,
         testVoice: false,
-        projectPath: nil,
-        command: nil
+        projectPath: nil
     )
 
     init(inspection: SetupInspection) {
@@ -164,7 +164,8 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
         language = inspection.current.language
         tts = selected?.id ?? "system"
         speakMode = inspection.current.speakMode
-        installKokoro = selected?.requiresInstall == true
+        installKokoro = false
+        acceptKokoroLicense = false
     }
 
     func encoded() throws -> Data {
@@ -297,6 +298,7 @@ struct SetupApplyResult: Decodable, Sendable {
 enum SetupContractError: LocalizedError, Sendable {
     case unsupportedVersion(Int)
     case payloadTooLarge(Int)
+    case commandTimedOut(Int)
 
     var errorDescription: String? {
         switch self {
@@ -304,6 +306,8 @@ enum SetupContractError: LocalizedError, Sendable {
             return "Unsupported setup contract version: \(version)"
         case .payloadTooLarge(let count):
             return "Setup plan exceeds the 64 KiB stdin limit (\(count) bytes)."
+        case .commandTimedOut(let seconds):
+            return "Jarvis Line did not finish within \(seconds) seconds. Review the setup and try again."
         }
     }
 }

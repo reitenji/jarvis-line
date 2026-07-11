@@ -45,6 +45,41 @@ def test_inspection_recommends_system_for_turkish():
     assert options["kokoro"]["available"] is False
 
 
+def test_inspection_exposes_only_safe_current_setup_values():
+    inspection = setup_flow.build_inspection(
+        environment(),
+        {
+            "tts": "command",
+            "line_language": "English",
+            "speak_mode": "commentary_and_final",
+            "command": 'curl -H "Authorization: Bearer secret" https://example.test',
+            "command_env": {"API_KEY": "top-secret"},
+            "command_cwd": "/Users/example/private-project",
+            "model_path": "/Users/example/private-model.onnx",
+        },
+        language="English",
+    )
+
+    assert inspection["current"] == {
+        "tts": "command",
+        "line_language": "English",
+        "speak_mode": "commentary_and_final",
+    }
+    assert "secret" not in str(inspection)
+    assert "/Users/example" not in str(inspection)
+
+
+def test_language_preview_does_not_overwrite_the_reported_current_language():
+    inspection = setup_flow.build_inspection(
+        environment(),
+        {"tts": "system", "line_language": "English"},
+        language="Turkish",
+    )
+
+    assert inspection["language"] == "Turkish"
+    assert inspection["current"]["line_language"] == "English"
+
+
 def test_backend_preflight_rejects_non_english_kokoro_even_when_ready():
     plan = setup_flow.SetupPlan.from_mapping(
         {**valid_plan(), "language": "Turkish", "install_kokoro": False}
@@ -56,7 +91,11 @@ def test_backend_preflight_rejects_non_english_kokoro_even_when_ready():
 
 def test_backend_preflight_allows_unready_english_kokoro_when_install_is_approved():
     plan = setup_flow.SetupPlan.from_mapping(
-        {**valid_plan(), "install_kokoro": True}
+        {
+            **valid_plan(),
+            "install_kokoro": True,
+            "accept_kokoro_license": True,
+        }
     )
 
     setup_flow.preflight_backend(
@@ -66,17 +105,48 @@ def test_backend_preflight_allows_unready_english_kokoro_when_install_is_approve
     )
 
 
-def test_backend_preflight_accepts_a_reviewed_plan_command():
+def test_plan_rejects_a_new_custom_command_from_the_setup_bridge():
+    with pytest.raises(setup_flow.SetupContractError, match="unknown field"):
+        setup_flow.SetupPlan.from_mapping(
+            {
+                **valid_plan(),
+                "tts": "command",
+                "command": ["custom-tts", "{text}"],
+            }
+        )
+
+
+def test_backend_preflight_accepts_only_an_existing_reviewed_command():
+    plan = setup_flow.SetupPlan.from_mapping(
+        {**valid_plan(), "tts": "command"}
+    )
+
+    setup_flow.preflight_backend(
+        plan,
+        environment(),
+        {"command": ["custom-tts", "{text}"]},
+    )
+
+    with pytest.raises(setup_flow.SetupContractError, match="reviewed command"):
+        setup_flow.preflight_backend(plan, environment(), {})
+
+
+def test_kokoro_install_requires_explicit_license_acceptance():
+    with pytest.raises(setup_flow.SetupContractError, match="license acceptance"):
+        setup_flow.SetupPlan.from_mapping(
+            {**valid_plan(), "install_kokoro": True}
+        )
+
     plan = setup_flow.SetupPlan.from_mapping(
         {
             **valid_plan(),
-            "tts": "command",
-            "install_kokoro": False,
-            "command": ["custom-tts", "{text}"],
+            "install_kokoro": True,
+            "accept_kokoro_license": True,
         }
     )
 
-    setup_flow.preflight_backend(plan, environment(), {})
+    assert plan.install_kokoro is True
+    assert plan.accept_kokoro_license is True
 
 
 @pytest.mark.parametrize("language", ["en", "tr"])
@@ -205,7 +275,46 @@ def test_collect_setup_plan_reuses_an_existing_advanced_command():
     )
 
     assert plan.tts == "command"
-    assert plan.command == ["custom-tts", "{text}"]
+    assert not hasattr(plan, "command")
+
+
+def test_collect_setup_plan_discloses_backend_and_kokoro_install_details():
+    output = []
+    answers = iter(["1", "1", "1", "1", "1", "y", "n", "n"])
+
+    plan = setup_flow.collect_setup_plan(
+        environment(kokoro_ready=False, kokoro_detail="model missing"),
+        {},
+        input_fn=lambda _prompt: next(answers),
+        output_fn=output.append,
+    )
+
+    rendered = "\n".join(output)
+    assert "Kokoro local" in rendered
+    assert "model missing" in rendered
+    assert "System voice (recommended)" in rendered
+    assert "https://github.com/thewh1teagle/kokoro-onnx" in rendered
+    assert "Apache-2.0" in rendered
+    assert "approximately 350 MB" in rendered
+    assert plan.install_kokoro is True
+    assert plan.accept_kokoro_license is True
+
+
+def test_review_lines_name_agent_and_non_english_voice_compatibility():
+    plan = setup_flow.SetupPlan.from_mapping(
+        {
+            **valid_plan(),
+            "language": "Turkish",
+            "tts": "system",
+            "agent_target": "claude",
+        }
+    )
+
+    review = "\n".join(setup_flow.review_lines(plan, environment()))
+
+    assert "Agent: Claude" in review
+    assert "matching system voice" in review
+    assert "custom TTS" in review
 
 
 def test_collect_setup_plan_forces_voice_test_when_requested():

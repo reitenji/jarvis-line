@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from jarvis_line import kokoro_assets
 from jarvis_line.config_contract import (
     BACKEND_CAPABILITIES,
     DEFAULT_COMMAND_CONFIG,
@@ -26,11 +27,11 @@ PLAN_FIELDS = {
     "agent_target",
     "instruction_scope",
     "install_kokoro",
+    "accept_kokoro_license",
     "install_codex_hook",
     "start_runtime",
     "test_voice",
     "project_path",
-    "command",
 }
 
 
@@ -88,11 +89,11 @@ class SetupPlan:
     agent_target: str
     instruction_scope: str
     install_kokoro: bool = False
+    accept_kokoro_license: bool = False
     install_codex_hook: bool = False
     start_runtime: bool = True
     test_voice: bool = False
     project_path: str | None = None
-    command: str | list[str] | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "SetupPlan":
@@ -122,10 +123,19 @@ class SetupPlan:
         agent_target = enum("agent_target", {"agents", "codex", "claude", "gemini"})
         scope = enum("instruction_scope", {"project", "global"})
         install_kokoro = boolean("install_kokoro", False)
+        accept_kokoro_license = boolean("accept_kokoro_license", False)
         install_hook = boolean("install_codex_hook", False)
         if install_kokoro and (tts != "kokoro" or language != "English"):
             raise SetupContractError(
                 "verified Kokoro install requires English and the kokoro backend"
+            )
+        if install_kokoro and not accept_kokoro_license:
+            raise SetupContractError(
+                "Kokoro installation requires explicit license acceptance"
+            )
+        if accept_kokoro_license and not install_kokoro:
+            raise SetupContractError(
+                "Kokoro license acceptance requires an installation request"
             )
         if install_hook and agent_target != "codex":
             raise SetupContractError(
@@ -140,23 +150,6 @@ class SetupPlan:
         if scope == "global" and project_path is not None:
             raise SetupContractError("global instruction scope cannot include project_path")
 
-        command = value.get("command")
-        command_parts = [command] if isinstance(command, str) else command
-        if command_parts is not None:
-            if (
-                not isinstance(command_parts, list)
-                or not command_parts
-                or len(command_parts) > 32
-            ):
-                raise SetupContractError("command must be a string or 1-32 argument strings")
-            if any(
-                not isinstance(part, str) or not part or "\x00" in part
-                for part in command_parts
-            ):
-                raise SetupContractError("command arguments must be non-empty safe strings")
-            if sum(len(part) for part in command_parts) > 2048:
-                raise SetupContractError("command exceeds 2048 characters")
-
         return cls(
             version=SETUP_SCHEMA_VERSION,
             language=language,
@@ -165,11 +158,11 @@ class SetupPlan:
             agent_target=agent_target,
             instruction_scope=scope,
             install_kokoro=install_kokoro,
+            accept_kokoro_license=accept_kokoro_license,
             install_codex_hook=install_hook,
             start_runtime=boolean("start_runtime", True),
             test_voice=boolean("test_voice", False),
             project_path=project_path,
-            command=command,
         )
 
 
@@ -252,7 +245,7 @@ def preflight_backend(
         if env.platform != "Darwin" or not env.macos_say_ready:
             raise SetupContractError("macOS say is not ready on this machine")
         return
-    if plan.tts == "command" and not (plan.command or current.get("command")):
+    if plan.tts == "command" and not current.get("command"):
         raise SetupContractError("custom command TTS requires a reviewed command")
 
 
@@ -262,10 +255,24 @@ def build_inspection(
     language: str = "English",
 ) -> dict[str, Any]:
     selected_language = normalize_language(language)
+    current_tts = current.get("tts")
+    if current_tts not in {"kokoro", "system", "macos", "command"}:
+        current_tts = "system"
+    current_speak_mode = current.get("speak_mode")
+    if current_speak_mode not in {"final_only", "commentary_and_final", "off"}:
+        current_speak_mode = "final_only"
+    try:
+        current_language = normalize_language(current.get("line_language"))
+    except SetupContractError:
+        current_language = selected_language
     return {
         "version": SETUP_SCHEMA_VERSION,
         "environment": asdict(env),
-        "current": deepcopy(dict(current)),
+        "current": {
+            "tts": current_tts,
+            "line_language": current_language,
+            "speak_mode": current_speak_mode,
+        },
         "language": selected_language,
         "backend_options": backend_options(env, selected_language, current),
         "ui_options": deepcopy(UI_OPTIONS),
@@ -305,8 +312,6 @@ def build_config(plan: SetupPlan, current: Mapping[str, Any]) -> dict[str, Any]:
     cfg["speech_enabled"] = plan.speak_mode != "off"
     if plan.tts == "kokoro" and plan.language == "English":
         cfg["lang"] = "en-gb"
-    if plan.tts == "command" and plan.command:
-        cfg["command"] = plan.command
     return cfg
 
 
@@ -448,9 +453,18 @@ def collect_setup_plan(
             "Custom command TTS is unavailable until configured; run "
             "`jarvis-line tts use command --command ...`."
         )
+    backend_choices = []
+    for option in available_backends:
+        recommendation = " (recommended)" if option["recommended"] else ""
+        backend_choices.append(
+            (
+                str(option["id"]),
+                f"{option['label']}{recommendation} - {option['detail']}",
+            )
+        )
     tts = prompt_choice(
         "Voice backend",
-        [(str(option["id"]), str(option["label"])) for option in available_backends],
+        backend_choices,
         default=_default_backend(available_backends, current),
         input_fn=input_fn,
         output_fn=output_fn,
@@ -490,12 +504,18 @@ def collect_setup_plan(
         output_fn=output_fn,
     )
     project_path = str(Path.cwd()) if instruction_scope == "project" else None
-    install_kokoro = tts == "kokoro" and not env.kokoro_ready and prompt_yes_no(
-        "Install verified Kokoro assets before applying setup?",
-        default=True,
-        input_fn=input_fn,
-        output_fn=output_fn,
-    )
+    install_kokoro = False
+    if tts == "kokoro" and not env.kokoro_ready:
+        output_fn("Kokoro installation disclosure:")
+        output_fn(f"  Source: {kokoro_assets.OFFICIAL_RELEASE_URL}")
+        output_fn(f"  Model license: {kokoro_assets.MODEL_LICENSE}")
+        output_fn("  Download size: approximately 350 MB")
+        install_kokoro = prompt_yes_no(
+            "Accept the model license and install verified Kokoro assets during Apply?",
+            default=False,
+            input_fn=input_fn,
+            output_fn=output_fn,
+        )
     install_codex_hook = agent_target == "codex" and prompt_yes_no(
         "Install the Codex SessionStart hook?",
         default=True,
@@ -523,22 +543,35 @@ def collect_setup_plan(
             "agent_target": agent_target,
             "instruction_scope": instruction_scope,
             "install_kokoro": install_kokoro,
+            "accept_kokoro_license": install_kokoro,
             "install_codex_hook": install_codex_hook,
             "start_runtime": start_runtime,
             "test_voice": test_voice,
             "project_path": project_path,
-            "command": current.get("command") if tts == "command" else None,
         }
     )
 
 
 def review_lines(plan: SetupPlan, env: SetupEnvironment) -> list[str]:
     guidance = instruction_guidance(plan)
+    agent_names = {
+        "agents": "Generic AGENTS.md-compatible agent",
+        "codex": "Codex",
+        "claude": "Claude",
+        "gemini": "Gemini",
+    }
+    backend_names = {
+        "kokoro": "Kokoro local",
+        "system": "System voice",
+        "macos": "macOS say",
+        "command": "Existing reviewed custom TTS",
+    }
     lines = [
         "Review setup:",
         f"  Language: {plan.language}",
-        f"  Voice backend: {plan.tts}",
+        f"  Voice backend: {backend_names[plan.tts]}",
         f"  Speech mode: {plan.speak_mode}",
+        f"  Agent: {agent_names[plan.agent_target]}",
         f"  Instruction guidance: {guidance['scope']} {guidance['filename']} at {guidance['destination']}",
         "  Instruction files are guidance only and will not be written.",
         f"  Start runtime: {'yes' if plan.start_runtime else 'no'}",
@@ -546,6 +579,17 @@ def review_lines(plan: SetupPlan, env: SetupEnvironment) -> list[str]:
     ]
     if plan.tts == "kokoro" and not env.kokoro_ready:
         lines.append(f"  Install Kokoro assets: {'yes' if plan.install_kokoro else 'no'}")
+    if normalize_language(plan.language) != "English":
+        if plan.tts in {"system", "macos"}:
+            lines.append(
+                "  Language compatibility: select a matching system voice; "
+                "use an existing reviewed custom TTS for another model or API."
+            )
+        elif plan.tts == "command":
+            lines.append(
+                "  Language compatibility: your existing custom TTS must support "
+                f"{plan.language}."
+            )
     if plan.agent_target == "codex":
         lines.append(f"  Install Codex hook: {'yes' if plan.install_codex_hook else 'no'}")
     return lines

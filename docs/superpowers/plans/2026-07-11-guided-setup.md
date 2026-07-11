@@ -8,6 +8,14 @@
 
 **Tech Stack:** Python 3.10+, argparse, dataclasses, pytest, Swift 5.9, SwiftUI, AppKit, Swift Testing, JSON over local subprocess stdin/stdout.
 
+> **Final security hardening:** The implemented machine plan intentionally does
+> not accept the illustrative `command` field shown later in this historical
+> execution plan. Custom TTS must already be configured through the advanced CLI
+> path. Inspection exposes only TTS, language, and speech mode; Kokoro network
+> work requires both `install_kokoro` and `accept_kokoro_license`; native child
+> processes have bounded deadlines. The production contract and
+> `docs/COMMANDS.md` are authoritative.
+
 ## Global Constraints
 
 - Preserve `jarvis-line setup --default`, `init`, existing config keys, and every current advanced command.

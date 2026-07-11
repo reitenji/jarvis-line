@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -1312,6 +1313,75 @@ final class CLIProcessState: @unchecked Sendable {
     private var output = Data()
     private var error = Data()
     private var didResume = false
+    private var timeoutTimer: DispatchSourceTimer?
+
+    func armTimeout(
+        after seconds: TimeInterval,
+        process: Process,
+        processGroupIsolated: Bool,
+        continuation: CheckedContinuation<String, Error>
+    ) {
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.timeout(
+                continuation,
+                after: seconds,
+                process: process,
+                processGroupIsolated: processGroupIsolated
+            )
+        }
+        timer.schedule(deadline: .now() + seconds)
+
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            timer.activate()
+            timer.cancel()
+            return
+        }
+        timeoutTimer = timer
+        lock.unlock()
+        timer.activate()
+    }
+
+    private func timeout(
+        _ continuation: CheckedContinuation<String, Error>,
+        after seconds: TimeInterval,
+        process: Process,
+        processGroupIsolated: Bool
+    ) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        let timeoutTimer = timeoutTimer
+        self.timeoutTimer = nil
+        lock.unlock()
+        timeoutTimer?.setEventHandler {}
+        timeoutTimer?.cancel()
+
+        let pid = process.processIdentifier
+        if processGroupIsolated {
+            if Darwin.kill(-pid, SIGKILL) != 0, process.isRunning {
+                Darwin.kill(pid, SIGKILL)
+            }
+        } else if process.isRunning {
+            process.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                if process.isRunning {
+                    Darwin.kill(pid, SIGKILL)
+                }
+            }
+        }
+        continuation.resume(
+            throwing: SetupContractError.commandTimedOut(
+                max(1, Int(seconds.rounded(.up)))
+            )
+        )
+    }
 
     func setOutput(_ data: Data) {
         lock.lock()
@@ -1335,9 +1405,13 @@ final class CLIProcessState: @unchecked Sendable {
             return
         }
         didResume = true
+        let timeoutTimer = timeoutTimer
+        self.timeoutTimer = nil
         let output = String(data: output, encoding: .utf8) ?? ""
         let error = String(data: error, encoding: .utf8) ?? ""
         lock.unlock()
+        timeoutTimer?.setEventHandler {}
+        timeoutTimer?.cancel()
 
         if terminationStatus == 0 {
             continuation.resume(returning: output)
@@ -1353,7 +1427,11 @@ final class CLIProcessState: @unchecked Sendable {
             return
         }
         didResume = true
+        let timeoutTimer = timeoutTimer
+        self.timeoutTimer = nil
         lock.unlock()
+        timeoutTimer?.setEventHandler {}
+        timeoutTimer?.cancel()
         continuation.resume(throwing: error)
     }
 }
@@ -1361,9 +1439,17 @@ final class CLIProcessState: @unchecked Sendable {
 struct JarvisLineCLI: JarvisLineCommandRunning {
     private static let maximumStdinBytes = SetupPlanPayload.maximumEncodedBytes
     private let executable: String?
+    private let timeoutSeconds: TimeInterval?
+    private let isolateProcessGroup: Bool?
 
-    init(executable: String? = nil) {
+    init(
+        executable: String? = nil,
+        timeoutSeconds: TimeInterval? = nil,
+        isolateProcessGroup: Bool? = nil
+    ) {
         self.executable = executable
+        self.timeoutSeconds = timeoutSeconds
+        self.isolateProcessGroup = isolateProcessGroup
     }
 
     func run(_ args: [String], stdin: Data? = nil) async throws -> String {
@@ -1372,10 +1458,18 @@ struct JarvisLineCLI: JarvisLineCommandRunning {
         }
 
         let executable = executable ?? findExecutable()
+        let timeout = timeoutSeconds ?? defaultTimeout(for: args)
+        let processGroupIsolated = isolateProcessGroup
+            ?? (URL(fileURLWithPath: executable).lastPathComponent == "jarvis-line")
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = args
+            if processGroupIsolated {
+                var environment = ProcessInfo.processInfo.environment
+                environment["JARVIS_LINE_ISOLATE_PROCESS_GROUP"] = "1"
+                process.environment = environment
+            }
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -1401,6 +1495,12 @@ struct JarvisLineCLI: JarvisLineCommandRunning {
                 state.resume(continuation, throwing: error)
                 return
             }
+            state.armTimeout(
+                after: timeout,
+                process: process,
+                processGroupIsolated: processGroupIsolated,
+                continuation: continuation
+            )
 
             DispatchQueue.global(qos: .utility).async {
                 state.setOutput(outputPipe.fileHandleForReading.readDataToEndOfFile())
@@ -1417,6 +1517,13 @@ struct JarvisLineCLI: JarvisLineCommandRunning {
                 }
             }
         }
+    }
+
+    private func defaultTimeout(for args: [String]) -> TimeInterval {
+        if args.starts(with: ["setup", "apply"]) {
+            return 15 * 60
+        }
+        return 60
     }
 
     private func findExecutable() -> String {

@@ -30,24 +30,33 @@ Jarvis line language
   ...
 Choose a number [1]:
 
-Voice
-  1. Kokoro local (recommended)
-  2. System voice
+Voice backend
+  1. Kokoro local (recommended) - ready
+  2. System voice - say
   ...
 
-Setup review
-Language: English
-TTS: kokoro
-Speech: commentary_and_final
-Agent: codex
-Scope: project
+Review setup:
+  Language: English
+  Voice backend: Kokoro local
+  Speech mode: commentary_and_final
+  Agent: Generic AGENTS.md-compatible agent
+  Instruction guidance: project AGENTS.md at /path/to/project
+  Instruction files are guidance only and will not be written.
 Apply this setup? [y/N]:
+
+Setup complete.
+Next: run `jarvis-line instructions print agents --language "English"`, review the output, and paste it into /path/to/project/AGENTS.md.
 ```
 
 The wizard does not mutate config, install hooks, start runtime work, access the
 network, or play audio before the final confirmation. `Ctrl-C` or EOF before
 that confirmation prints `Setup cancelled. No changes were made.` Kokoro
-downloads and a voice test are separate explicit choices.
+downloads and a voice test are separate explicit choices. The default agent is
+generic, and Codex hook installation appears only after Codex is selected.
+
+When unavailable English Kokoro is selected, setup prints the pinned upstream
+source, Apache-2.0 model license, and approximate 350 MB download size before
+asking for explicit acceptance. Declining leaves network work unapproved.
 
 For a non-interactive low-friction local default:
 
@@ -82,6 +91,11 @@ jarvis-line setup inspect --language "Turkish" --json
   "version": 1,
   "language": "Turkish",
   "config_exists": true,
+  "current": {
+    "tts": "system",
+    "line_language": "Turkish",
+    "speak_mode": "commentary_and_final"
+  },
   "backend_options": [
     {"id": "kokoro", "available": false, "recommended": false},
     {"id": "system", "available": true, "recommended": true}
@@ -91,7 +105,8 @@ jarvis-line setup inspect --language "Turkish" --json
 
 Without `--language`, inspection uses the valid configured `line_language`, then
 falls back to `English`. Invalid explicit input returns versioned JSON and exit
-code `2`.
+code `2`. With `--language`, the top-level `language` is the requested preview;
+`current.line_language` continues to report the actual configured language.
 
 Create a reviewed plan such as `plan.json`:
 
@@ -105,10 +120,10 @@ Create a reviewed plan such as `plan.json`:
   "instruction_scope": "global",
   "project_path": null,
   "install_kokoro": false,
+  "accept_kokoro_license": false,
   "install_codex_hook": true,
   "start_runtime": true,
-  "test_voice": false,
-  "command": null
+  "test_voice": false
 }
 ```
 
@@ -143,7 +158,15 @@ Setup plan input is limited to `65,536` UTF-8 bytes, rejects unknown fields,
 and validates backend compatibility before config or network mutation. Failure
 responses remain versioned JSON on stdout with a non-zero exit code. The machine
 interface returns instruction text for manual paste; it does not create or edit
-agent Markdown files.
+agent Markdown files. Inspection returns only the current TTS, language, and
+speech mode; it never echoes custom commands, command environments, working
+directories, model paths, or secrets.
+
+For a Kokoro download, both `install_kokoro` and
+`accept_kokoro_license` must be `true`; otherwise the plan is rejected before
+network or file activity. The bridge also rejects a `command` field. Configure
+custom TTS separately with `jarvis-line tts use command --command ...`, then use
+`"tts": "command"` to select that existing reviewed command.
 
 ## `init`
 

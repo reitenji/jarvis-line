@@ -28,6 +28,17 @@ native folder picker instead of a free-form path. Network work and voice tests
 run only when selected and only after Apply. Closing the assistant before Apply
 does not change Jarvis Line.
 
+The generic agent target is the default. Codex hook installation starts off and
+must be enabled separately after choosing Codex. The assistant never receives or
+displays custom-command secrets; it can only select a custom backend that was
+already configured through the advanced CLI path.
+
+Native CLI calls are bounded so a stalled subprocess cannot lock the assistant
+indefinitely. Regular calls time out after 60 seconds; the reviewed setup Apply
+flow allows up to 15 minutes for an approved Kokoro download/install. App-owned
+CLI work runs in an isolated process group, so timeout cleanup terminates its
+installer descendants before returning to Review with a retryable error.
+
 The Setup Assistant never edits agent Markdown. When setup completes, use
 **Copy Instructions**, review the generated block, and paste it into the chosen
 `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` yourself.

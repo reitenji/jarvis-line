@@ -164,6 +164,9 @@ Welcome -> Language -> Voice -> Speech -> Agent & Scope -> Review -> Verify
   redacted CLI detail. The window does not close automatically on failure.
 - Retry uses the same reviewed plan. Back returns to editing only when no apply
   process is active.
+- Native CLI subprocesses are bounded: ordinary manager calls use a short
+  deadline and the approved Kokoro setup path receives a longer installation
+  deadline before returning a retryable error.
 - Completion requires a valid config and healthy runtime when runtime start was
   selected. A failed optional voice test is reported separately and does not
   corrupt the completed setup.
@@ -199,6 +202,13 @@ The bridge accepts no arbitrary instruction-file path and no secret-bearing
 custom command environment. Unknown versions, fields, choices, or option-like
 values fail before any persistent change. Human-readable interactive output and
 machine-readable JSON must never be mixed on stdout.
+
+Inspection allowlists only current TTS, language, and speech mode. It does not
+return commands, command environments, working directories, model paths, or
+other config values. Apply never accepts a new custom command; it can select the
+command backend only when an existing reviewed command is already configured.
+Verified Kokoro network work requires separate `install_kokoro=true` and
+`accept_kokoro_license=true` values in the reviewed plan.
 
 ### SwiftUI Setup Coordinator
 

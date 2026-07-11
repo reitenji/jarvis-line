@@ -733,30 +733,40 @@ def kokoro_download(args) -> int:
 def kokoro_install_deps(_args, quiet: bool = False) -> int:
     KOKORO_VENV.parent.mkdir(parents=True, exist_ok=True)
     output = subprocess.DEVNULL if quiet else None
-    if not KOKORO_PY.exists():
+    try:
+        if not KOKORO_PY.exists():
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(KOKORO_VENV)],
+                check=True,
+                stdout=output,
+                stderr=output,
+                timeout=120,
+            )
         subprocess.run(
-            [sys.executable, "-m", "venv", str(KOKORO_VENV)],
+            [
+                str(KOKORO_PY),
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "pip",
+                "kokoro-onnx",
+                "sounddevice",
+                "soundfile",
+                "numpy",
+            ],
             check=True,
             stdout=output,
             stderr=output,
+            timeout=900,
         )
-    subprocess.run(
-        [
-            str(KOKORO_PY),
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "pip",
-            "kokoro-onnx",
-            "sounddevice",
-            "soundfile",
-            "numpy",
-        ],
-        check=True,
-        stdout=output,
-        stderr=output,
-    )
+    except subprocess.TimeoutExpired:
+        if not quiet:
+            print(
+                "Kokoro dependency installation timed out. Check the network and try again.",
+                file=sys.stderr,
+            )
+        return 1
     if quiet:
         return 0
     print("Installed Kokoro Python dependencies into:", KOKORO_VENV)
@@ -1255,7 +1265,17 @@ def print_setup_result(result: Mapping[str, Any]) -> None:
         print_check(bool(step.get("ok")), str(step.get("name", "setup")))
     instruction = result.get("instruction")
     if isinstance(instruction, dict) and instruction.get("command"):
-        print_next(str(instruction["command"]))
+        destination = str(instruction.get("destination") or "the selected location")
+        filename = str(instruction.get("filename") or "the agent instruction file")
+        if instruction.get("scope") == "project":
+            if destination == "the current project":
+                destination = f"the current project's {filename}"
+            else:
+                destination = str(Path(destination) / filename)
+        print_next(
+            f"run `{instruction['command']}`, review the output, and paste it into "
+            f"{destination}."
+        )
 
 
 def init_project(args) -> int:
@@ -1966,7 +1986,7 @@ def setup_wizard(args) -> int:
         )
         for line in setup_flow.review_lines(plan, env):
             print(line)
-        if not setup_flow.prompt_yes_no("Apply this setup?", default=True):
+        if not setup_flow.prompt_yes_no("Apply this setup?", default=False):
             print("Setup cancelled. No changes were made.")
             return 0
         confirmed = True
@@ -2358,7 +2378,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def isolate_process_group_if_requested() -> bool:
+    requested = os.environ.pop("JARVIS_LINE_ISOLATE_PROCESS_GROUP", "") == "1"
+    if not requested or os.name != "posix":
+        return True
+    try:
+        os.setsid()
+        return True
+    except OSError:
+        try:
+            os.setpgrp()
+            return True
+        except OSError:
+            print(
+                "Jarvis Line could not isolate its app subprocess group.",
+                file=sys.stderr,
+            )
+            return False
+
+
 def main() -> int:
+    if not isolate_process_group_if_requested():
+        return 70
     parser = build_parser()
     args = parser.parse_args()
     return args.func(args)

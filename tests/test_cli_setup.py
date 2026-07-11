@@ -32,10 +32,13 @@ def kokoro_codex_plan(**overrides):
         "instruction_scope": "project",
         "project_path": "/tmp/project",
         "install_kokoro": True,
+        "accept_kokoro_license": True,
         "install_codex_hook": True,
         "start_runtime": True,
     }
     values.update(overrides)
+    if "accept_kokoro_license" not in overrides:
+        values["accept_kokoro_license"] = values["install_kokoro"]
     return setup_flow.SetupPlan.from_mapping(values)
 
 
@@ -68,7 +71,40 @@ def test_setup_inspect_prints_parseable_versioned_json(monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["version"] == 1
     assert payload["config_exists"] is False
-    assert payload["current"] == {"tts": "system"}
+    assert payload["current"] == {
+        "tts": "system",
+        "line_language": "English",
+        "speak_mode": "final_only",
+    }
+
+
+def test_setup_inspect_does_not_echo_custom_command_secrets_or_paths(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(
+        cli,
+        "load_effective_config",
+        lambda default=None: {
+            "tts": "command",
+            "line_language": "English",
+            "speak_mode": "final_only",
+            "command": 'curl -H "Authorization: Bearer secret" https://example.test',
+            "command_env": {"API_KEY": "top-secret"},
+            "command_cwd": "/Users/example/private-project",
+        },
+    )
+
+    assert cli.setup_inspect(argparse.Namespace(json_output=True, language=None)) == 0
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["current"] == {
+        "tts": "command",
+        "line_language": "English",
+        "speak_mode": "final_only",
+    }
+    assert payload["backend_options"][-1]["available"] is True
+    assert "secret" not in output
+    assert "/Users/example" not in output
 
 
 def test_setup_inspect_prefers_valid_configured_line_language(monkeypatch, capsys):
@@ -152,6 +188,54 @@ def test_setup_apply_accepts_exactly_64kib_stdin_without_mutation(monkeypatch, c
     assert json.loads(capsys.readouterr().out)["ok"] is True
 
 
+def test_setup_apply_rejects_new_custom_command_before_mutation(monkeypatch, capsys):
+    payload = {
+        "version": 1,
+        "language": "English",
+        "tts": "command",
+        "speak_mode": "final_only",
+        "agent_target": "agents",
+        "instruction_scope": "global",
+        "install_kokoro": False,
+        "install_codex_hook": False,
+        "start_runtime": False,
+        "command": 'sh -c "touch /tmp/jarvis-line-setup-should-not-run"',
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    applied = []
+    monkeypatch.setattr(cli, "apply_setup_plan", lambda *_args, **_kwargs: applied.append(True))
+
+    assert cli.setup_apply(argparse.Namespace(stdin=True, json_output=True)) == 2
+
+    assert applied == []
+    assert "unknown field: command" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_setup_apply_rejects_kokoro_network_work_without_license_acceptance(
+    monkeypatch, capsys
+):
+    payload = {
+        "version": 1,
+        "language": "English",
+        "tts": "kokoro",
+        "speak_mode": "final_only",
+        "agent_target": "agents",
+        "instruction_scope": "global",
+        "install_kokoro": True,
+        "accept_kokoro_license": False,
+        "install_codex_hook": False,
+        "start_runtime": False,
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    applied = []
+    monkeypatch.setattr(cli, "apply_setup_plan", lambda *_args, **_kwargs: applied.append(True))
+
+    assert cli.setup_apply(argparse.Namespace(stdin=True, json_output=True)) == 2
+
+    assert applied == []
+    assert "license acceptance" in json.loads(capsys.readouterr().out)["error"]
+
+
 def test_setup_result_includes_copyable_instruction_text_for_parsed_plan():
     result = cli._setup_result(kokoro_codex_plan(), [], ok=True)
 
@@ -163,6 +247,16 @@ def test_setup_result_includes_copyable_instruction_text_for_parsed_plan():
         "command": 'jarvis-line instructions print codex --language "English"',
         "text": cli.instruction_snippet("codex", "English"),
     }
+
+
+def test_print_setup_result_names_instruction_command_and_destination(capsys):
+    result = cli._setup_result(kokoro_codex_plan(), [], ok=True)
+
+    cli.print_setup_result(result)
+
+    output = capsys.readouterr().out
+    assert 'jarvis-line instructions print codex --language "English"' in output
+    assert "/tmp/project/AGENTS.md" in output
 
 
 @pytest.mark.parametrize("language", ["K'iche'", "Chinese (Traditional)", "Sa\u0301mi"])
@@ -277,6 +371,55 @@ def test_run_setup_kokoro_install_downloads_managed_assets_before_dependencies(m
         ("download", "voices-v1.0.bin", cli.KOKORO_VOICES, False),
         ("dependencies", True),
     ]
+
+
+def test_kokoro_dependency_install_has_bounded_subprocess_timeouts(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "KOKORO_VENV", tmp_path / "venv")
+    monkeypatch.setattr(cli, "KOKORO_PY", tmp_path / "venv" / "bin" / "python")
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[:3] == [sys.executable, "-m", "venv"]:
+            cli.KOKORO_PY.parent.mkdir(parents=True)
+            cli.KOKORO_PY.touch()
+        return None
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+
+    assert cli.kokoro_install_deps(argparse.Namespace(), quiet=True) == 0
+    assert calls[0][1]["timeout"] == 120
+    assert calls[1][1]["timeout"] == 900
+
+
+def test_manual_kokoro_dependency_timeout_returns_a_clean_error(
+    monkeypatch, tmp_path, capsys
+):
+    python = tmp_path / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    monkeypatch.setattr(cli, "KOKORO_VENV", tmp_path / "venv")
+    monkeypatch.setattr(cli, "KOKORO_PY", python)
+
+    def time_out(command, **_kwargs):
+        raise cli.subprocess.TimeoutExpired(command, timeout=900)
+
+    monkeypatch.setattr(cli.subprocess, "run", time_out)
+
+    assert cli.kokoro_install_deps(argparse.Namespace(), quiet=False) == 1
+    assert "timed out" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(cli.os.name != "posix", reason="process groups are POSIX-only")
+def test_cli_process_group_request_is_consumed_before_command_dispatch(monkeypatch):
+    calls = []
+    monkeypatch.setenv("JARVIS_LINE_ISOLATE_PROCESS_GROUP", "1")
+    monkeypatch.setattr(cli.os, "setsid", lambda: calls.append("setsid"))
+
+    cli.isolate_process_group_if_requested()
+
+    assert calls == ["setsid"]
+    assert "JARVIS_LINE_ISOLATE_PROCESS_GROUP" not in cli.os.environ
 
 
 def test_apply_stops_before_config_write_when_managed_kokoro_is_not_ready(monkeypatch, tmp_path):
@@ -519,7 +662,13 @@ def test_wizard_decline_leaves_files_and_runtime_unchanged(monkeypatch, tmp_path
     cli.save_json(cli.CONFIG_PATH, original)
     monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
     monkeypatch.setattr(cli.setup_flow, "collect_setup_plan", lambda *_args, **_kwargs: kokoro_codex_plan())
-    monkeypatch.setattr(cli.setup_flow, "prompt_yes_no", lambda *_args, **_kwargs: False)
+    confirmations = []
+
+    def decline(_prompt, *, default):
+        confirmations.append(default)
+        return False
+
+    monkeypatch.setattr(cli.setup_flow, "prompt_yes_no", decline)
     applied = []
     monkeypatch.setattr(cli, "apply_setup_plan", lambda *_args, **_kwargs: applied.append(True))
 
@@ -527,6 +676,7 @@ def test_wizard_decline_leaves_files_and_runtime_unchanged(monkeypatch, tmp_path
 
     assert cli.load_json(cli.CONFIG_PATH, {}) == original
     assert applied == []
+    assert confirmations == [False]
     assert "No changes were made" in capsys.readouterr().out
 
 

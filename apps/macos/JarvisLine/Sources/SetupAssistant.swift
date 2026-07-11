@@ -38,6 +38,7 @@ final class SetupAssistantModel: ObservableObject {
     @Published var installKokoroAccepted = false {
         didSet {
             plan.installKokoro = selectedBackend?.requiresInstall == true && installKokoroAccepted
+            plan.acceptKokoroLicense = plan.installKokoro
         }
     }
 
@@ -169,6 +170,7 @@ final class SetupAssistantModel: ObservableObject {
             plan.tts = selected?.id ?? "system"
             installKokoroAccepted = false
             plan.installKokoro = false
+            plan.acceptKokoroLicense = false
             step = .voice
             errorMessage = nil
         } catch {
@@ -183,6 +185,7 @@ final class SetupAssistantModel: ObservableObject {
         plan.tts = backend.id
         installKokoroAccepted = false
         plan.installKokoro = false
+        plan.acceptKokoroLicense = false
     }
 
     func setAgentTarget(_ target: String) {
@@ -290,6 +293,7 @@ final class SetupAssistantModel: ObservableObject {
         otherLanguage = languageSelection == "Other language..." ? plan.language : ""
         installKokoroAccepted = false
         plan.installKokoro = false
+        plan.acceptKokoroLicense = false
     }
 
     private func readableError(for result: SetupApplyResult) -> String {
@@ -728,7 +732,7 @@ struct SetupAssistantView: View {
                     Text("Kokoro installation")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(JarvisTheme.goldSoft)
-                    Text("The final Apply action will download verified Kokoro model assets from the upstream project. The model is Apache-2.0 licensed and is approximately 300 MB.")
+                    Text("The final Apply action will download verified Kokoro model assets from the upstream project. The model is Apache-2.0 licensed and is approximately 350 MB.")
                         .font(.system(size: 12))
                         .foregroundStyle(JarvisTheme.mutedText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -773,10 +777,10 @@ struct SetupAssistantView: View {
                 get: { model.plan.agentTarget },
                 set: { model.setAgentTarget($0) }
             )) {
+                Text("Generic").tag("agents")
                 Text("Codex").tag("codex")
                 Text("Claude").tag("claude")
                 Text("Gemini").tag("gemini")
-                Text("Generic").tag("agents")
             }
             .pickerStyle(.segmented)
             Picker("Scope", selection: Binding(
