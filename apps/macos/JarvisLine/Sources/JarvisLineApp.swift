@@ -3,6 +3,7 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var showSettingsWindow: (() -> Void)?
+    static var showSetupWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.applyDockVisibility(JarvisAppPreferences.showDockIcon)
@@ -118,6 +119,22 @@ struct JarvisLineApp: App {
                 SettingsWindowController.shared.show(model: model)
             }
         }
+        AppDelegate.showSetupWindow = {
+            Task { @MainActor in
+                SetupAssistantWindowController.shared.show(mainModel: model)
+            }
+        }
+        model.onInitialSetupInspection = { [weak model] inspection in
+            guard let model,
+                  SetupAssistantFirstRunController.shouldOffer(
+                      configExists: inspection.configExists,
+                      wasOffered: SetupAssistantFirstRunController.wasOffered()
+                  ) else {
+                return
+            }
+            SetupAssistantFirstRunController.markOffered()
+            SetupAssistantWindowController.shared.show(mainModel: model, inspection: inspection)
+        }
     }
 
     var body: some Scene {
@@ -162,9 +179,12 @@ final class JarvisLineModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var codexHookInstalled = false
     @Published var showDockIcon = JarvisAppPreferences.showDockIcon
+    @Published private(set) var setupRequired = false
 
     private let cli = JarvisLineCLI()
     private let configStore = JarvisConfigStore()
+    private var didInspectSetupOnLaunch = false
+    var onInitialSetupInspection: ((SetupInspection) -> Void)?
 
     var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -198,7 +218,13 @@ final class JarvisLineModel: ObservableObject {
             codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             lastOutput = statusOutput
             await refreshTrace()
+            await refreshSetupRequirementIfNeeded()
         }
+    }
+
+    func setupCompleted() async {
+        setupRequired = false
+        await refresh()
     }
 
     func start() async {
@@ -293,6 +319,14 @@ final class JarvisLineModel: ObservableObject {
             return
         }
         traceEvents = decoded
+    }
+
+    private func refreshSetupRequirementIfNeeded() async {
+        guard !didInspectSetupOnLaunch else { return }
+        didInspectSetupOnLaunch = true
+        guard let inspection = try? await inspectSetup(using: cli) else { return }
+        setupRequired = !inspection.configExists
+        onInitialSetupInspection?(inspection)
     }
 
     private func run(label: String, operation: () async throws -> Void) async {
@@ -534,6 +568,16 @@ struct JarvisLinePanel: View {
     private var quickView: some View {
         VStack(alignment: .leading, spacing: 13) {
             heroStatus
+            if model.setupRequired {
+                Button {
+                    AppDelegate.showSetupWindow?()
+                } label: {
+                    Label("Complete Setup", systemImage: "checklist")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(JarvisTheme.gold)
+            }
             compactStatus
             commandDeck
         }
@@ -626,6 +670,9 @@ struct JarvisLinePanel: View {
 
     private var runtimeSettings: some View {
         Form {
+            Button("Run Setup Assistant...") {
+                AppDelegate.showSetupWindow?()
+            }
             Toggle("Show in Dock", isOn: Binding(
                 get: { model.showDockIcon },
                 set: { model.setDockIconVisible($0) }
