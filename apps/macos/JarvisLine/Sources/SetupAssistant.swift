@@ -71,7 +71,7 @@ final class SetupAssistantModel: ObservableObject {
         guard !isBusy else { return false }
         switch step {
         case .language:
-            return Self.isValidFullLanguage(plan.language)
+            return Self.isValidFullLanguage(languageInputForValidation)
         case .voice:
             guard let backend = selectedBackend, backend.available else { return false }
             return backend.ready || (backend.requiresInstall && installKokoroAccepted)
@@ -100,7 +100,11 @@ final class SetupAssistantModel: ObservableObject {
     }
 
     var languageValidationMessage: String? {
-        Self.languageValidationMessage(for: plan.language)
+        Self.languageValidationMessage(for: languageInputForValidation)
+    }
+
+    private var languageInputForValidation: String {
+        languageSelection == "Other language..." ? otherLanguage : plan.language
     }
 
     var reviewActions: [String] {
