@@ -1751,6 +1751,8 @@ def enable_codex_hooks_feature() -> bool:
         return False
     env = os.environ.copy()
     env["CODEX_HOME"] = str(HOOKS_JSON.parent)
+    config_path = HOOKS_JSON.parent / "config.toml"
+    legacy_flag_present = _codex_features_has_key(config_path, "codex_hooks")
     try:
         proc = subprocess.run(
             [codex, "features", "enable", "hooks"],
@@ -1761,7 +1763,42 @@ def enable_codex_hooks_feature() -> bool:
         )
     except (OSError, subprocess.SubprocessError):
         return False
-    return proc.returncode == 0
+    if proc.returncode != 0:
+        return False
+    if not legacy_flag_present:
+        return True
+    try:
+        legacy_proc = subprocess.run(
+            [codex, "features", "disable", "codex_hooks"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return legacy_proc.returncode == 0
+
+
+def _codex_features_has_key(path: Path, key: str) -> bool:
+    try:
+        if path.stat().st_size > 1_048_576:
+            return False
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    section = ""
+    assignment = re.compile(rf"^{re.escape(key)}\s*=")
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section == "features" and assignment.match(line):
+            return True
+    return False
 
 
 def _upsert_codex_hook(

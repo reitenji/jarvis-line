@@ -10,6 +10,8 @@ def test_contract_contains_defaults_fields_and_backends():
     assert contract["version"] == 1
     assert contract["defaults"]["tts"] == "kokoro"
     assert contract["defaults"]["debug_content_logging"] is False
+    assert contract["defaults"]["attention_enabled"] is False
+    assert contract["fields"]["attention_enabled"]["type"] == "boolean"
     assert contract["fields"]["tts"]["values"] == ["command", "kokoro", "macos", "system"]
     assert contract["ui_options"]["tts"] == ["kokoro", "system", "macos", "command"]
     assert 185 in contract["ui_options"]["system_rate"]
@@ -59,3 +61,4 @@ def test_kokoro_load_config_preserves_user_values(tmp_path, monkeypatch):
     assert config["tts"] == "system"
     assert config["volume"] == 0.4
     assert config["speak_mode"] == "final_only"
+    assert config["attention_enabled"] is False

@@ -655,6 +655,30 @@ def test_enable_codex_hooks_feature_uses_target_codex_home(tmp_path, monkeypatch
     assert calls[0][1]["env"]["CODEX_HOME"] == str(tmp_path)
 
 
+def test_enable_codex_hooks_feature_disables_existing_legacy_flag(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    (tmp_path / "config.toml").write_text(
+        "[features]\ncodex_hooks = true\nother = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli.shutil, "which", lambda command: "/usr/local/bin/codex")
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    assert cli.enable_codex_hooks_feature() is True
+    assert commands == [
+        ["/usr/local/bin/codex", "features", "enable", "hooks"],
+        ["/usr/local/bin/codex", "features", "disable", "codex_hooks"],
+    ]
+
+
 def test_migrate_config_writes_next_config(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "jarvis_line_config.json")
     monkeypatch.setattr(cli, "LEGACY_CONFIG_PATH", tmp_path / "kokoro_tts_config.json")
