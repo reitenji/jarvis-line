@@ -73,9 +73,9 @@ def test_malformed_shell_request_uses_safe_fallback():
     ("language", "expected"),
     [
         ("English", "Permission is needed"),
-        ("Turkish", "Izin gerekiyor"),
-        ("French", "Une autorisation est necessaire"),
-        ("Italian", "E necessaria l'autorizzazione"),
+        ("Turkish", "izin gerekiyor"),
+        ("French", "Une autorisation est nécessaire"),
+        ("Italian", "È necessaria l'autorizzazione"),
         ("Japanese", "許可が必要です"),
         ("Chinese", "需要权限"),
         ("German", "Permission is needed"),
@@ -113,9 +113,9 @@ def test_input_formatter_uses_generic_line_when_question_is_unsafe():
     ("language", "expected"),
     [
         ("English", "Your input is needed"),
-        ("Turkish", "Devam etmek icin yanitiniz gerekiyor"),
-        ("French", "Votre reponse est necessaire"),
-        ("Italian", "E necessaria una tua risposta"),
+        ("Turkish", "Yanıtınız gerekiyor"),
+        ("French", "Votre réponse est nécessaire"),
+        ("Italian", "È necessaria una risposta"),
         ("Japanese", "入力が必要です"),
         ("Chinese", "需要您的输入"),
     ],
@@ -124,6 +124,7 @@ def test_input_templates_cover_supported_languages(language, expected):
     result = format_input_required("Release", "Which channel should be used?", language)
 
     assert expected in result.line
+    assert not result.line.endswith("?.")
 
 
 def test_parse_input_request_accepts_only_observed_structured_shape():

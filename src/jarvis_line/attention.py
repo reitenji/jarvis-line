@@ -50,28 +50,28 @@ _ACTIONS = {
         "github_pull_request": "create a GitHub pull request",
     },
     "Turkish": {
-        "dependency_install": "proje bagimliliklarini yukleme",
-        "git_push": "degisiklikleri uzak depoya gonderme",
-        "git_pull": "degisiklikleri uzak depodan alma",
-        "git_clone": "uzak depoyu klonlama",
-        "file_delete": "dosyalari silme",
-        "process_terminate": "bir islemi durdurma",
-        "privileged": "yonetici yetkili komut calistirma",
-        "test_build": "proje kontrollerini calistirma",
-        "file_modify": "proje dosyalarini degistirme",
-        "github_pull_request": "GitHub pull request olusturma",
+        "dependency_install": "proje bağımlılıklarını yüklemek",
+        "git_push": "değişiklikleri uzak depoya göndermek",
+        "git_pull": "değişiklikleri uzak depodan almak",
+        "git_clone": "uzak depoyu klonlamak",
+        "file_delete": "dosyaları silmek",
+        "process_terminate": "bir işlemi durdurmak",
+        "privileged": "yönetici yetkili bir komut çalıştırmak",
+        "test_build": "proje kontrollerini çalıştırmak",
+        "file_modify": "proje dosyalarını değiştirmek",
+        "github_pull_request": "GitHub pull request oluşturmak",
     },
     "French": {
-        "dependency_install": "installer les dependances du projet",
-        "git_push": "envoyer les modifications vers le depot distant",
-        "git_pull": "recuperer les modifications du depot distant",
-        "git_clone": "cloner un depot distant",
+        "dependency_install": "installer les dépendances du projet",
+        "git_push": "envoyer les modifications vers le dépôt distant",
+        "git_pull": "récupérer les modifications du dépôt distant",
+        "git_clone": "cloner un dépôt distant",
         "file_delete": "supprimer des fichiers",
-        "process_terminate": "arreter un processus",
-        "privileged": "executer une commande privilegiee",
-        "test_build": "executer les controles du projet",
+        "process_terminate": "arrêter un processus",
+        "privileged": "exécuter une commande privilégiée",
+        "test_build": "exécuter les contrôles du projet",
         "file_modify": "modifier les fichiers du projet",
-        "github_pull_request": "creer une pull request GitHub",
+        "github_pull_request": "créer une pull request GitHub",
     },
     "Italian": {
         "dependency_install": "installare le dipendenze del progetto",
@@ -232,6 +232,27 @@ def _permission_line(intent: _PermissionIntent, language: str) -> str:
             return f"Permission is required for {intent.tool_label}."
         return f"Permission is needed to {_ACTIONS[language][intent.category]}."
 
+    if language == "Turkish":
+        if intent.category == "network" and intent.detail:
+            return f"{intent.detail} adresine bağlanmak için izin gerekiyor."
+        if intent.category == "shell":
+            return "Bir shell komutu için izin gerekiyor."
+        action = intent.tool_label if intent.category == "generic_tool" else _ACTIONS[language][intent.category]
+        return f"{action.capitalize()} için izin gerekiyor."
+    if language == "French":
+        if intent.category == "network" and intent.detail:
+            return f"Une autorisation est nécessaire pour se connecter à {intent.detail}."
+        action = "une commande shell" if intent.category == "shell" else (
+            intent.tool_label if intent.category == "generic_tool" else _ACTIONS[language][intent.category]
+        )
+        return f"Une autorisation est nécessaire pour {action}."
+    if language == "Italian":
+        if intent.category == "network" and intent.detail:
+            return f"È necessaria l'autorizzazione per connettersi a {intent.detail}."
+        action = "un comando shell" if intent.category == "shell" else (
+            intent.tool_label if intent.category == "generic_tool" else _ACTIONS[language][intent.category]
+        )
+        return f"È necessaria l'autorizzazione per {action}."
     if intent.category == "generic_tool":
         action = intent.tool_label
     elif intent.category == "network" and intent.detail:
@@ -240,13 +261,6 @@ def _permission_line(intent: _PermissionIntent, language: str) -> str:
         action = "shell"
     else:
         action = _ACTIONS[language][intent.category]
-
-    if language == "Turkish":
-        return f"Izin gerekiyor: {action}."
-    if language == "French":
-        return f"Une autorisation est necessaire pour {action}."
-    if language == "Italian":
-        return f"E necessaria l'autorizzazione per {action}."
     if language == "Japanese":
         return f"{action}には許可が必要です。"
     return f"{action}需要权限。"
@@ -278,23 +292,28 @@ def _sanitize_question(header: object, question: object) -> str:
 
 
 def _input_line(safe_question: str, language: str) -> str:
+    def punctuated(mark: str) -> str:
+        if safe_question.endswith((".", "?", "!", "。", "？", "！")):
+            return safe_question
+        return safe_question + mark
+
     if language == "Turkish":
-        generic = "Devam etmek icin yanitiniz gerekiyor."
-        return f"Devam etmek icin yanitiniz gerekiyor: {safe_question}." if safe_question else generic
+        generic = "Devam etmek için yanıtınız gerekiyor."
+        return f"Yanıtınız gerekiyor: {punctuated('.')}" if safe_question else generic
     if language == "French":
-        generic = "Votre reponse est necessaire pour continuer."
-        return f"Votre reponse est necessaire: {safe_question}." if safe_question else generic
+        generic = "Votre réponse est nécessaire pour continuer."
+        return f"Votre réponse est nécessaire: {punctuated('.')}" if safe_question else generic
     if language == "Italian":
-        generic = "E necessaria una tua risposta per continuare."
-        return f"E necessaria una tua risposta: {safe_question}." if safe_question else generic
+        generic = "È necessaria una risposta per continuare."
+        return f"È necessaria una risposta: {punctuated('.')}" if safe_question else generic
     if language == "Japanese":
         generic = "続行するには入力が必要です。"
-        return f"入力が必要です: {safe_question}。" if safe_question else generic
+        return f"入力が必要です: {punctuated('。')}" if safe_question else generic
     if language == "Chinese":
         generic = "需要您的输入才能继续。"
-        return f"需要您的输入: {safe_question}。" if safe_question else generic
+        return f"需要您的输入: {punctuated('。')}" if safe_question else generic
     generic = "Your input is needed to continue."
-    return f"Your input is needed: {safe_question}." if safe_question else generic
+    return f"Your input is needed: {punctuated('.')}" if safe_question else generic
 
 
 def format_input_required(

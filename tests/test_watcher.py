@@ -190,7 +190,7 @@ def test_process_line_queues_structured_plan_mode_input_without_options(monkeypa
     assert args[:3] == (
         "codex-session-1",
         "attention",
-        "Your input is needed: Release. Which release channel should be used?.",
+        "Your input is needed: Release. Which release channel should be used?",
     )
     assert kwargs["attention_type"] == "input_required"
     assert len(kwargs["correlation_token"]) == 20
