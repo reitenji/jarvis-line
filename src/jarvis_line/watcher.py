@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from jarvis_line import diagnostics, kokoro_say as ks
-from jarvis_line.attention import ATTENTION_TYPES
+from jarvis_line.attention import (
+    ATTENTION_TYPES,
+    correlation_token,
+    format_input_required,
+    parse_input_request_payload,
+)
 from jarvis_line.queue_policy import is_attention_phase, schedule_job
 
 
@@ -47,6 +52,9 @@ AUDIO_QUEUE_STALE_SECONDS = 90
 AUDIO_QUEUE_MAX_JOBS = 8
 ATTENTION_TTL_SECONDS = 30
 SESSION_RECOVERY_WINDOW_SECONDS = 5 * 60
+CODEX_SESSION_ID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 
 try:
@@ -456,6 +464,13 @@ def current_session_candidates() -> list[Path]:
     return paths
 
 
+def session_key_for_path(path: Path) -> str:
+    matches = CODEX_SESSION_ID_RE.findall(path.name)
+    if matches:
+        return f"codex:{matches[-1].lower()}"
+    return str(path.resolve())
+
+
 def collect_text(value: Any) -> list[str]:
     parts: list[str] = []
     if isinstance(value, str):
@@ -729,6 +744,16 @@ def queue_jarvis_line(
     correlation_token: str | None = None,
 ) -> bool:
     cfg = runtime_config()
+    if runtime_is_stopped():
+        append_log(f"skip-queue runtime-stopped phase={phase}")
+        diagnostics.record_event(
+            "skipped",
+            session_key=session_key,
+            phase=phase,
+            attention_type=attention_type,
+            reason="runtime_stopped",
+        )
+        return False
     if cfg.get("speech_enabled") is False:
         append_log(f"skip-queue speech-disabled phase={phase}")
         diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="speech_disabled")
@@ -880,7 +905,7 @@ def maybe_speak_from_payload(payload: dict[str, Any], session_key: str) -> bool:
 
 
 def speak_latest_final_from_session(path: Path) -> str:
-    session_key = str(path.resolve())
+    session_key = session_key_for_path(path)
     for raw_line in reversed(read_recent_lines(path)):
         try:
             event = json.loads(raw_line)
@@ -998,6 +1023,35 @@ def process_line(raw_line: str, session_key: str) -> None:
         return
     if not isinstance(event, dict):
         return
+    if event.get("type") == "response_item":
+        response_payload = event.get("payload")
+        if isinstance(response_payload, dict):
+            input_request = parse_input_request_payload(response_payload)
+            if input_request is not None:
+                cfg = runtime_config()
+                if bool(cfg.get("attention_enabled", False)):
+                    message = format_input_required(
+                        input_request.header,
+                        input_request.question,
+                        cfg.get("line_language", "English"),
+                    )
+                    queue_jarvis_line(
+                        session_key,
+                        "attention",
+                        message.line,
+                        message.line,
+                        attention_type="input_required",
+                        correlation_token=input_request.correlation_token,
+                    )
+                return
+            if response_payload.get("type") in {
+                "function_call_output",
+                "custom_tool_call_output",
+            }:
+                token = correlation_token(response_payload.get("call_id"))
+                if token:
+                    cancel_attention_job(session_key, "input_required", token)
+                return
     payload = assistant_payload_from_event(event)
     if payload:
         maybe_speak_from_payload(payload, session_key)
@@ -1150,7 +1204,7 @@ def notify_trigger(arg_payload: str = "") -> int:
         return 0
 
     append_log(f"notify-turn-complete {diagnostics.runtime_log_context(session_key=target)}")
-    session_key = str(target.resolve())
+    session_key = session_key_for_path(target)
 
     remember_latest_message(session_key, phase, text, jarvis_line)
     queue_jarvis_line(session_key, phase, jarvis_line, text)
@@ -1158,7 +1212,7 @@ def notify_trigger(arg_payload: str = "") -> int:
 
 
 def watch_file(path: Path, read_existing: bool = False) -> int:
-    session_key = str(path.resolve())
+    session_key = session_key_for_path(path)
     append_log(f"watch-start {diagnostics.runtime_log_context(session_key=session_key)}")
     launch_audio_worker()
     with path.open("r", encoding="utf-8", errors="ignore") as f:
@@ -1202,7 +1256,11 @@ def watch_sessions(read_existing: bool = False) -> int:
                 try:
                     f = path.open("r", encoding="utf-8", errors="ignore")
                     if not read_existing:
-                        if recover_latest_recent_line(path, key, recovery_min_ts_ms):
+                        if recover_latest_recent_line(
+                            path,
+                            session_key_for_path(path),
+                            recovery_min_ts_ms,
+                        ):
                             append_log(f"watch-recover {diagnostics.runtime_log_context(session_key=key)}")
                         f.seek(0, os.SEEK_END)
                     handles[key] = f
@@ -1237,7 +1295,7 @@ def watch_sessions(read_existing: bool = False) -> int:
             if not line:
                 continue
             had_line = True
-            process_line(line, key)
+            process_line(line, session_key_for_path(Path(key)))
 
         if not had_line:
             time.sleep(0.2)
