@@ -1607,6 +1607,7 @@ def emit_command(args) -> int:
                 "source": getattr(args, "source", None),
                 "session_id": getattr(args, "session", None),
                 "phase": getattr(args, "phase", None),
+                "attention_type": getattr(args, "attention_type", None),
                 "line": getattr(args, "line", None),
                 "text": getattr(args, "text", None),
             }
@@ -2241,7 +2242,12 @@ def build_parser() -> argparse.ArgumentParser:
     emit.add_argument("--stdin", action="store_true", help="Read one versioned JSON event from stdin.")
     emit.add_argument("--source", help="Agent or adapter name, for example claude or gemini.")
     emit.add_argument("--session", help="Stable session identifier from the source agent.")
-    emit.add_argument("--phase", help="commentary or final")
+    emit.add_argument("--phase", help="commentary, final, or attention")
+    emit.add_argument(
+        "--attention-type",
+        choices=("input_required", "permission_request"),
+        help="Required for attention events.",
+    )
     emit.add_argument("--line", help="Short spoken status line.")
     emit.add_argument("--text", help="Optional longer context retained only in local queue/cache state.")
     emit.set_defaults(func=emit_command)
