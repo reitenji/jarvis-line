@@ -152,6 +152,7 @@ def test_emit_attention_does_not_replace_cached_assistant_message(monkeypatch):
             "phase": "attention",
             "attention_type": "permission_request",
             "line": "Permission is required for Bash.",
+            "text": "raw command with TOKEN=secret must be discarded",
         }
     )
 

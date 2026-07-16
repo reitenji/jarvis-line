@@ -122,6 +122,7 @@ def emit_event(event: SpeechEvent) -> bool:
         attention_type=event.attention_type,
     )
     if event.phase == "attention":
+        text = event.line
         return watcher.queue_jarvis_line(
             event.session_key,
             event.phase,

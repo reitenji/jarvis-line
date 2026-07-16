@@ -33,6 +33,7 @@ def test_speak_mode_final_only(monkeypatch):
 
     assert watcher.speak_mode_allows("final_answer") is True
     assert watcher.speak_mode_allows("commentary") is False
+    assert watcher.speak_mode_allows("attention") is True
 
 
 def test_codex_history_user_payload_is_ignored(monkeypatch):
@@ -335,6 +336,101 @@ def test_queue_trimming_preserves_finals_before_commentary(tmp_path, monkeypatch
 
     queue = watcher.load_json(tmp_path / "queue.json", {})
     assert [job["jarvis_line"] for job in queue["jobs"]] == ["final one", "final three"]
+
+
+def test_attention_queue_requires_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {"speak_mode": "final_only", "attention_enabled": False},
+    )
+    launched = []
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: launched.append(True))
+
+    assert watcher.queue_jarvis_line(
+        "s1",
+        "attention",
+        "Permission is needed.",
+        attention_type="permission_request",
+    ) is False
+    assert not (tmp_path / "queue.json").exists()
+    assert launched == []
+
+
+def test_attention_queue_stores_only_bounded_metadata_and_expiry(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {"speak_mode": "final_only", "attention_enabled": True},
+    )
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: None)
+    monkeypatch.setattr(watcher.time, "time", lambda: 100.0)
+
+    assert watcher.queue_jarvis_line(
+        "codex:s1",
+        "attention",
+        "Permission is needed to push changes.",
+        "Permission is needed to push changes.",
+        attention_type="permission_request",
+        correlation_token="0123456789abcdef0123",
+    ) is True
+
+    job = watcher.load_json(tmp_path / "queue.json", {})["jobs"][0]
+    assert job["attention_type"] == "permission_request"
+    assert job["correlation_token"] == "0123456789abcdef0123"
+    assert job["expires_ts_ms"] == 130_000
+    assert set(job) == {
+        "message_id",
+        "session_key",
+        "phase",
+        "attention_type",
+        "correlation_token",
+        "jarvis_line",
+        "text",
+        "enqueued_ts_ms",
+        "expires_ts_ms",
+    }
+
+
+def test_cancel_attention_job_is_session_and_token_isolated(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    watcher.save_json(
+        tmp_path / "queue.json",
+        {
+            "jobs": [
+                {
+                    "message_id": "a1",
+                    "session_key": "codex:s1",
+                    "phase": "attention",
+                    "attention_type": "input_required",
+                    "correlation_token": "token-1",
+                },
+                {
+                    "message_id": "a2",
+                    "session_key": "codex:s2",
+                    "phase": "attention",
+                    "attention_type": "input_required",
+                    "correlation_token": "token-1",
+                },
+            ]
+        },
+    )
+
+    assert watcher.cancel_attention_job(
+        "codex:s1", "input_required", "token-1"
+    ) is True
+
+    jobs = watcher.load_json(tmp_path / "queue.json", {})["jobs"]
+    assert [job["message_id"] for job in jobs] == ["a2"]
 
 
 def test_queue_log_is_private_and_trace_records_metadata(tmp_path, monkeypatch):

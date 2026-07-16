@@ -32,6 +32,38 @@ def test_dequeue_drops_stale_jobs(tmp_path, monkeypatch):
     assert audio_worker.dequeue_audio_job() is None
 
 
+def test_dequeue_drops_expired_attention_before_playback(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio_worker, "QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "lock")
+    now_ms = int(audio_worker.time.time() * 1000)
+    audio_worker.save_json_unlocked(
+        tmp_path / "queue.json",
+        {
+            "jobs": [
+                {
+                    "message_id": "expired",
+                    "session_key": "a",
+                    "phase": "attention",
+                    "attention_type": "input_required",
+                    "jarvis_line": "old input",
+                    "enqueued_ts_ms": now_ms - 100,
+                    "expires_ts_ms": now_ms,
+                },
+                {
+                    "message_id": "final",
+                    "session_key": "b",
+                    "phase": "final",
+                    "jarvis_line": "current final",
+                    "enqueued_ts_ms": now_ms,
+                },
+            ]
+        },
+    )
+
+    assert audio_worker.dequeue_audio_job()["message_id"] == "final"
+    assert audio_worker.dequeue_audio_job() is None
+
+
 def test_dequeue_prefers_final_from_another_session(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_worker, "QUEUE_PATH", tmp_path / "queue.json")
     monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "lock")

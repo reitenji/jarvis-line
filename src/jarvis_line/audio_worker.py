@@ -122,7 +122,15 @@ def update_json(path: Path, default, mutator, lock_path: Path | None = None) -> 
 
 def drop_stale_jobs(jobs: list[dict[str, Any]], now_ms: int) -> list[dict[str, Any]]:
     stale_before = now_ms - QUEUE_STALE_SECONDS * 1000
-    return [job for job in jobs if int(job.get("enqueued_ts_ms") or 0) >= stale_before]
+    return [
+        job
+        for job in jobs
+        if int(job.get("enqueued_ts_ms") or 0) >= stale_before
+        and (
+            not int(job.get("expires_ts_ms") or 0)
+            or int(job.get("expires_ts_ms") or 0) > now_ms
+        )
+    ]
 
 
 def dequeue_audio_job() -> dict[str, Any] | None:
@@ -133,6 +141,7 @@ def dequeue_audio_job() -> dict[str, Any] | None:
         job, remaining, last_session_key = dequeue_next(
             jobs,
             str(queue.get("last_session_key") or ""),
+            now_ms=now_ms,
         )
         queue["jobs"] = remaining
         queue["last_session_key"] = last_session_key
@@ -469,9 +478,20 @@ def run_worker() -> int:
         session_key = str(job.get("session_key") or "")
         message_id = str(job.get("message_id") or "")
         enqueued_ts_ms = int(job.get("enqueued_ts_ms") or 0)
+        expires_ts_ms = int(job.get("expires_ts_ms") or 0)
         queue_delay_ms = max(0, int(time.time() * 1000) - enqueued_ts_ms) if enqueued_ts_ms else 0
         if not line:
             append_log("job-skip empty-line")
+            continue
+        if expires_ts_ms and expires_ts_ms <= int(time.time() * 1000):
+            append_log(f"job-skip expired phase={phase}")
+            diagnostics.record_event(
+                "expired",
+                session_key=session_key,
+                message_id=message_id,
+                phase=phase,
+                attention_type=job.get("attention_type"),
+            )
             continue
         cfg = ks.load_config()
         context = diagnostics.runtime_log_context(
