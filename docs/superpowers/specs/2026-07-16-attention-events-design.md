@@ -7,10 +7,12 @@ agent requires immediate user action. Existing agent-authored commentary and
 final summaries remain unchanged. Attention Events share the existing
 single-worker queue and TTS backends, but receive higher scheduling priority.
 
-The first automatic adapter targets Codex `PermissionRequest` hooks. Other
-agents can submit `input_required` events through the public event protocol.
-Spoken permission messages are generated locally from safe request metadata;
-the feature does not add an LLM, cloud request, or continuously resident model.
+The automatic Codex integration targets both official `PermissionRequest`
+hooks and structured `request_user_input` calls already observed by the
+session watcher. Other agents can submit `input_required` events through the
+public event protocol. Spoken attention messages are generated locally from
+safe request metadata; the feature does not add an LLM, cloud request, or
+continuously resident model.
 
 ## Goals
 
@@ -77,7 +79,7 @@ The first release supports two event types:
 | Event | Source | Behavior |
 |---|---|---|
 | `permission_request` | Automatic Codex hook | Locally formats a safe request-specific line. |
-| `input_required` | Public adapter protocol | Speaks the adapter-provided short line. |
+| `input_required` | Automatic Codex session adapter or public adapter protocol | Locally summarizes a Codex question or speaks the adapter-provided short line. |
 
 Rate limits, API failures, compaction, context overflow, session greetings, and
 general tool failures are deliberately excluded. They can be evaluated later
@@ -157,6 +159,38 @@ approval UI and decision. Installation preserves unrelated hooks, creates the
 existing backup before the first mutation, and remains safe to run repeatedly.
 Uninstall removes only Jarvis Line hook entries.
 
+## Codex Plan And Input Adapter
+
+Plan mode has two distinct user-attention paths:
+
+- An operation that needs approval still arrives through the official
+  `PermissionRequest` hook. Its `permission_mode` may be `plan`, but it is
+  otherwise handled exactly like any other permission request.
+- A normal Plan-mode question uses Codex's `request_user_input` tool. Codex
+  does not currently expose a dedicated lifecycle hook for this call, so the
+  existing session watcher recognizes its structured `response_item` entry.
+
+The watcher accepts only a `response_item` whose payload type is
+`function_call`, whose exact name is `request_user_input`, and whose bounded
+JSON arguments contain a non-empty `questions` array. It uses only the first
+question's bounded `header` and `question` fields to classify and compose a
+short local line; option labels, descriptions, free-form answers, and the raw
+arguments are never copied to queue metadata or diagnostics. An invalid or
+future incompatible payload is ignored without affecting ordinary Jarvis Line
+processing.
+
+The call id is transformed into a short one-way correlation token. When the
+watcher later observes the matching `function_call_output` or
+`custom_tool_call_output`, it removes a still-queued `input_required` alert.
+The raw call id is not persisted. This avoids speaking a stale question after
+the user has already answered while keeping unrelated sessions isolated.
+
+This adapter is intentionally a compatibility layer over the transcript format
+the watcher already consumes, not a claimed Codex hook API. Captured minimal
+fixtures and fail-soft parsing tests guard the observed shape. If Codex changes
+that shape, automatic Plan-mode questions may temporarily become silent, but
+permission hooks and commentary/final speech continue to operate.
+
 The initial release does not install `PostToolUse` solely to cancel alerts.
 Doing so would start a Python hook for every supported tool call. Attention jobs
 instead have a short expiry and are checked again immediately before synthesis,
@@ -203,6 +237,12 @@ The formatter must not execute shell parsing through a shell. It may use
 `shlex`, `urllib.parse`, strict identifier normalization, and fixed template
 maps. Parse errors fall back safely.
 
+For `input_required`, the formatter normalizes the first question, removes
+URLs, code spans, control characters, and obvious secret assignments, and caps
+the content before placing it in a fixed language template. If no safe question
+text remains, it uses the generic equivalent of "Your input is needed to
+continue." It never speaks answer choices.
+
 ## Language Behavior
 
 Attention output follows the existing full-name `line_language` setting. Fixed
@@ -241,6 +281,8 @@ Scheduling rules:
   the actionable request is now more relevant.
 - A new final event removes all older jobs from the same session, including
   attention, because the session has completed.
+- A matching Codex input-tool result removes a still-queued `input_required`
+  job through its one-way correlation token.
 - Commentary never removes attention or final jobs.
 - When the queue is full, the oldest lowest-priority job is removed first.
 - Attention jobs expire after 30 seconds. Expiry is enforced both while loading
@@ -338,6 +380,8 @@ README and command documentation cover:
 - the privacy boundary
 - `emit --phase attention` usage
 - installation, status, doctor, and synthetic-test behavior
+- the distinction between Plan-mode permission requests and ordinary
+  `request_user_input` questions
 
 ## Testing
 
@@ -353,6 +397,8 @@ Python tests cover:
 - queue overflow, coalescing, replacement, and expiry
 - quiet hours, disabled attention, disabled speech, and speak-mode interaction
 - Codex PermissionRequest mapping
+- Codex Plan-mode `request_user_input` detection, safe question formatting,
+  malformed transcript compatibility, and matching-result cancellation
 - no stdout and exit `0` on malformed hook input
 - idempotent hook install/uninstall preserving unrelated entries
 - hooks-feature migration from `codex_hooks` to `hooks` without disturbing
