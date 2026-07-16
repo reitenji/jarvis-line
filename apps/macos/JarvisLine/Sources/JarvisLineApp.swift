@@ -684,7 +684,14 @@ struct JarvisLinePanel: View {
                 set: { model.setDockIconVisible($0) }
             ))
             Toggle("Speech enabled", isOn: $model.config.speechEnabled)
+            Toggle("Attention alerts", isOn: $model.config.attentionEnabled)
+                .disabled(!model.config.speechEnabled || model.config.speakMode == "off")
             Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
+
+            Text("With the Codex hook installed, permission prompts and Plan-mode questions are detected automatically; other agents require attention protocol events.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Picker("Speak mode", selection: $model.config.speakMode) {
                 ForEach(model.configContract.stringOptions("speak_mode", fallback: JarvisConfigDraft.speakModeOptions), id: \.self) { value in

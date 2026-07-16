@@ -71,20 +71,28 @@ struct SetupCurrentValues: Decodable, Sendable {
     var language: String
     let tts: String
     let speakMode: String
+    let attentionEnabled: Bool
 
-    static let defaults = SetupCurrentValues(language: "", tts: "system", speakMode: "final_only")
+    static let defaults = SetupCurrentValues(
+        language: "",
+        tts: "system",
+        speakMode: "final_only",
+        attentionEnabled: false
+    )
 
     private enum CodingKeys: String, CodingKey {
         case language
         case lineLanguage
         case tts
         case speakMode
+        case attentionEnabled
     }
 
-    init(language: String, tts: String, speakMode: String) {
+    init(language: String, tts: String, speakMode: String, attentionEnabled: Bool) {
         self.language = language
         self.tts = tts
         self.speakMode = speakMode
+        self.attentionEnabled = attentionEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -94,6 +102,7 @@ struct SetupCurrentValues: Decodable, Sendable {
             ?? ""
         tts = try container.decodeIfPresent(String.self, forKey: .tts) ?? "system"
         speakMode = try container.decodeIfPresent(String.self, forKey: .speakMode) ?? "final_only"
+        attentionEnabled = try container.decodeIfPresent(Bool.self, forKey: .attentionEnabled) ?? false
     }
 }
 
@@ -106,6 +115,7 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
     var speakMode: String
     var agentTarget: String
     var instructionScope: String
+    var attentionEnabled: Bool
     var installKokoro: Bool
     var acceptKokoroLicense: Bool
     var installCodexHook: Bool
@@ -120,6 +130,7 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
         speakMode: String,
         agentTarget: String,
         instructionScope: String,
+        attentionEnabled: Bool,
         installKokoro: Bool,
         acceptKokoroLicense: Bool,
         installCodexHook: Bool,
@@ -133,6 +144,7 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
         self.speakMode = speakMode
         self.agentTarget = agentTarget
         self.instructionScope = instructionScope
+        self.attentionEnabled = attentionEnabled
         self.installKokoro = installKokoro
         self.acceptKokoroLicense = acceptKokoroLicense
         self.installCodexHook = installCodexHook
@@ -147,6 +159,7 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
         speakMode: "final_only",
         agentTarget: "agents",
         instructionScope: "project",
+        attentionEnabled: false,
         installKokoro: false,
         acceptKokoroLicense: false,
         installCodexHook: false,
@@ -164,6 +177,7 @@ struct SetupPlanPayload: Codable, Equatable, Sendable {
         language = inspection.current.language
         tts = selected?.id ?? "system"
         speakMode = inspection.current.speakMode
+        attentionEnabled = inspection.current.attentionEnabled
         installKokoro = false
         acceptKokoroLicense = false
     }
