@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import asyncio
 import argparse
 import json
 import os
@@ -121,6 +120,8 @@ def spawn_player(sound_path: Path, volume: float) -> None:
 
 
 def play_stream(engine: Any, text: str, voice, lang: str, speed: float, volume: float) -> dict[str, float | None]:
+    import asyncio
+
     deps = kokoro_deps()
     np = deps["np"]
     sd = deps["sd"]
@@ -162,6 +163,8 @@ def play_stream(engine: Any, text: str, voice, lang: str, speed: float, volume: 
 
 
 def warm_stream(engine: Any, text: str, voice, lang: str, speed: float) -> dict[str, float | None]:
+    import asyncio
+
     started = time.perf_counter()
 
     async def _run() -> dict[str, float | None]:

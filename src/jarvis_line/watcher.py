@@ -7,7 +7,6 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime, timedelta
 from contextlib import contextmanager
@@ -195,18 +194,24 @@ def load_json(path: Path, default):
 
 
 def save_json_unlocked(path: Path, data) -> None:
+    tmp_path = path.with_name(
+        f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(data, ensure_ascii=False, indent=2)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as f:
+        descriptor = os.open(
+            tmp_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
             f.write(payload)
             f.write("\n")
-            tmp_name = f.name
-        os.replace(tmp_name, path)
+        os.replace(tmp_path, path)
     except Exception:
         try:
-            if "tmp_name" in locals():
-                Path(tmp_name).unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
         pass
