@@ -51,5 +51,5 @@ more Windows/Linux real-device reports, a notarized macOS distribution path,
 and a period without high-impact queue or watcher regressions.
 
 Please open a reviewed support report when you find a platform-specific rough
-edge. See [the issue guide](../README.md#support-reports) and feel free to open an
-issue when the behavior is reproducible.
+edge. See [the issue guide](../README.md#help-and-community) and feel free to
+open an issue when the behavior is reproducible.
