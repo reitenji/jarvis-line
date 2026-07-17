@@ -4,6 +4,37 @@ import types
 from jarvis_line import watcher
 
 
+def test_save_json_unlocked_closes_descriptor_when_fdopen_fails(tmp_path, monkeypatch):
+    real_open = watcher.os.open
+    real_close = watcher.os.close
+    opened = []
+    closed = []
+
+    def recording_open(*args, **kwargs):
+        descriptor = real_open(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor
+
+    def recording_close(descriptor):
+        closed.append(descriptor)
+        real_close(descriptor)
+
+    monkeypatch.setattr(watcher.os, "open", recording_open)
+    monkeypatch.setattr(watcher.os, "close", recording_close)
+    monkeypatch.setattr(
+        watcher.os,
+        "fdopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("fdopen failed")),
+    )
+
+    watcher.save_json_unlocked(tmp_path / "state.json", {"ok": True})
+
+    leaked = [descriptor for descriptor in opened if descriptor not in closed]
+    for descriptor in leaked:
+        real_close(descriptor)
+    assert leaked == []
+
+
 def test_custom_prefix_and_trim(monkeypatch):
     monkeypatch.setattr(
         watcher,

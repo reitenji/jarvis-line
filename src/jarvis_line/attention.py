@@ -238,7 +238,8 @@ def _permission_line(intent: _PermissionIntent, language: str) -> str:
         if intent.category == "shell":
             return "Bir shell komutu için izin gerekiyor."
         action = intent.tool_label if intent.category == "generic_tool" else _ACTIONS[language][intent.category]
-        return f"{action.capitalize()} için izin gerekiyor."
+        action = action[:1].upper() + action[1:]
+        return f"{action} için izin gerekiyor."
     if language == "French":
         if intent.category == "network" and intent.detail:
             return f"Une autorisation est nécessaire pour se connecter à {intent.detail}."

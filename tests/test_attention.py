@@ -61,6 +61,16 @@ def test_permission_formatter_classifies_tools_without_arguments(
     assert "do-not-speak" not in result.line
 
 
+def test_turkish_permission_formatter_preserves_github_branding():
+    result = format_permission_request(
+        "mcp__github__create_pull_request",
+        {},
+        "Turkish",
+    )
+
+    assert result.line == "GitHub pull request oluşturmak için izin gerekiyor."
+
+
 def test_malformed_shell_request_uses_safe_fallback():
     result = format_permission_request("Bash", {"command": "'unterminated secret"}, "English")
 

@@ -197,6 +197,7 @@ def save_json_unlocked(path: Path, data) -> None:
     tmp_path = path.with_name(
         f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
     )
+    descriptor: int | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(data, ensure_ascii=False, indent=2)
@@ -205,11 +206,18 @@ def save_json_unlocked(path: Path, data) -> None:
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
             0o600,
         )
-        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = None
+        with stream as f:
             f.write(payload)
             f.write("\n")
         os.replace(tmp_path, path)
     except Exception:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:
