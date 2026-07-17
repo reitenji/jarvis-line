@@ -168,6 +168,27 @@ def test_parse_input_request_accepts_only_observed_structured_shape():
     assert not hasattr(request, "options")
 
 
+def test_parse_input_request_ignores_auto_resolving_questions():
+    payload = {
+        "type": "function_call",
+        "name": "request_user_input",
+        "call_id": "call-optional",
+        "arguments": json.dumps(
+            {
+                "autoResolutionMs": 60_000,
+                "questions": [
+                    {
+                        "header": "Preference",
+                        "question": "Which option do you prefer?",
+                    }
+                ],
+            }
+        ),
+    }
+
+    assert parse_input_request_payload(payload) is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

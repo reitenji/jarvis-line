@@ -20,7 +20,12 @@ from jarvis_line.attention import (
     format_input_required,
     parse_input_request_payload,
 )
-from jarvis_line.queue_policy import is_attention_phase, schedule_job
+from jarvis_line.queue_policy import (
+    attention_cancellation_key,
+    is_attention_phase,
+    prune_attention_cancellations,
+    schedule_job,
+)
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -50,6 +55,7 @@ AUDIO_WORKER_STALE_SECONDS = 120
 AUDIO_QUEUE_STALE_SECONDS = 90
 AUDIO_QUEUE_MAX_JOBS = 8
 ATTENTION_TTL_SECONDS = 30
+ATTENTION_CANCELLATION_MAX_ENTRIES = 64
 SESSION_RECOVERY_WINDOW_SECONDS = 5 * 60
 CODEX_SESSION_ID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -670,6 +676,14 @@ def cancel_attention_job(
 ) -> bool:
     if not session_key or attention_type not in ATTENTION_TYPES or not correlation_token:
         return False
+    cancellation_key = attention_cancellation_key(
+        session_key,
+        attention_type,
+        correlation_token,
+    )
+    if not cancellation_key:
+        return False
+    now_ms = int(time.time() * 1000)
 
     def mutate(queue):
         jobs = list(queue.get("jobs") or [])
@@ -683,20 +697,27 @@ def cancel_attention_job(
                 and job.get("correlation_token") == correlation_token
             )
         ]
+        cancellations = prune_attention_cancellations(
+            queue.get("attention_cancellations"),
+            now_ms - AUDIO_QUEUE_STALE_SECONDS * 1000,
+            ATTENTION_CANCELLATION_MAX_ENTRIES - 1,
+        )
+        cancellations[cancellation_key] = now_ms
         queue["jobs"] = kept
-        queue["updated_ts_ms"] = int(time.time() * 1000)
+        queue["attention_cancellations"] = cancellations
+        queue["updated_ts_ms"] = now_ms
         return len(kept) != len(jobs)
 
     removed = bool(update_json(AUDIO_QUEUE_PATH, {"jobs": []}, mutate))
-    if removed:
-        append_log(f"attention-cancelled type={attention_type}")
-        diagnostics.record_event(
-            "cancelled",
-            session_key=session_key,
-            phase="attention",
-            attention_type=attention_type,
-        )
-    return removed
+    append_log(f"attention-cancelled type={attention_type} queued={str(removed).lower()}")
+    diagnostics.record_event(
+        "cancelled",
+        session_key=session_key,
+        phase="attention",
+        attention_type=attention_type,
+        queued=removed,
+    )
+    return True
 
 
 def audio_worker_is_healthy(state: dict[str, Any] | None = None) -> bool:

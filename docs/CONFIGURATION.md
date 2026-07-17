@@ -72,10 +72,11 @@ an older configuration does not contain the key. Guided setup recommends it for
 a new Codex setup but does not silently enable it for an existing install.
 
 When enabled, Codex `PermissionRequest` hooks produce locally formatted
-permission alerts. Structured Plan-mode `request_user_input` calls produce
-input-required alerts through the fail-soft session adapter. Claude, Gemini,
-and other integrations must submit an explicit `attention` event through the
-public protocol.
+permission alerts. Blocking Plan-mode `request_user_input` calls produce
+input-required alerts through the fail-soft session adapter; questions with an
+automatic resolution timer remain silent. Claude, Gemini, and other
+integrations must submit an explicit `attention` event through the public
+protocol.
 
 Attention uses the same TTS, volume, maximum length, quiet-time, queue, and
 resource settings as status speech. `final_only` still allows enabled attention

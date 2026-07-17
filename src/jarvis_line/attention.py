@@ -351,6 +351,13 @@ def parse_input_request_payload(payload: object) -> InputRequest | None:
         return None
     if not isinstance(parsed, Mapping):
         return None
+    auto_resolution_ms = parsed.get("autoResolutionMs")
+    if (
+        isinstance(auto_resolution_ms, (int, float))
+        and not isinstance(auto_resolution_ms, bool)
+        and auto_resolution_ms > 0
+    ):
+        return None
     questions = parsed.get("questions")
     if not isinstance(questions, list) or not questions or not isinstance(questions[0], Mapping):
         return None

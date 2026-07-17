@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 
 FINAL_PHASES = {"final", "final_answer", "final-response", "final_response"}
 ATTENTION_PHASES = {"attention"}
+ATTENTION_CANCELLATION_KEY_CHARS = 24
 
 
 def is_final_phase(phase: str) -> bool:
@@ -13,6 +15,40 @@ def is_final_phase(phase: str) -> bool:
 
 def is_attention_phase(phase: str) -> bool:
     return str(phase or "").strip().lower() in ATTENTION_PHASES
+
+
+def attention_cancellation_key(
+    session_key: object,
+    attention_type: object,
+    correlation_token: object,
+) -> str | None:
+    parts = [
+        str(value or "").strip()
+        for value in (session_key, attention_type, correlation_token)
+    ]
+    if not all(parts):
+        return None
+    payload = "\0".join(parts).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:ATTENTION_CANCELLATION_KEY_CHARS]
+
+
+def prune_attention_cancellations(
+    cancellations: object,
+    stale_before_ms: int,
+    max_entries: int,
+) -> dict[str, int]:
+    if not isinstance(cancellations, dict):
+        return {}
+    active: list[tuple[str, int]] = []
+    for key, raw_timestamp in cancellations.items():
+        try:
+            timestamp = int(raw_timestamp)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(key, str) and key and timestamp >= stale_before_ms:
+            active.append((key, timestamp))
+    active.sort(key=lambda item: item[1], reverse=True)
+    return dict(active[:max_entries])
 
 
 def phase_priority(phase: object) -> int:

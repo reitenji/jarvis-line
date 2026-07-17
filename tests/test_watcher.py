@@ -230,6 +230,47 @@ def test_process_line_queues_structured_plan_mode_input_without_options(monkeypa
     assert "do-not-store" not in repr(queued)
 
 
+def test_process_line_ignores_auto_resolving_plan_mode_input(monkeypatch):
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {
+            "attention_enabled": True,
+            "speak_mode": "final_only",
+            "line_language": "English",
+        },
+    )
+    queued = []
+    monkeypatch.setattr(
+        watcher,
+        "queue_jarvis_line",
+        lambda *args, **kwargs: queued.append((args, kwargs)) or True,
+    )
+    event = {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "request_user_input",
+            "call_id": "call-optional-1",
+            "arguments": json.dumps(
+                {
+                    "autoResolutionMs": 60_000,
+                    "questions": [
+                        {
+                            "header": "Preference",
+                            "question": "Which option do you prefer?",
+                        }
+                    ],
+                }
+            ),
+        },
+    }
+
+    watcher.process_line(json.dumps(event), "codex-session-1")
+
+    assert queued == []
+
+
 def test_process_line_cancels_matching_plan_mode_input_result(monkeypatch):
     cancelled = []
     monkeypatch.setattr(
@@ -611,6 +652,50 @@ def test_cancel_attention_job_is_session_and_token_isolated(tmp_path, monkeypatc
 
     jobs = watcher.load_json(tmp_path / "queue.json", {})["jobs"]
     assert [job["message_id"] for job in jobs] == ["a2"]
+
+
+def test_cancel_attention_job_records_in_flight_tombstone(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    watcher.save_json(tmp_path / "queue.json", {"jobs": []})
+
+    assert watcher.cancel_attention_job(
+        "codex:s1", "input_required", "token-1"
+    ) is True
+
+    queue = watcher.load_json(tmp_path / "queue.json", {})
+    assert len(queue["attention_cancellations"]) == 1
+    assert "codex:s1" not in repr(queue["attention_cancellations"])
+    assert "token-1" not in repr(queue["attention_cancellations"])
+
+
+def test_cancel_attention_job_keeps_new_tombstone_at_capacity(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher.time, "time", lambda: 100.0)
+    watcher.save_json(
+        tmp_path / "queue.json",
+        {
+            "jobs": [],
+            "attention_cancellations": {
+                f"existing-{index}": 100_000
+                for index in range(watcher.ATTENTION_CANCELLATION_MAX_ENTRIES)
+            },
+        },
+    )
+
+    assert watcher.cancel_attention_job(
+        "codex:s1", "input_required", "token-1"
+    ) is True
+
+    cancellations = watcher.load_json(tmp_path / "queue.json", {})[
+        "attention_cancellations"
+    ]
+    expected_key = watcher.attention_cancellation_key(
+        "codex:s1", "input_required", "token-1"
+    )
+    assert len(cancellations) == watcher.ATTENTION_CANCELLATION_MAX_ENTRIES
+    assert expected_key in cancellations
 
 
 def test_queue_log_is_private_and_trace_records_metadata(tmp_path, monkeypatch):

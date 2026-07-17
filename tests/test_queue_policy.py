@@ -1,4 +1,9 @@
-from jarvis_line.queue_policy import dequeue_next, schedule_job
+from jarvis_line.queue_policy import (
+    attention_cancellation_key,
+    dequeue_next,
+    prune_attention_cancellations,
+    schedule_job,
+)
 
 
 def make_job(message_id, session, phase, ts, **extra):
@@ -9,6 +14,31 @@ def make_job(message_id, session, phase, ts, **extra):
         "jarvis_line": message_id,
         "enqueued_ts_ms": ts,
         **extra,
+    }
+
+
+def test_attention_cancellation_key_is_private_and_deterministic():
+    first = attention_cancellation_key("private-session", "input_required", "secret-token")
+
+    assert first == attention_cancellation_key(
+        "private-session", "input_required", "secret-token"
+    )
+    assert len(first) == 24
+    assert "private-session" not in first
+    assert "secret-token" not in first
+
+
+def test_attention_cancellations_are_stale_pruned_and_bounded():
+    cancellations = {
+        "stale": 10,
+        "old": 100,
+        "middle": 200,
+        "new": 300,
+    }
+
+    assert prune_attention_cancellations(cancellations, 100, 2) == {
+        "new": 300,
+        "middle": 200,
     }
 
 
