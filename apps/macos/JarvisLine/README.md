@@ -19,9 +19,10 @@ The assistant guides you through:
 1. Full spoken language name
 2. Language- and platform-compatible TTS backend
 3. Final-only, commentary + final, or disabled speech
-4. Codex, Claude, Gemini, or generic agent target
-5. Project or global instruction scope
-6. One reviewed Apply action
+4. Optional attention alerts for permissions and input requests
+5. Codex, Claude, Gemini, or generic agent target
+6. Project or global instruction scope
+7. One reviewed Apply action
 
 Kokoro download/install requires explicit license consent. Project scope uses a
 native folder picker instead of a free-form path. Network work and voice tests
@@ -90,7 +91,7 @@ will close older running copies from build or DMG staging folders.
 - Visible app and CLI version in the header
 - Controls: start, stop, restart, repair, test voice
 - Regular Dock and minimal app-menu behavior while keeping the menu bar status icon
-- Separate Settings window: controlled presets for speech, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and a simple GitHub update check interval
+- Separate Settings window: controlled presets for speech, attention alerts, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and a simple GitHub update check interval
 - Settings actions stay in a bottom action bar instead of being mixed into the settings form
 - Quick access: config file, watcher log, audio worker log
 - Hook install appears only when the Codex hook is not already installed

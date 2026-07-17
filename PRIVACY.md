@@ -13,6 +13,12 @@ For Codex integration, the watcher reads session output under
 It does not need to send session transcripts to the Jarvis Line project or its
 maintainers.
 
+When optional attention alerts are enabled, the Codex `PermissionRequest` hook
+reads the bounded tool name and input needed for local intent classification.
+The session watcher recognizes exact structured `request_user_input` calls and
+uses only the first question's bounded header and question. Raw tool arguments,
+question options, user answers, and call IDs are not retained.
+
 Other agent integrations can submit a short normalized event with
 `jarvis-line emit`. Those adapters control what text they provide.
 
@@ -34,6 +40,10 @@ Queue and cache files can contain the short line that will be spoken. Normal
 logs avoid full content, but enabling `debug_content_logging` can write spoken
 text to local logs. Leave that option disabled unless you are actively
 diagnosing a problem.
+
+Attention queue entries contain the safe spoken line, event type, expiry time,
+and optionally a short one-way correlation token used to cancel an already
+answered request. They do not contain the original Codex request or answer.
 
 Temporary Kokoro audio is deleted after playback by default. A crash or forced
 shutdown can leave temporary files behind under `~/.jarvis-line/tts/generated`.
@@ -68,6 +78,7 @@ does not upload the report for you.
 ## Your Controls
 
 - Pause speech with `jarvis-line config set speech_enabled false`.
+- Disable attention only with `jarvis-line config set attention_enabled false`.
 - Stop local processes with `jarvis-line stop`.
 - Clear pending lines with `jarvis-line queue clear`.
 - Clear lifecycle diagnostics with `jarvis-line trace --clear`.

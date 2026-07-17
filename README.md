@@ -41,7 +41,8 @@ jarvis-line tts test --text "Jarvis line test is ready."
 ```
 
 `jarvis-line setup` asks for language, compatible TTS, speech behavior, agent,
-instruction scope, hook installation, runtime start, and an optional voice test.
+instruction scope, optional attention alerts, hook installation, runtime start,
+and an optional voice test.
 It shows one review screen and requires an explicit Apply confirmation before
 changing anything. The generic agent target is selected by default; the Codex
 hook remains off unless you choose Codex and enable it. For a non-interactive
@@ -61,6 +62,7 @@ Recommended defaults:
 ## Highlights
 
 - Speaks short `Jarvis line:` summaries from agent responses.
+- Optionally speaks safe, request-specific attention alerts for Codex permissions and questions.
 - Uses a single audio queue so multiple sessions do not talk over each other.
 - Tracks the latest message with a cache instead of scanning huge session logs every time.
 - Uses Kokoro as the recommended local voice engine.
@@ -90,7 +92,7 @@ Jarvis Line is not a full transcript narrator. It is designed for short spoken a
 agent response or hook event
   -> agent adapter / Codex session watcher
   -> normalized Jarvis Line event
-  -> latest-message cache
+  -> latest-message cache (status events)
   -> audio queue
   -> single audio worker
   -> selected TTS engine
@@ -98,13 +100,30 @@ agent response or hook event
 
 The important part is the queue. Even if multiple sessions finish close together, Jarvis Line speaks one line at a time.
 
-Codex can use the bundled session watcher and notify hook. Other agents can submit the same normalized event directly:
+Codex can use the bundled session watcher and hooks. Other agents can submit the same normalized event directly:
 
 ```bash
 jarvis-line emit --source claude --session session-123 --phase commentary --line "The tests are running."
 ```
 
 See [docs/EVENT-PROTOCOL.md](docs/EVENT-PROTOCOL.md) for JSON stdin and adapter rules.
+
+### Attention Alerts
+
+Attention alerts are opt-in and default to off for existing configurations.
+When enabled, Codex permission dialogs are received through the official
+`PermissionRequest` hook. A normal Plan-mode question is detected from the
+structured `request_user_input` session event and becomes an `input_required`
+alert; merely entering Plan mode or thinking through a plan does not trigger an
+alert. This session parser is fail-soft, so an incompatible future Codex event
+shape is ignored without breaking commentary or final speech.
+
+The formatter runs locally and queues only a bounded spoken summary. Raw tool
+arguments, answer choices, answers, and call IDs are not persisted. Claude,
+Gemini, and other agents can use attention alerts by emitting an explicit
+versioned event; Jarvis Line does not claim automatic permission detection for
+those agents yet. See [the event protocol](docs/EVENT-PROTOCOL.md) for the
+adapter contract and [the privacy guide](PRIVACY.md) for the storage boundary.
 
 ## Quick Start
 
@@ -192,7 +211,10 @@ Paste the printed instruction block into `AGENTS.md` after reviewing it.
 
 ## Agent Instructions
 
-Jarvis Line only speaks lines that the agent explicitly emits. For it to work, the Jarvis Line instruction block must be present in the Markdown instruction file your agent actually reads.
+Normal commentary and final status speech uses lines that the agent explicitly
+emits. The optional attention flow above is the narrow exception. For status
+speech to work, the Jarvis Line instruction block must be present in the
+Markdown instruction file your agent actually reads.
 
 Jarvis Line does not edit your Markdown instruction files by default. Choose the scope first:
 
@@ -264,6 +286,7 @@ jarvis-line config set fallback_tts system
 jarvis-line config set audio_worker_idle_exit_seconds 60
 jarvis-line config set audio_worker_max_rss_mb 512
 jarvis-line config set speech_enabled false
+jarvis-line config set attention_enabled true
 ```
 
 For default config JSON, schema commands, profiles, prefixes, manual editing rules, and migration notes, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
@@ -285,6 +308,7 @@ Top-level commands shown by `jarvis-line --help`:
 | `jarvis-line restart` | Restarts the watcher and audio worker runtime |
 | `jarvis-line queue` | Inspects or clears queued spoken lines |
 | `jarvis-line logs` | Prints redacted watcher and audio worker logs |
+| `jarvis-line emit` | Submits a versioned commentary, final, or attention event |
 | `jarvis-line kokoro` | Downloads/verifies pinned official assets, checks readiness, installs dependencies, or configures model paths |
 | `jarvis-line support-report` | Creates reviewed Markdown for GitHub issues |
 | `jarvis-line install` | Installs hooks for supported agents; currently Codex hooks are supported |
@@ -458,6 +482,7 @@ Release-ready project pieces:
 - privacy-safe runtime trace and native diagnostics
 - final-safe, session-fair queue scheduling
 - agent-neutral versioned event protocol
+- opt-in, content-aware Codex permission and input-required attention alerts
 - shared CLI/macOS configuration contract
 - update check/apply/install/configure commands
 - pinned and atomic Kokoro asset download/verification
@@ -481,7 +506,7 @@ Release caveat:
 A Preview macOS menu bar manager lives in [apps/macos/JarvisLine](apps/macos/JarvisLine).
 It keeps the CLI as the core engine and provides native controls for status,
 start/stop/restart, repair, test voice, hook install, settings, config file
-access, structured runtime diagnostics, and logs.
+access, attention alerts, structured runtime diagnostics, and logs.
 
 The menu bar panel is intentionally small: it shows current runtime health and
 fast day-to-day actions. Common config changes open in a separate Settings
@@ -520,7 +545,7 @@ The packaging script also writes `dist/JarvisLine-macOS.dmg.sha256`. CI mounts t
 
 ## Validation Status
 
-The current release has been exercised locally on macOS with the Jarvis Line CLI, Codex hook flow, queue handling, Kokoro configuration checks, system TTS fallback, instruction generation, support reports, unit tests, and smoke tests.
+The current release has been exercised locally on macOS with the Jarvis Line CLI, Codex hook flow, queue handling, Kokoro configuration checks, system TTS fallback, instruction generation, support reports, unit tests, and smoke tests. Unreleased attention-alert behavior is verified on the feature branch before it enters a tagged release.
 
 Some combinations are implemented but still need more real-world validation:
 
