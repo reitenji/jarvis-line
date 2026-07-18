@@ -651,8 +651,9 @@ def _scan_generated_audio(
         for entry in entries:
             if not entry.name.startswith(GENERATED_PREFIXES):
                 continue
+            path = Path(entry.path)
             try:
-                info = entry.stat(follow_symlinks=False)
+                info = path.lstat()
             except FileNotFoundError:
                 report.categories[category_name].skipped_files += 1
                 continue
@@ -665,7 +666,7 @@ def _scan_generated_audio(
             if now - info.st_mtime <= minimum_age:
                 continue
             _process_candidate(
-                _candidate_from_stat(Path(entry.path), category_name, info),
+                _candidate_from_stat(path, category_name, info),
                 report,
                 delete=delete,
             )
@@ -716,8 +717,9 @@ def _scan_hooks(
             else:
                 continue
 
+            path = Path(entry.path)
             try:
-                info = entry.stat(follow_symlinks=False)
+                info = path.lstat()
             except FileNotFoundError:
                 report.categories[category_name].skipped_files += 1
                 continue
@@ -736,7 +738,6 @@ def _scan_hooks(
             if now - info.st_mtime <= minimum_age:
                 continue
 
-            path = Path(entry.path)
             if expect_directory:
                 candidate = _candidate_from_stat(
                     path,

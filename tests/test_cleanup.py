@@ -805,10 +805,13 @@ def test_identity_is_rechecked_immediately_before_unlink(tmp_path, monkeypatch):
     age(candidate, 601)
     original_lstat = Path.lstat
     swapped = False
+    candidate_lstat_calls = 0
 
     def lstat(path):
-        nonlocal swapped
-        if path == candidate and not swapped:
+        nonlocal candidate_lstat_calls, swapped
+        if path == candidate:
+            candidate_lstat_calls += 1
+        if path == candidate and candidate_lstat_calls == 2 and not swapped:
             swapped = True
             path.unlink()
             path.write_bytes(b"replacement")
