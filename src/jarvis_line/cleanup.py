@@ -1187,14 +1187,15 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
             if directory is None:
                 raise OSError("invalid cleanup lock")
             owner = _read_lock_owner(directory)
-            if (
-                owner is None
-                or owner.pid != os.getpid()
-                or owner.created_ts != int(now)
-                or created_owner is None
-                or not _same_identity(created_owner, owner_path.lstat())
+            if owner is None:
+                raise OSError("unreadable cleanup lock owner")
+            if owner.pid != os.getpid() or owner.created_ts != int(now):
+                raise OSError("unexpected cleanup lock owner")
+            if created_owner is None or not _same_identity(
+                created_owner,
+                owner_path.lstat(),
             ):
-                raise OSError("invalid cleanup lock owner")
+                raise OSError("changed cleanup lock owner")
             acquired = _AcquiredCleanupLock(directory=directory, owner=owner)
             if not _same_directory_object(hooks_root, paths.hooks_dir.lstat()):
                 _release_cleanup_lock(acquired)
