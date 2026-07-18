@@ -1,10 +1,11 @@
 import argparse
 import hashlib
+import json
 import types
 
 import pytest
 
-from jarvis_line import cli
+from jarvis_line import cleanup, cli
 
 
 def test_validate_rejects_macos_kokoro_fields():
@@ -1024,3 +1025,175 @@ def test_language_sync_can_apply_tts_for_turkish(tmp_path, monkeypatch):
 
     assert cfg["line_language"] == "Turkish"
     assert cfg["tts"] == "command"
+
+
+def cleanup_report(
+    *,
+    mode="status",
+    eligible_files=4,
+    eligible_bytes=48 * 1024 * 1024,
+    removed_files=0,
+    removed_bytes=0,
+    skipped_files=2,
+    errors=None,
+    already_running=False,
+    last_success_at=1_700_000_000,
+):
+    report = cleanup.CleanupReport(
+        mode=mode,
+        errors=list(errors or []),
+        already_running=already_running,
+        last_success_at=last_success_at,
+    )
+    category = report.categories["generated_audio"]
+    category.eligible_files = eligible_files
+    category.eligible_bytes = eligible_bytes
+    category.removed_files = removed_files
+    category.removed_bytes = removed_bytes
+    category.skipped_files = skipped_files
+    category.error_count = len(report.errors)
+    return report
+
+
+def test_cleanup_parser_registers_status_and_run_json_commands():
+    parser = cli.build_parser()
+
+    status_args = parser.parse_args(["cleanup", "status", "--json"])
+    run_args = parser.parse_args(["cleanup", "run"])
+
+    assert status_args.func is cli.cleanup_command
+    assert status_args.cleanup_command == "status"
+    assert status_args.json_output is True
+    assert run_args.func is cli.cleanup_command
+    assert run_args.cleanup_command == "run"
+    assert run_args.json_output is False
+
+
+def test_cleanup_status_json_uses_stable_public_report(monkeypatch, capsys):
+    report = cleanup_report()
+    monkeypatch.setattr(cli.cleanup, "inspect", lambda: report)
+
+    args = cli.build_parser().parse_args(["cleanup", "status", "--json"])
+
+    assert args.func(args) == 0
+    assert json.loads(capsys.readouterr().out) == report.to_dict()
+
+
+def test_cleanup_status_human_output_reports_exact_totals(monkeypatch, capsys):
+    report = cleanup_report()
+    monkeypatch.setattr(cli.cleanup, "inspect", lambda: report)
+
+    args = cli.build_parser().parse_args(["cleanup", "status"])
+
+    assert args.func(args) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Jarvis Line cleanup status",
+        "Eligible: 4 files",
+        "Reclaimable: 48.0 MB",
+        "Skipped: 2 files",
+        "Errors: 0",
+        "Last successful cleanup: 2023-11-14T22:13:20Z",
+    ]
+
+
+def test_cleanup_run_human_output_reports_removed_totals(monkeypatch, capsys):
+    report = cleanup_report(
+        mode="run",
+        eligible_files=5,
+        eligible_bytes=52 * 1024 * 1024,
+        removed_files=3,
+        removed_bytes=48 * 1024 * 1024,
+        skipped_files=2,
+    )
+    monkeypatch.setattr(cli.cleanup, "run", lambda: report)
+
+    args = cli.build_parser().parse_args(["cleanup", "run"])
+
+    assert args.func(args) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Jarvis Line cleanup run",
+        "Eligible: 5 files",
+        "Reclaimable: 52.0 MB",
+        "Removed: 3 files",
+        "Reclaimed: 48.0 MB",
+        "Skipped: 2 files",
+        "Errors: 0",
+        "Last successful cleanup: 2023-11-14T22:13:20Z",
+    ]
+
+
+def test_cleanup_partial_errors_return_one_and_print_safe_details(monkeypatch, capsys):
+    report = cleanup_report(
+        mode="run",
+        errors=[{"category": "generated_audio", "name": "kokoro_failed.wav"}],
+    )
+    monkeypatch.setattr(cli.cleanup, "run", lambda: report)
+
+    args = cli.build_parser().parse_args(["cleanup", "run"])
+
+    assert args.func(args) == 1
+    output = capsys.readouterr().out
+    assert "Errors: 1" in output
+    assert "Error: generated_audio/kokoro_failed.wav" in output
+    assert "/Users/" not in output
+
+
+def test_cleanup_already_running_is_safe_no_op(monkeypatch, capsys):
+    report = cleanup_report(mode="run", already_running=True)
+    monkeypatch.setattr(cli.cleanup, "run", lambda: report)
+
+    args = cli.build_parser().parse_args(["cleanup", "run"])
+
+    assert args.func(args) == 0
+    assert "Cleanup already running; no action taken." in capsys.readouterr().out
+
+
+def test_cleanup_human_output_handles_out_of_range_success_time(monkeypatch, capsys):
+    report = cleanup_report(last_success_at=10**100)
+    monkeypatch.setattr(cli.cleanup, "inspect", lambda: report)
+
+    args = cli.build_parser().parse_args(["cleanup", "status"])
+
+    assert args.func(args) == 0
+    assert "Last successful cleanup: unknown" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("cleanup_enabled", "1"),
+        ("cleanup_enabled", "yes"),
+        ("cleanup_interval_hours", "23"),
+        ("cleanup_interval_hours", "169"),
+        ("cleanup_interval_hours", "24.0"),
+        ("cleanup_interval_hours", "true"),
+    ],
+)
+def test_config_set_rejects_invalid_cleanup_values_before_saving(
+    key, value, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "load_effective_config", lambda: {"tts": "system"})
+    monkeypatch.setattr(cli, "save_json", lambda *_args: pytest.fail("must not save"))
+
+    assert cli.config_set(argparse.Namespace(key=key, value=value)) == 1
+    assert f"Invalid value for {key}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("cleanup_enabled", "true", True),
+        ("cleanup_enabled", "false", False),
+        ("cleanup_interval_hours", "24", 24),
+        ("cleanup_interval_hours", "168", 168),
+    ],
+)
+def test_config_set_accepts_bounded_cleanup_values(
+    key, value, expected, monkeypatch
+):
+    saved = []
+    monkeypatch.setattr(cli, "load_effective_config", lambda: {"tts": "system"})
+    monkeypatch.setattr(cli, "save_json", lambda _path, cfg: saved.append(dict(cfg)))
+
+    assert cli.config_set(argparse.Namespace(key=key, value=value)) == 0
+    assert saved == [{"tts": "system", key: expected}]

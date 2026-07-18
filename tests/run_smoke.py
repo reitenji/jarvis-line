@@ -32,6 +32,15 @@ def main() -> int:
         cli.LEGACY_CONFIG_PATH = root / "kokoro_tts_config.json"
         cli.HOOKS_JSON = root / "hooks.json"
         cli.enable_codex_hooks_feature = lambda: True
+        parser = cli.build_parser()
+        for command in (
+            ["cleanup", "status"],
+            ["cleanup", "status", "--json"],
+            ["cleanup", "run"],
+            ["cleanup", "run", "--json"],
+        ):
+            parsed = parser.parse_args(command)
+            assert parsed.func is cli.cleanup_command
         cli.save_json(cli.CONFIG_PATH, {"tts": "command", "command": "echo {text}"})
         assert cli.config_set(argparse.Namespace(key="custom_voice_id", value="abc")) == 0
         assert cli.load_json(cli.CONFIG_PATH, {})["custom_voice_id"] == "abc"

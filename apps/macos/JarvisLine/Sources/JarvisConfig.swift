@@ -17,12 +17,15 @@ struct JarvisConfigDraft: Equatable {
     static let kokoroLangOptions = ["en-gb", "en-us", "fr-fr", "it", "ja", "cmn"]
     static let speedOptions = [0.9, 1.0, 1.08, 1.2]
     static let systemRateOptions = [160, 180, 185, 200, 220, 240]
+    static let cleanupIntervalOptions = [24, 168]
     static let updateIntervalOptions = [6, 12, 24, 48, 168]
 
     var tts: String
     var speakMode: String
     var speechEnabled: Bool
     var attentionEnabled: Bool
+    var cleanupEnabled: Bool
+    var cleanupIntervalHours: Int
     var speakWithoutPrefix: Bool
     var lineLanguage: String
     var assistantName: String
@@ -69,6 +72,10 @@ struct JarvisConfigDraft: Equatable {
         let kokoroVoiceOptions = contract.stringOptions("voice", fallback: Self.kokoroVoiceOptions)
         let speedOptions = contract.doubleOptions("speed", fallback: Self.speedOptions)
         let systemRateOptions = contract.intOptions("system_rate", fallback: Self.systemRateOptions)
+        let cleanupIntervals = contract.intOptions(
+            "cleanup_interval_hours",
+            fallback: Self.cleanupIntervalOptions
+        )
         let updateIntervalOptions = contract.intOptions(
             "update_check_interval_hours",
             fallback: Self.updateIntervalOptions
@@ -130,6 +137,10 @@ struct JarvisConfigDraft: Equatable {
             issues.append("Choose a supported system voice rate preset.")
         }
 
+        if !cleanupIntervals.contains(cleanupIntervalHours) {
+            issues.append("Choose Daily or Weekly automatic cleanup.")
+        }
+
         if tts == "command" {
             let value = command.trimmingCharacters(in: .whitespacesAndNewlines)
             if value.isEmpty {
@@ -169,6 +180,8 @@ struct JarvisConfigDraft: Equatable {
         speakMode: "final_only",
         speechEnabled: true,
         attentionEnabled: false,
+        cleanupEnabled: true,
+        cleanupIntervalHours: 24,
         speakWithoutPrefix: false,
         lineLanguage: "English",
         assistantName: "Jarvis",
@@ -198,6 +211,8 @@ struct JarvisConfigDraft: Equatable {
         speakMode = Self.string(data["speak_mode"], defaults.speakMode)
         speechEnabled = Self.bool(data["speech_enabled"], defaults.speechEnabled)
         attentionEnabled = Self.bool(data["attention_enabled"], defaults.attentionEnabled)
+        cleanupEnabled = Self.bool(data["cleanup_enabled"], defaults.cleanupEnabled)
+        cleanupIntervalHours = Self.int(data["cleanup_interval_hours"], defaults.cleanupIntervalHours)
         speakWithoutPrefix = Self.bool(data["speak_without_prefix"], defaults.speakWithoutPrefix)
         lineLanguage = Self.string(data["line_language"], defaults.lineLanguage)
         assistantName = Self.string(data["assistant_name"], defaults.assistantName)
@@ -231,6 +246,8 @@ struct JarvisConfigDraft: Equatable {
         speakMode: String,
         speechEnabled: Bool,
         attentionEnabled: Bool,
+        cleanupEnabled: Bool,
+        cleanupIntervalHours: Int,
         speakWithoutPrefix: Bool,
         lineLanguage: String,
         assistantName: String,
@@ -257,6 +274,8 @@ struct JarvisConfigDraft: Equatable {
         self.speakMode = speakMode
         self.speechEnabled = speechEnabled
         self.attentionEnabled = attentionEnabled
+        self.cleanupEnabled = cleanupEnabled
+        self.cleanupIntervalHours = cleanupIntervalHours
         self.speakWithoutPrefix = speakWithoutPrefix
         self.lineLanguage = lineLanguage
         self.assistantName = assistantName
@@ -286,6 +305,8 @@ struct JarvisConfigDraft: Equatable {
         updated["speak_mode"] = speakMode
         updated["speech_enabled"] = speechEnabled
         updated["attention_enabled"] = attentionEnabled
+        updated["cleanup_enabled"] = cleanupEnabled
+        updated["cleanup_interval_hours"] = cleanupIntervalHours
         updated["speak_without_prefix"] = speakWithoutPrefix
         updated["line_language"] = lineLanguage.trimmedOrDefault("English")
         updated["assistant_name"] = assistantName.trimmedOrDefault("Jarvis")
@@ -446,6 +467,8 @@ struct JarvisConfigStore {
             "assistant_name": "Jarvis",
             "speech_enabled": true,
             "attention_enabled": false,
+            "cleanup_enabled": true,
+            "cleanup_interval_hours": 24,
             "update_check_enabled": true,
             "update_check_interval_hours": 24,
             "update_index_url": "https://pypi.org/pypi/jarvis-line/json",

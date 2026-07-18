@@ -33,6 +33,8 @@ DEFAULT_KOKORO_CONFIG = {
     "assistant_name": "Jarvis",
     "speech_enabled": True,
     "attention_enabled": False,
+    "cleanup_enabled": True,
+    "cleanup_interval_hours": 24,
     "debug_content_logging": False,
     "update_check_enabled": True,
     "update_check_interval_hours": 24,
@@ -102,6 +104,8 @@ COMMON_CONFIG_KEYS = {
     "assistant_name",
     "speech_enabled",
     "attention_enabled",
+    "cleanup_enabled",
+    "cleanup_interval_hours",
     "debug_content_logging",
     "update_check_enabled",
     "update_check_interval_hours",
@@ -171,6 +175,15 @@ CONFIG_FIELD_HELP = {
     "assistant_name": {"type": "string", "description": "Assistant/persona name used in generated instructions."},
     "speech_enabled": {"type": "boolean", "description": "Project/user switch for all Jarvis Line speech."},
     "attention_enabled": {"type": "boolean", "description": "Speak optional permission and input-required alerts."},
+    "cleanup_enabled": {
+        "type": "boolean",
+        "description": "Run bounded cleanup automatically when maintenance is due.",
+    },
+    "cleanup_interval_hours": {
+        "type": "integer",
+        "description": "Minimum interval between automatic cleanup attempts.",
+        "values": [24, 168],
+    },
     "debug_content_logging": {"type": "boolean", "description": "Include spoken text in local runtime logs. Disabled by default."},
     "update_check_enabled": {"type": "boolean", "description": "Whether doctor may show update notices."},
     "update_check_interval_hours": {"type": "integer", "description": "Minimum interval between doctor update checks."},
@@ -217,6 +230,7 @@ UI_OPTIONS = {
     "lang": ["en-gb", "en-us", "fr-fr", "it", "ja", "cmn"],
     "speed": [0.9, 1.0, 1.08, 1.2],
     "system_rate": [160, 180, 185, 200, 220, 240],
+    "cleanup_interval_hours": [24, 168],
     "update_check_interval_hours": [6, 12, 24, 48, 168],
 }
 

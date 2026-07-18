@@ -110,6 +110,22 @@ pickers and presets over free text, then blocks invalid combinations before
 writing config. Update settings are intentionally simple in the app: Jarvis Line
 checks the official GitHub release source on the selected interval.
 
+## Storage & Cleanup
+
+Open **Settings > Diagnostics > Storage & Cleanup** to see the read-only
+reclaimable-file estimate and last successful cleanup. **Refresh** runs
+`jarvis-line cleanup status --json`; **Clean Now** runs
+`jarvis-line cleanup run --json` and refreshes the preview. The button is
+unavailable while another app action is running.
+
+Use the Automatic cleanup switch and Daily or Weekly picker to change the
+shared `cleanup_enabled` and `cleanup_interval_hours` settings. They follow the
+existing staged Settings Apply/Revert flow and do not restart the watcher.
+Cleanup never shows filesystem paths in the app. See the repository
+[command reference](../../../docs/COMMANDS.md#cleanup) and
+[configuration guide](../../../docs/CONFIGURATION.md#storage-cleanup) for the
+allowlist, retention windows, and CLI behavior.
+
 ## Packaging Later
 
 The local app bundle is ad-hoc signed. The app remains Preview until a Developer

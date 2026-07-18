@@ -39,6 +39,8 @@ jarvis-line config set fallback_tts system
 jarvis-line config set quiet_days saturday,sunday
 jarvis-line config set speech_enabled false
 jarvis-line config set attention_enabled true
+jarvis-line config set cleanup_enabled false
+jarvis-line config set cleanup_interval_hours 168
 ```
 
 ## Common Settings
@@ -61,9 +63,36 @@ jarvis-line config set attention_enabled true
 | `audio_worker_max_rss_mb` | `512` | Maximum audio worker RSS in MB before it drains the current burst and exits |
 | `speech_enabled` | `true` | Global/project switch for speech |
 | `attention_enabled` | `false` | Speak opt-in permission and input-required alerts |
+| `cleanup_enabled` | `true` | Run bounded automatic cleanup when maintenance is due |
+| `cleanup_interval_hours` | `24` | Automatic cleanup frequency: Daily (`24`) or Weekly (`168`) |
 | `debug_content_logging` | `false` | Include spoken text in local legacy logs; the structured trace remains metadata-only |
 | `volume` | `0.7` | Playback volume where supported |
 | `final_trigger_mode` | `notify` | Trigger strategy for final responses |
+
+## Storage Cleanup
+
+Automatic cleanup is enabled by default. The CLI and macOS app save paths accept
+only integer interval values of Daily (`24`) or Weekly (`168`) hours; other
+values are rejected before saving. If a hand-edited or stale configuration
+contains another persisted value, runtime handles it conservatively by falling
+back to Daily (`24`) rather than rejecting it. Cleanup is not a daemon,
+operating-system timer, or separate scheduler. The watcher checks once at
+startup and then uses an in-memory hourly gate before consulting its small
+maintenance-state record, so actual work happens only after the selected
+interval has elapsed.
+
+Automatic cleanup removes generated audio older than 24 hours. A manual
+`jarvis-line cleanup run` retains a ten-minute window for generated audio; both
+modes also consider recognized temporary artifacts older than one hour, known
+rotated logs older than seven days, and stale locks only when their owner is
+proven dead. Disabling `cleanup_enabled` affects automatic cleanup only: manual
+status and manual cleanup remain available.
+
+The cleanup allowlist is deliberately narrow. It never removes configuration,
+hook definitions, queue/state/cache files, current logs or trace data, Kokoro
+models or voices, custom TTS/output paths, support reports, user files,
+symlinks, unknown entries, or nested content. See [the cleanup command
+reference](COMMANDS.md#cleanup) for output, exit behavior, and privacy details.
 
 ## Attention Alerts
 
@@ -110,6 +139,8 @@ Fresh setup starts from this shape:
   "tts": "kokoro",
   "speak_mode": "final_only",
   "attention_enabled": false,
+  "cleanup_enabled": true,
+  "cleanup_interval_hours": 24,
   "line_prefixes": ["Jarvis line:"],
   "speak_without_prefix": false,
   "line_language": "English",
@@ -142,6 +173,8 @@ If Kokoro is not ready, or if the user chooses not to use Kokoro, `system` is th
   "tts": "system",
   "speak_mode": "final_only",
   "attention_enabled": false,
+  "cleanup_enabled": true,
+  "cleanup_interval_hours": 24,
   "line_prefixes": ["Jarvis line:"],
   "speak_without_prefix": false,
   "line_language": "English",

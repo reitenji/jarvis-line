@@ -1,7 +1,9 @@
 import json
 import types
 
-from jarvis_line import watcher
+import pytest
+
+from jarvis_line import cleanup, watcher
 
 
 def test_save_json_unlocked_closes_descriptor_when_fdopen_fails(tmp_path, monkeypatch):
@@ -966,3 +968,105 @@ def test_launch_audio_worker_kills_orphans_instead_of_adopting(tmp_path, monkeyp
 
     assert killed == [301]
     assert state["__audio_worker__"]["pid"] == 302
+
+
+def test_maybe_run_cleanup_uses_hourly_memory_gate(monkeypatch):
+    calls = []
+    config = {"cleanup_enabled": True, "cleanup_interval_hours": 24}
+    monkeypatch.setattr(watcher, "runtime_config", lambda: config)
+    monkeypatch.setattr(
+        watcher.cleanup,
+        "run_if_due",
+        lambda cfg: calls.append(cfg) or None,
+    )
+
+    checked = watcher.maybe_run_cleanup(0.0, now_monotonic=100.0)
+    checked = watcher.maybe_run_cleanup(checked, now_monotonic=200.0)
+    checked = watcher.maybe_run_cleanup(checked, now_monotonic=3_701.0)
+
+    assert calls == [config, config]
+    assert checked == 3_701.0
+
+
+def test_maybe_run_cleanup_logs_only_safe_run_totals(monkeypatch):
+    report = cleanup.CleanupReport(mode="automatic", last_success_at=200_000)
+    category = report.categories["generated_audio"]
+    category.removed_files = 3
+    category.removed_bytes = 48 * 1024 * 1024
+    logs = []
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"cleanup_enabled": True})
+    monkeypatch.setattr(watcher.cleanup, "run_if_due", lambda _cfg: report)
+    monkeypatch.setattr(watcher, "append_log", logs.append)
+
+    assert watcher.maybe_run_cleanup(0.0, now_monotonic=100.0) == 100.0
+    assert logs == [
+        "cleanup-run mode=automatic removed=3 "
+        "reclaimed_bytes=50331648 error_count=0"
+    ]
+
+
+def test_maybe_run_cleanup_swallows_exception_without_message(monkeypatch):
+    secret = "/Users/private/customer-session.jsonl"
+    logs = []
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"cleanup_enabled": True})
+    monkeypatch.setattr(
+        watcher.cleanup,
+        "run_if_due",
+        lambda _cfg: (_ for _ in ()).throw(PermissionError(secret)),
+    )
+    monkeypatch.setattr(watcher, "append_log", logs.append)
+
+    assert watcher.maybe_run_cleanup(0.0, now_monotonic=100.0) == 100.0
+    assert logs == ["cleanup-error type=PermissionError error_count=1"]
+    assert secret not in logs[0]
+
+
+def test_maybe_run_cleanup_does_not_log_already_running(monkeypatch):
+    report = cleanup.CleanupReport(mode="automatic", already_running=True)
+    logs = []
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"cleanup_enabled": True})
+    monkeypatch.setattr(watcher.cleanup, "run_if_due", lambda _cfg: report)
+    monkeypatch.setattr(watcher, "append_log", logs.append)
+
+    assert watcher.maybe_run_cleanup(0.0, now_monotonic=100.0) == 100.0
+    assert logs == []
+
+
+def test_watch_file_checks_cleanup_at_startup_and_in_loop(tmp_path, monkeypatch):
+    session = tmp_path / "session.jsonl"
+    session.write_text("")
+    calls = []
+
+    def stop_on_loop(last_check, now_monotonic=None):
+        calls.append(last_check)
+        if len(calls) == 2:
+            raise RuntimeError("stop loop")
+        return 123.0
+
+    monkeypatch.setattr(watcher, "append_log", lambda _message: None)
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: 0)
+    monkeypatch.setattr(watcher, "maybe_run_cleanup", stop_on_loop)
+
+    with pytest.raises(RuntimeError, match="stop loop"):
+        watcher.watch_file(session)
+
+    assert calls == [0.0, 123.0]
+
+
+def test_watch_sessions_checks_cleanup_at_startup_and_in_loop(monkeypatch):
+    calls = []
+
+    def stop_on_loop(last_check, now_monotonic=None):
+        calls.append(last_check)
+        if len(calls) == 2:
+            raise RuntimeError("stop loop")
+        return 123.0
+
+    monkeypatch.setattr(watcher, "append_log", lambda _message: None)
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: 0)
+    monkeypatch.setattr(watcher, "maybe_run_cleanup", stop_on_loop)
+
+    with pytest.raises(RuntimeError, match="stop loop"):
+        watcher.watch_sessions()
+
+    assert calls == [0.0, 123.0]

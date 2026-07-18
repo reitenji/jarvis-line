@@ -13,10 +13,19 @@ import sys
 import tempfile
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from jarvis_line import __version__, config_contract, diagnostics, events, kokoro_assets, setup_flow
+from jarvis_line import (
+    __version__,
+    cleanup,
+    config_contract,
+    diagnostics,
+    events,
+    kokoro_assets,
+    setup_flow,
+)
 from jarvis_line.config_contract import (
     BACKEND_CAPABILITIES,
     CONFIG_FIELD_HELP,
@@ -135,6 +144,29 @@ def print_check(ok: bool, label: str, detail: str = "") -> None:
 
 def print_next(message: str) -> None:
     print(f"Next: {message}")
+
+
+def format_bytes(value: int) -> str:
+    size = float(max(0, value))
+    units = ("B", "KB", "MB", "GB", "TB")
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(size)} B"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return "0 B"
+
+
+def format_cleanup_time(timestamp: int | None) -> str:
+    if timestamp is None:
+        return "never"
+    try:
+        return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+    except (OSError, OverflowError, ValueError):
+        return "unknown"
 
 
 SECRET_KEYWORDS = ("key", "token", "secret", "password", "authorization", "api")
@@ -2002,10 +2034,46 @@ def config_set(args) -> int:
         print(f"{args.key} is not supported by {backend}.")
         print("Use `jarvis-line tts capabilities` to see supported settings.")
         return 1
-    cfg[args.key] = parse_config_value(args.value)
+    value = parse_config_value(args.value)
+    if args.key == "cleanup_enabled" and type(value) is not bool:
+        print("Invalid value for cleanup_enabled: expected true or false.")
+        return 1
+    if args.key == "cleanup_interval_hours" and not (
+        type(value) is int and value in (24, 168)
+    ):
+        print("Invalid value for cleanup_interval_hours: expected 24 or 168.")
+        return 1
+    cfg[args.key] = value
     save_json(CONFIG_PATH, cfg)
     print(f"Set {args.key} = {cfg[args.key]!r}")
     return 0
+
+
+def cleanup_command(args) -> int:
+    report = cleanup.inspect() if args.cleanup_command == "status" else cleanup.run()
+    if args.json_output:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, separators=(",", ":")))
+        return 1 if report.error_count > 0 and not report.already_running else 0
+
+    print(f"Jarvis Line cleanup {args.cleanup_command}")
+    if report.already_running:
+        print("Cleanup already running; no action taken.")
+        print(f"Last successful cleanup: {format_cleanup_time(report.last_success_at)}")
+        return 0
+
+    print(f"Eligible: {report.eligible_files} files")
+    print(f"Reclaimable: {format_bytes(report.eligible_bytes)}")
+    if args.cleanup_command == "run":
+        print(f"Removed: {report.removed_files} files")
+        print(f"Reclaimed: {format_bytes(report.removed_bytes)}")
+    print(f"Skipped: {report.skipped_files} files")
+    print(f"Errors: {report.error_count}")
+    for error in report.errors:
+        category = Path(str(error.get("category") or "cleanup")).name
+        name = Path(str(error.get("name") or "unknown")).name
+        print(f"Error: {category}/{name}")
+    print(f"Last successful cleanup: {format_cleanup_time(report.last_success_at)}")
+    return 1 if report.error_count > 0 else 0
 
 
 def profile_list(_args) -> int:
@@ -2285,6 +2353,19 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.set_defaults(func=doctor)
 
     sub.add_parser("status", help="Show runtime, queue, and TTS status.").set_defaults(func=status)
+
+    cleanup_parser = sub.add_parser(
+        "cleanup", help="Inspect or remove safe runtime artifacts."
+    )
+    cleanup_sub = cleanup_parser.add_subparsers(
+        dest="cleanup_command", required=True
+    )
+    for cleanup_name in ("status", "run"):
+        cleanup_action = cleanup_sub.add_parser(cleanup_name)
+        cleanup_action.add_argument(
+            "--json", action="store_true", dest="json_output"
+        )
+        cleanup_action.set_defaults(func=cleanup_command)
 
     update = sub.add_parser("update", help="Check, install, or configure updates.")
     update_sub = update.add_subparsers(dest="update_command", required=True)

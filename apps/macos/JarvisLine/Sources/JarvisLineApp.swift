@@ -188,6 +188,8 @@ final class JarvisLineModel: ObservableObject {
     @Published var doctorText = ""
     @Published var lastOutput = ""
     @Published private(set) var updateStatusText = "Not checked in this app session"
+    @Published private(set) var cleanupStatus = StorageCleanupStatus.empty
+    @Published private(set) var cleanupResultText = "Not checked"
     @Published private(set) var settingsConfirmation: String?
     @Published var isBusy = false
     @Published var errorMessage: String?
@@ -199,6 +201,8 @@ final class JarvisLineModel: ObservableObject {
     private let configStore: JarvisConfigStore
     private var setupInspectionState = SetupFirstRunInspectionState()
     private var confirmationID: UUID?
+    private var cleanupStatusRefreshRequested = false
+    private(set) var cleanupStatusRefreshTask: Task<Void, Never>?
     var onInitialSetupInspection: ((SetupInspection) -> Void)?
 
     init(
@@ -302,6 +306,42 @@ final class JarvisLineModel: ObservableObject {
         }
         if !succeeded {
             updateStatusText = "Check failed"
+        }
+    }
+
+    func refreshCleanupStatus() async {
+        await run(label: "Refresh Storage") {
+            cleanupStatus = try await loadCleanupStatus()
+        }
+    }
+
+    func requestCleanupStatusRefresh() {
+        cleanupStatusRefreshRequested = true
+        startCleanupStatusRefreshIfPossible()
+    }
+
+    func cleanStorage() async {
+        await run(label: "Clean Storage") {
+            var pendingError: Error?
+            do {
+                let result = try await runCleanupCommand()
+                cleanupResultText = cleanupResultSummary(result)
+            } catch {
+                cleanupResultText = "Cleanup failed"
+                pendingError = error
+            }
+
+            do {
+                cleanupStatus = try await loadCleanupStatus()
+            } catch {
+                if pendingError == nil {
+                    cleanupResultText += ". Status refresh unavailable"
+                }
+            }
+
+            if let pendingError {
+                throw pendingError
+            }
         }
     }
 
@@ -426,6 +466,48 @@ final class JarvisLineModel: ObservableObject {
         traceEvents = decoded
     }
 
+    private func loadCleanupStatus() async throws -> StorageCleanupStatus {
+        do {
+            return try StorageCleanupStatus.decode(
+                try await cli.run(["cleanup", "status", "--json"])
+            )
+        } catch let error as CLIError {
+            guard let status = try? StorageCleanupStatus.decode(error.stdout) else {
+                throw StorageCleanupModelError.commandFailed
+            }
+            return status
+        } catch is DecodingError {
+            throw StorageCleanupModelError.invalidResponse
+        }
+    }
+
+    private func runCleanupCommand() async throws -> StorageCleanupStatus {
+        do {
+            return try StorageCleanupStatus.decode(
+                try await cli.run(["cleanup", "run", "--json"])
+            )
+        } catch let error as CLIError {
+            guard let status = try? StorageCleanupStatus.decode(error.stdout) else {
+                throw StorageCleanupModelError.commandFailed
+            }
+            return status
+        } catch is DecodingError {
+            throw StorageCleanupModelError.invalidResponse
+        }
+    }
+
+    private func cleanupResultSummary(_ result: StorageCleanupStatus) -> String {
+        if result.alreadyRunning {
+            return "Cleanup already running"
+        }
+
+        let fileWord = result.removedFiles == 1 ? "file" : "files"
+        let summary = "\(result.removedFiles) \(fileWord) removed, \(result.recoveredText) recovered"
+        guard result.errorCount > 0 else { return summary }
+        let errorWord = result.errorCount == 1 ? "error" : "errors"
+        return "\(summary); \(result.errorCount) \(errorWord)"
+    }
+
     private func refreshSetupRequirementIfNeeded() async {
         guard setupInspectionState.beginInspection() else { return }
         guard let inspection = try? await inspectSetup(using: cli) else {
@@ -437,11 +519,36 @@ final class JarvisLineModel: ObservableObject {
         onInitialSetupInspection?(inspection)
     }
 
+    private func startCleanupStatusRefreshIfPossible() {
+        guard cleanupStatusRefreshRequested,
+              !isBusy,
+              cleanupStatusRefreshTask == nil else {
+            return
+        }
+
+        cleanupStatusRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard !self.isBusy else {
+                self.cleanupStatusRefreshTask = nil
+                return
+            }
+
+            self.cleanupStatusRefreshRequested = false
+            await self.refreshCleanupStatus()
+            self.cleanupStatusRefreshTask = nil
+            self.startCleanupStatusRefreshIfPossible()
+        }
+    }
+
     @discardableResult
     private func run(label: String, operation: () async throws -> Void) async -> Bool {
+        guard !isBusy else { return false }
         isBusy = true
         errorMessage = nil
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            startCleanupStatusRefreshIfPossible()
+        }
 
         do {
             try await operation()
@@ -483,6 +590,18 @@ final class JarvisLineModel: ObservableObject {
             return "Update available"
         }
         return lines.first ?? "Check completed"
+    }
+}
+
+private enum StorageCleanupModelError: LocalizedError {
+    case invalidResponse
+    case commandFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse: "Invalid cleanup response"
+        case .commandFailed: "Cleanup command failed"
+        }
     }
 }
 
