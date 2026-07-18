@@ -26,6 +26,7 @@ PLAN_FIELDS = {
     "speak_mode",
     "agent_target",
     "instruction_scope",
+    "attention_enabled",
     "install_kokoro",
     "accept_kokoro_license",
     "install_codex_hook",
@@ -88,6 +89,7 @@ class SetupPlan:
     speak_mode: str
     agent_target: str
     instruction_scope: str
+    attention_enabled: bool = False
     install_kokoro: bool = False
     accept_kokoro_license: bool = False
     install_codex_hook: bool = False
@@ -122,6 +124,7 @@ class SetupPlan:
         speak_mode = enum("speak_mode", {"final_only", "commentary_and_final", "off"})
         agent_target = enum("agent_target", {"agents", "codex", "claude", "gemini"})
         scope = enum("instruction_scope", {"project", "global"})
+        attention_enabled = boolean("attention_enabled", False)
         install_kokoro = boolean("install_kokoro", False)
         accept_kokoro_license = boolean("accept_kokoro_license", False)
         install_hook = boolean("install_codex_hook", False)
@@ -157,6 +160,7 @@ class SetupPlan:
             speak_mode=speak_mode,
             agent_target=agent_target,
             instruction_scope=scope,
+            attention_enabled=attention_enabled,
             install_kokoro=install_kokoro,
             accept_kokoro_license=accept_kokoro_license,
             install_codex_hook=install_hook,
@@ -272,6 +276,7 @@ def build_inspection(
             "tts": current_tts,
             "line_language": current_language,
             "speak_mode": current_speak_mode,
+            "attention_enabled": current.get("attention_enabled") is True,
         },
         "language": selected_language,
         "backend_options": backend_options(env, selected_language, current),
@@ -310,6 +315,7 @@ def build_config(plan: SetupPlan, current: Mapping[str, Any]) -> dict[str, Any]:
     cfg["line_language"] = plan.language
     cfg["speak_mode"] = plan.speak_mode
     cfg["speech_enabled"] = plan.speak_mode != "off"
+    cfg["attention_enabled"] = plan.attention_enabled
     if plan.tts == "kokoro" and plan.language == "English":
         cfg["lang"] = "en-gb"
     return cfg
@@ -504,6 +510,17 @@ def collect_setup_plan(
         output_fn=output_fn,
     )
     project_path = str(Path.cwd()) if instruction_scope == "project" else None
+    attention_enabled = False
+    if speak_mode != "off":
+        attention_default = current.get("attention_enabled")
+        if type(attention_default) is not bool:
+            attention_default = agent_target == "codex" and not env.config_exists
+        attention_enabled = prompt_yes_no(
+            "Enable attention alerts for permission and input requests?",
+            default=attention_default,
+            input_fn=input_fn,
+            output_fn=output_fn,
+        )
     install_kokoro = False
     if tts == "kokoro" and not env.kokoro_ready:
         output_fn("Kokoro installation disclosure:")
@@ -517,7 +534,7 @@ def collect_setup_plan(
             output_fn=output_fn,
         )
     install_codex_hook = agent_target == "codex" and prompt_yes_no(
-        "Install the Codex SessionStart hook?",
+        "Install the Codex SessionStart and PermissionRequest hooks?",
         default=True,
         input_fn=input_fn,
         output_fn=output_fn,
@@ -542,6 +559,7 @@ def collect_setup_plan(
             "speak_mode": speak_mode,
             "agent_target": agent_target,
             "instruction_scope": instruction_scope,
+            "attention_enabled": attention_enabled,
             "install_kokoro": install_kokoro,
             "accept_kokoro_license": install_kokoro,
             "install_codex_hook": install_codex_hook,
@@ -571,6 +589,7 @@ def review_lines(plan: SetupPlan, env: SetupEnvironment) -> list[str]:
         f"  Language: {plan.language}",
         f"  Voice backend: {backend_names[plan.tts]}",
         f"  Speech mode: {plan.speak_mode}",
+        f"  Attention alerts: {'enabled' if plan.attention_enabled else 'disabled'}",
         f"  Agent: {agent_names[plan.agent_target]}",
         f"  Instruction guidance: {guidance['scope']} {guidance['filename']} at {guidance['destination']}",
         "  Instruction files are guidance only and will not be written.",

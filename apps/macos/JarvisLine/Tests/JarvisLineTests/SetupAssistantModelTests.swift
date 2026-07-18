@@ -160,6 +160,16 @@ struct SetupAssistantModelTests {
         #expect(!model.plan.installCodexHook)
     }
 
+    @Test func speechOffDisablesAttentionControlWithoutDeletingPreference() async {
+        let model = SetupAssistantModel(runner: AssistantFakeRunner(inspections: [], applyOutput: Self.successResult))
+        model.plan.attentionEnabled = true
+
+        model.plan.speakMode = "off"
+
+        #expect(!model.attentionAlertsAvailable)
+        #expect(model.plan.attentionEnabled)
+    }
+
     @Test func firstRunOfferPolicyUsesAuthoritativeConfigAndStoredPreference() {
         #expect(SetupAssistantFirstRunController.shouldOffer(configExists: false, wasOffered: false))
         #expect(!SetupAssistantFirstRunController.shouldOffer(configExists: true, wasOffered: false))

@@ -182,10 +182,18 @@ final class JarvisLineModel: ObservableObject {
     @Published var showDockIcon = JarvisAppPreferences.showDockIcon
     @Published private(set) var setupRequired = false
 
-    private let cli = JarvisLineCLI()
-    private let configStore = JarvisConfigStore()
+    private let cli: any JarvisLineCommandRunning
+    private let configStore: JarvisConfigStore
     private var setupInspectionState = SetupFirstRunInspectionState()
     var onInitialSetupInspection: ((SetupInspection) -> Void)?
+
+    init(
+        cli: any JarvisLineCommandRunning = JarvisLineCLI(),
+        configStore: JarvisConfigStore = JarvisConfigStore()
+    ) {
+        self.cli = cli
+        self.configStore = configStore
+    }
 
     var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -256,6 +264,22 @@ final class JarvisLineModel: ObservableObject {
     func testVoice() async {
         await command("Test Voice", ["tts", "test", "--text", "Jarvis line test is ready."])
         await refresh()
+    }
+
+    func setAttentionAlertsEnabled(_ isEnabled: Bool) async {
+        guard config.attentionEnabled != isEnabled else { return }
+
+        let previousValue = config.attentionEnabled
+        config.attentionEnabled = isEnabled
+        let label = isEnabled ? "Enable Request Speech" : "Disable Request Speech"
+        let succeeded = await run(label: label) {
+            lastOutput = try await cli.run([
+                "config", "set", "attention_enabled", isEnabled ? "true" : "false",
+            ])
+        }
+        if !succeeded {
+            config.attentionEnabled = previousValue
+        }
     }
 
     func loadConfig() async {
@@ -333,15 +357,18 @@ final class JarvisLineModel: ObservableObject {
         onInitialSetupInspection?(inspection)
     }
 
-    private func run(label: String, operation: () async throws -> Void) async {
+    @discardableResult
+    private func run(label: String, operation: () async throws -> Void) async -> Bool {
         isBusy = true
         errorMessage = nil
         defer { isBusy = false }
 
         do {
             try await operation()
+            return true
         } catch {
             errorMessage = "\(label) failed: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -583,9 +610,47 @@ struct JarvisLinePanel: View {
                 .tint(JarvisTheme.gold)
             }
             compactStatus
+            attentionControl
             commandDeck
         }
         .padding(14)
+    }
+
+    private var attentionControl: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "bell.and.waves.left.and.right")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(JarvisTheme.goldSoft)
+                .frame(width: 28, height: 28)
+                .background(JarvisTheme.gold.opacity(0.11))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Attention alerts")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.primaryText)
+                Text("Speak permission and Plan requests")
+                    .font(.system(size: 11))
+                    .foregroundStyle(JarvisTheme.mutedText)
+            }
+
+            Spacer()
+
+            Toggle("Attention alerts", isOn: Binding(
+                get: { model.config.attentionEnabled },
+                set: { isEnabled in
+                    Task { await model.setAttentionAlertsEnabled(isEnabled) }
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .disabled(model.isBusy || !model.config.speechEnabled || model.config.speakMode == "off")
+            .help("Speak a short alert when an agent needs permission or input.")
+        }
+        .padding(10)
+        .background(sectionFill)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(sectionStroke)
     }
 
     private var compactStatus: some View {
@@ -684,7 +749,14 @@ struct JarvisLinePanel: View {
                 set: { model.setDockIconVisible($0) }
             ))
             Toggle("Speech enabled", isOn: $model.config.speechEnabled)
+            Toggle("Attention alerts", isOn: $model.config.attentionEnabled)
+                .disabled(!model.config.speechEnabled || model.config.speakMode == "off")
             Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
+
+            Text("With the Codex hook installed, permission prompts and Plan-mode questions are detected automatically; other agents require attention protocol events.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Picker("Speak mode", selection: $model.config.speakMode) {
                 ForEach(model.configContract.stringOptions("speak_mode", fallback: JarvisConfigDraft.speakModeOptions), id: \.self) { value in

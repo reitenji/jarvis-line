@@ -152,3 +152,23 @@ def test_guided_setup_documentation_is_present():
     assert "setup apply --stdin --json" in commands
     assert "Setup Assistant" in app_readme
     assert "never edits agent Markdown" in app_readme
+
+
+def test_attention_documentation_is_present():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    commands = (ROOT / "docs/COMMANDS.md").read_text(encoding="utf-8")
+    configuration = (ROOT / "docs/CONFIGURATION.md").read_text(encoding="utf-8")
+    protocol = (ROOT / "docs/EVENT-PROTOCOL.md").read_text(encoding="utf-8")
+    support_matrix = (ROOT / "docs/SUPPORT-MATRIX.md").read_text(encoding="utf-8")
+    benchmark = (ROOT / "scripts/benchmark_attention_hook.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Attention alerts" in readme
+    assert "request_user_input" in readme
+    assert "attention_enabled" in commands
+    assert "attention_enabled" in configuration
+    assert "--attention-type input_required" in protocol
+    assert "PermissionRequest" in support_matrix
+    assert "RUNS = 30" in benchmark
+    assert "P95_LIMIT_MS = 150.0" in benchmark

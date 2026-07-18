@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from jarvis_line import audio_worker
+from jarvis_line.queue_policy import attention_cancellation_key
 
 
 def test_format_command_parts_replaces_placeholders():
@@ -32,6 +33,38 @@ def test_dequeue_drops_stale_jobs(tmp_path, monkeypatch):
     assert audio_worker.dequeue_audio_job() is None
 
 
+def test_dequeue_drops_expired_attention_before_playback(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio_worker, "QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "lock")
+    now_ms = int(audio_worker.time.time() * 1000)
+    audio_worker.save_json_unlocked(
+        tmp_path / "queue.json",
+        {
+            "jobs": [
+                {
+                    "message_id": "expired",
+                    "session_key": "a",
+                    "phase": "attention",
+                    "attention_type": "input_required",
+                    "jarvis_line": "old input",
+                    "enqueued_ts_ms": now_ms - 100,
+                    "expires_ts_ms": now_ms,
+                },
+                {
+                    "message_id": "final",
+                    "session_key": "b",
+                    "phase": "final",
+                    "jarvis_line": "current final",
+                    "enqueued_ts_ms": now_ms,
+                },
+            ]
+        },
+    )
+
+    assert audio_worker.dequeue_audio_job()["message_id"] == "final"
+    assert audio_worker.dequeue_audio_job() is None
+
+
 def test_dequeue_prefers_final_from_another_session(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_worker, "QUEUE_PATH", tmp_path / "queue.json")
     monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "lock")
@@ -51,6 +84,107 @@ def test_dequeue_prefers_final_from_another_session(tmp_path, monkeypatch):
     assert audio_worker.dequeue_audio_job()["message_id"] == "f2"
     queue = audio_worker.load_json(tmp_path / "queue.json", {})
     assert queue["last_session_key"] == "b"
+
+
+def test_worker_skips_attention_cancelled_after_dequeue(monkeypatch):
+    jobs = [
+        {
+            "message_id": "attention-1",
+            "jarvis_line": "Your input is needed.",
+            "phase": "attention",
+            "attention_type": "input_required",
+            "correlation_token": "token-1",
+            "session_key": "codex:s1",
+        },
+        None,
+    ]
+    spoken = []
+    events = []
+
+    monkeypatch.setattr(
+        audio_worker,
+        "dequeue_audio_job",
+        lambda: jobs.pop(0) if jobs else None,
+    )
+    monkeypatch.setattr(audio_worker, "attention_job_is_cancelled", lambda _job: True)
+    monkeypatch.setattr(audio_worker, "speak_line", spoken.append)
+    monkeypatch.setattr(audio_worker, "rss_limit_exceeded", lambda: (True, 700.0, 512.0))
+    monkeypatch.setattr(audio_worker, "worker_idle_exit_seconds", lambda: 0.01)
+    monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
+    monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+    monkeypatch.setattr(
+        audio_worker.diagnostics,
+        "record_event",
+        lambda event, **metadata: events.append((event, metadata)),
+    )
+
+    assert audio_worker.run_worker() == 0
+    assert spoken == []
+    assert "cancelled" in [event for event, _metadata in events]
+
+
+def test_attention_job_is_cancelled_reads_private_tombstone(tmp_path, monkeypatch):
+    queue_path = tmp_path / "queue.json"
+    monkeypatch.setattr(audio_worker, "QUEUE_PATH", queue_path)
+    monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(audio_worker.time, "time", lambda: 100.0)
+    key = attention_cancellation_key("codex:s1", "input_required", "token-1")
+    audio_worker.save_json_unlocked(
+        queue_path,
+        {"jobs": [], "attention_cancellations": {key: 100_000}},
+    )
+
+    assert audio_worker.attention_job_is_cancelled(
+        {
+            "phase": "attention",
+            "session_key": "codex:s1",
+            "attention_type": "input_required",
+            "correlation_token": "token-1",
+        }
+    ) is True
+
+
+def test_speak_line_rechecks_cancellation_after_kokoro_setup(tmp_path, monkeypatch):
+    config = {
+        "tts": "kokoro",
+        "voice": "test-voice",
+        "playback_mode": "stream",
+        "volume": 0.7,
+        "lang": "en-gb",
+        "speed": 1.0,
+    }
+    checks = []
+    prepared = []
+    played = []
+
+    monkeypatch.setattr(audio_worker, "AUDIO_LOCK_PATH", tmp_path / "audio.lock")
+    monkeypatch.setattr(audio_worker.ks, "load_config", lambda: config)
+    monkeypatch.setattr(
+        audio_worker,
+        "ensure_speaker",
+        lambda: prepared.append(True)
+        or {
+            "config": config,
+            "engine": object(),
+            "voice_cache": {"test-voice": object()},
+        },
+    )
+    monkeypatch.setattr(
+        audio_worker.ks,
+        "play_stream",
+        lambda *_args, **_kwargs: played.append(True),
+    )
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+
+    def cancelled():
+        checks.append(True)
+        return len(checks) >= 2
+
+    assert audio_worker.speak_line("Your input is needed.", cancelled) is False
+    assert prepared == [True]
+    assert played == []
+    assert len(checks) == 2
 
 
 def test_worker_idle_exit_seconds_uses_config():

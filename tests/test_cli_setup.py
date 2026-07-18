@@ -29,6 +29,7 @@ def kokoro_codex_plan(**overrides):
         "language": "English",
         "tts": "kokoro",
         "speak_mode": "final_only",
+        "attention_enabled": True,
         "agent_target": "codex",
         "instruction_scope": "project",
         "project_path": "/tmp/project",
@@ -76,6 +77,7 @@ def test_setup_inspect_prints_parseable_versioned_json(monkeypatch, capsys):
         "tts": "system",
         "line_language": "English",
         "speak_mode": "final_only",
+        "attention_enabled": False,
     }
 
 
@@ -102,6 +104,7 @@ def test_setup_inspect_does_not_echo_custom_command_secrets_or_paths(monkeypatch
         "tts": "command",
         "line_language": "English",
         "speak_mode": "final_only",
+        "attention_enabled": False,
     }
     assert payload["backend_options"][-1]["available"] is True
     assert "secret" not in output
@@ -162,6 +165,7 @@ def test_setup_apply_accepts_exactly_64kib_stdin_without_mutation(monkeypatch, c
         "language": plan.language,
         "tts": plan.tts,
         "speak_mode": plan.speak_mode,
+        "attention_enabled": plan.attention_enabled,
         "agent_target": plan.agent_target,
         "instruction_scope": plan.instruction_scope,
         "project_path": plan.project_path,
@@ -457,6 +461,7 @@ def test_apply_installed_kokoro_writes_managed_paths(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert written[0]["model_path"] == str(cli.KOKORO_MODEL)
     assert written[0]["voices_path"] == str(cli.KOKORO_VOICES)
+    assert written[0]["attention_enabled"] is True
 
 
 def test_apply_kokoro_without_install_requires_current_backend_readiness(monkeypatch, tmp_path):
@@ -530,6 +535,7 @@ def test_setup_apply_keeps_json_stdout_clean_when_helpers_print(monkeypatch, tmp
         "language": plan.language,
         "tts": plan.tts,
         "speak_mode": plan.speak_mode,
+        "attention_enabled": plan.attention_enabled,
         "agent_target": plan.agent_target,
         "instruction_scope": plan.instruction_scope,
         "project_path": plan.project_path,

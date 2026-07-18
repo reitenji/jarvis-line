@@ -39,7 +39,8 @@ Review setup:
   Language: English
   Voice backend: Kokoro local
   Speech mode: commentary_and_final
-  Agent: Generic AGENTS.md-compatible agent
+  Attention alerts: enabled
+  Agent: Codex
   Instruction guidance: project AGENTS.md at /path/to/project
   Instruction files are guidance only and will not be written.
 Apply this setup? [y/N]:
@@ -94,7 +95,8 @@ jarvis-line setup inspect --language "Turkish" --json
   "current": {
     "tts": "system",
     "line_language": "Turkish",
-    "speak_mode": "commentary_and_final"
+    "speak_mode": "commentary_and_final",
+    "attention_enabled": true
   },
   "backend_options": [
     {"id": "kokoro", "available": false, "recommended": false},
@@ -118,6 +120,7 @@ Create a reviewed plan such as `plan.json`:
   "speak_mode": "commentary_and_final",
   "agent_target": "codex",
   "instruction_scope": "global",
+  "attention_enabled": true,
   "project_path": null,
   "install_kokoro": false,
   "accept_kokoro_license": false,
@@ -158,9 +161,9 @@ Setup plan input is limited to `65,536` UTF-8 bytes, rejects unknown fields,
 and validates backend compatibility before config or network mutation. Failure
 responses remain versioned JSON on stdout with a non-zero exit code. The machine
 interface returns instruction text for manual paste; it does not create or edit
-agent Markdown files. Inspection returns only the current TTS, language, and
-speech mode; it never echoes custom commands, command environments, working
-directories, model paths, or secrets.
+agent Markdown files. Inspection returns only the current TTS, language, speech
+mode, and attention-alert switch; it never echoes custom commands, command
+environments, working directories, model paths, or secrets.
 
 For a Kokoro download, both `install_kokoro` and
 `accept_kokoro_license` must be `true`; otherwise the plan is rejected before
@@ -176,7 +179,7 @@ jarvis-line init --codex --language "English"
 
 ```text
 Config written: ~/.codex/hooks/jarvis_line_config.json
-Installed Codex SessionStart hook.
+Installed or refreshed Codex SessionStart and PermissionRequest hooks.
 Jarvis Line instructions were not written automatically.
 Next: choose agent and project/global scope, then run `jarvis-line instructions print agents --language "English"` and paste the output into the instruction file your agent reads.
 Jarvis Line init complete.
@@ -341,6 +344,25 @@ Queued Jarvis Line event for claude.
 
 For the versioned standard-input format, see [EVENT-PROTOCOL.md](EVENT-PROTOCOL.md).
 
+Submit an explicit input-required alert from a third-party adapter:
+
+```bash
+jarvis-line emit \
+  --source claude \
+  --session session-123 \
+  --phase attention \
+  --attention-type input_required \
+  --line "Your deployment choice is required."
+```
+
+```text
+Queued Jarvis Line event for claude.
+```
+
+Attention events are accepted only when `attention_enabled` is true. A valid
+event still exits `0` when speech, quiet-time, or runtime policy intentionally
+skips playback.
+
 ## `kokoro`
 
 Fast readiness check:
@@ -417,7 +439,7 @@ jarvis-line install codex
 ```
 
 ```text
-Installed Codex SessionStart hook.
+Installed or refreshed Codex SessionStart and PermissionRequest hooks.
 ```
 
 ## `uninstall`

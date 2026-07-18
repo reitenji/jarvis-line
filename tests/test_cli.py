@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import types
 
 import pytest
 
@@ -158,6 +159,7 @@ def test_init_project_installs_codex_hook_when_requested(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    monkeypatch.setattr(cli, "enable_codex_hooks_feature", lambda: True)
     monkeypatch.setattr(cli, "setup_default", lambda args: cli.save_json(cli.CONFIG_PATH, {"tts": "system"}) or 0)
 
     rc = cli.init_project(argparse.Namespace(
@@ -565,16 +567,116 @@ def test_pid_alive_rejects_zombie_process(monkeypatch):
 def test_install_uninstall_codex_uses_package_command(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
     monkeypatch.setattr(cli, "KOKORO_PY", tmp_path / "python")
+    monkeypatch.setattr(cli, "enable_codex_hooks_feature", lambda: True)
     cli.save_json(tmp_path / "hooks.json", {"hooks": {}})
 
     assert cli.install_codex(argparse.Namespace()) == 0
     hooks = cli.load_json(tmp_path / "hooks.json", {})
-    command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert "jarvis_line.watcher" in command
+    session_command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    permission_command = hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
+    assert "jarvis_line.watcher" in session_command
+    assert "jarvis_line.codex_hook" in permission_command
+
+    assert cli.install_codex(argparse.Namespace()) == 0
+    hooks = cli.load_json(tmp_path / "hooks.json", {})
+    assert len(hooks["hooks"]["SessionStart"]) == 1
+    assert len(hooks["hooks"]["PermissionRequest"]) == 1
 
     assert cli.uninstall_codex(argparse.Namespace()) == 0
     hooks = cli.load_json(tmp_path / "hooks.json", {})
     assert "SessionStart" not in hooks["hooks"]
+    assert "PermissionRequest" not in hooks["hooks"]
+
+
+def test_install_codex_preserves_unrelated_hooks(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    monkeypatch.setattr(cli, "enable_codex_hooks_feature", lambda: True)
+    unrelated = {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "other-tool", "timeout": 9}],
+    }
+    cli.save_json(
+        tmp_path / "hooks.json",
+        {"hooks": {"PermissionRequest": [unrelated], "PostToolUse": [unrelated]}},
+    )
+
+    assert cli.install_codex(argparse.Namespace()) == 0
+
+    hooks = cli.load_json(tmp_path / "hooks.json", {})["hooks"]
+    assert unrelated in hooks["PermissionRequest"]
+    assert hooks["PostToolUse"] == [unrelated]
+    assert len(hooks["PermissionRequest"]) == 2
+
+
+def test_install_codex_does_not_mutate_hooks_when_feature_enable_fails(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    monkeypatch.setattr(cli, "enable_codex_hooks_feature", lambda: False)
+    original = {"hooks": {"PostToolUse": []}}
+    cli.save_json(tmp_path / "hooks.json", original)
+
+    assert cli.install_codex(argparse.Namespace()) == 1
+    assert cli.load_json(tmp_path / "hooks.json", {}) == original
+
+
+def test_install_codex_validates_hooks_before_enabling_feature(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    cli.save_json(tmp_path / "hooks.json", {"hooks": "invalid"})
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "enable_codex_hooks_feature",
+        lambda: calls.append("enable") or True,
+    )
+
+    assert cli.install_codex(argparse.Namespace()) == 1
+    assert calls == []
+
+
+def test_enable_codex_hooks_feature_uses_target_codex_home(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    monkeypatch.setattr(cli.shutil, "which", lambda command: "/usr/local/bin/codex")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    assert cli.enable_codex_hooks_feature() is True
+    assert calls[0][0] == [
+        "/usr/local/bin/codex",
+        "features",
+        "enable",
+        "hooks",
+    ]
+    assert calls[0][1]["env"]["CODEX_HOME"] == str(tmp_path)
+
+
+def test_enable_codex_hooks_feature_disables_existing_legacy_flag(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cli, "HOOKS_JSON", tmp_path / "hooks.json")
+    (tmp_path / "config.toml").write_text(
+        "[features]\ncodex_hooks = true\nother = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli.shutil, "which", lambda command: "/usr/local/bin/codex")
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    assert cli.enable_codex_hooks_feature() is True
+    assert commands == [
+        ["/usr/local/bin/codex", "features", "enable", "hooks"],
+        ["/usr/local/bin/codex", "features", "disable", "codex_hooks"],
+    ]
 
 
 def test_migrate_config_writes_next_config(tmp_path, monkeypatch):
