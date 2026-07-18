@@ -1100,3 +1100,292 @@ def test_run_if_due_replaces_bounded_state_atomically(tmp_path, monkeypatch):
         assert destination == paths.state_path
         assert temporary.name.startswith(".jarvis_line_cleanup_state.json.")
         assert temporary.name.endswith(".tmp")
+
+
+@pytest.mark.parametrize("unexpected_kind", ["symlink", "file"])
+def test_owner_creation_race_never_overwrites_unexpected_entry(
+    tmp_path, monkeypatch, unexpected_kind
+):
+    paths = paths_for(tmp_path)
+    owner_path = paths.lock_dir / cleanup.LOCK_OWNER_NAME
+    quarantine = quarantine_for(paths.lock_dir)
+    external = tmp_path / "external-owner-target"
+    external.write_bytes(b"private")
+    real_open = cleanup.os.open
+    injected = False
+
+    def inject_owner(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal injected
+        if Path(path) == owner_path and flags & os.O_CREAT and not injected:
+            injected = True
+            if unexpected_kind == "symlink":
+                owner_path.symlink_to(external)
+            else:
+                owner_path.write_bytes(b"unexpected")
+        if dir_fd is None:
+            return real_open(path, flags, mode)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(cleanup.os, "open", inject_owner)
+
+    first = cleanup.run(paths, now=200_000)
+    second = cleanup.run(paths, now=200_001)
+
+    assert injected is True
+    assert first.error_count == 1
+    assert second.error_count == 1
+    assert external.read_bytes() == b"private"
+    assert not paths.lock_dir.exists()
+    assert quarantine.is_dir()
+    quarantined_owner = quarantine / cleanup.LOCK_OWNER_NAME
+    if unexpected_kind == "symlink":
+        assert quarantined_owner.is_symlink()
+    else:
+        assert quarantined_owner.read_bytes() == b"unexpected"
+    assert list(paths.hooks_dir.glob(f"{paths.lock_dir.name}*")) == [quarantine]
+
+
+@pytest.mark.parametrize("failure_mode", ["empty", "partial", "readback"])
+def test_failed_owner_initialization_frees_lock_for_immediate_retry(
+    tmp_path, monkeypatch, failure_mode
+):
+    paths = paths_for(tmp_path)
+    real_write = cleanup.os.write
+    real_read_owner = cleanup._read_lock_owner
+    write_calls = 0
+
+    def fail_owner_write(descriptor, payload):
+        nonlocal write_calls
+        write_calls += 1
+        if failure_mode == "empty":
+            raise OSError("injected empty owner write")
+        if failure_mode == "partial":
+            if write_calls == 1:
+                return real_write(descriptor, payload[:1])
+            raise OSError("injected partial owner write")
+        return real_write(descriptor, payload)
+
+    def fail_owner_readback(candidate):
+        if candidate.path == paths.lock_dir:
+            return None
+        return real_read_owner(candidate)
+
+    if failure_mode in {"empty", "partial"}:
+        monkeypatch.setattr(cleanup.os, "write", fail_owner_write)
+    else:
+        monkeypatch.setattr(cleanup, "_read_lock_owner", fail_owner_readback)
+
+    first = cleanup.run(paths, now=200_000)
+
+    monkeypatch.setattr(cleanup.os, "write", real_write)
+    monkeypatch.setattr(cleanup, "_read_lock_owner", real_read_owner)
+    second = cleanup.run(paths, now=200_001)
+
+    assert first.error_count == 1
+    assert second.error_count == 0
+    assert second.already_running is False
+    assert not paths.lock_dir.exists()
+    assert not quarantine_for(paths.lock_dir).exists()
+    assert list(paths.hooks_dir.glob(f"{paths.lock_dir.name}*")) == []
+
+
+def test_failed_owner_initialization_never_removes_replacement_lock(
+    tmp_path, monkeypatch
+):
+    paths = paths_for(tmp_path)
+    displaced = paths.hooks_dir / ".injected-displaced-lock"
+    quarantine = quarantine_for(paths.lock_dir)
+    real_read_owner = cleanup._read_lock_owner
+    real_rename = cleanup.os.rename
+    replaced = False
+
+    def fail_owner_readback(candidate):
+        if candidate.path == paths.lock_dir:
+            return None
+        return real_read_owner(candidate)
+
+    def replace_before_claim(source, destination):
+        nonlocal replaced
+        if Path(source) == paths.lock_dir and Path(destination) == quarantine:
+            replaced = True
+            real_rename(paths.lock_dir, displaced)
+            paths.lock_dir.mkdir()
+            write_lock_owner(paths.lock_dir, pid=987, created_ts=200_000)
+        return real_rename(source, destination)
+
+    monkeypatch.setattr(cleanup, "_read_lock_owner", fail_owner_readback)
+    monkeypatch.setattr(cleanup.os, "rename", replace_before_claim)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.error_count == 1
+    assert replaced is True
+    assert paths.lock_dir.is_dir()
+    assert json.loads((paths.lock_dir / "owner.json").read_text())["pid"] == 987
+    assert displaced.is_dir()
+    assert not quarantine.exists()
+
+
+def test_owner_is_created_exclusively_private_and_fsynced(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    owner_path = paths.lock_dir / cleanup.LOCK_OWNER_NAME
+    real_open = cleanup.os.open
+    real_fsync = cleanup.os.fsync
+    owner_open = []
+    owner_fsyncs = []
+    owner_descriptor = -1
+
+    def record_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal owner_descriptor
+        if dir_fd is None:
+            descriptor = real_open(path, flags, mode)
+        else:
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        if Path(path) == owner_path and flags & os.O_CREAT:
+            owner_descriptor = descriptor
+            owner_open.append((flags, mode))
+        return descriptor
+
+    def record_fsync(descriptor):
+        if descriptor == owner_descriptor:
+            owner_fsyncs.append(descriptor)
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(cleanup.os, "open", record_open)
+    monkeypatch.setattr(cleanup.os, "fsync", record_fsync)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.error_count == 0
+    assert len(owner_open) == 1
+    flags, mode = owner_open[0]
+    assert flags & os.O_WRONLY
+    assert flags & os.O_CREAT
+    assert flags & os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        assert flags & os.O_NOFOLLOW
+    assert mode == 0o600
+    assert len(owner_fsyncs) == 1
+
+
+def test_write_state_is_durable_before_and_after_replace(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    events = []
+    real_named_temporary_file = cleanup.tempfile.NamedTemporaryFile
+    real_replace = cleanup.os.replace
+
+    class RecordingTemporaryFile:
+        def __init__(self, *args, **kwargs):
+            self._temporary = real_named_temporary_file(*args, **kwargs)
+
+        @property
+        def name(self):
+            return self._temporary.name
+
+        def __enter__(self):
+            self._temporary.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._temporary.__exit__(*args)
+
+        def write(self, payload):
+            events.append("write")
+            return self._temporary.write(payload)
+
+        def flush(self):
+            events.append("flush")
+            return self._temporary.flush()
+
+        def fileno(self):
+            return self._temporary.fileno()
+
+    def record_fsync(_descriptor):
+        events.append("file_fsync")
+
+    def record_replace(source, destination):
+        events.append("replace")
+        return real_replace(source, destination)
+
+    def record_parent_fsync(parent):
+        assert parent == paths.state_path.parent
+        events.append("parent_fsync")
+
+    monkeypatch.setattr(
+        cleanup.tempfile, "NamedTemporaryFile", RecordingTemporaryFile
+    )
+    monkeypatch.setattr(cleanup.os, "fsync", record_fsync)
+    monkeypatch.setattr(cleanup.os, "replace", record_replace)
+    monkeypatch.setattr(
+        cleanup, "_fsync_parent_directory", record_parent_fsync, raising=False
+    )
+
+    cleanup._write_state(
+        paths.state_path,
+        {"last_attempt_ts": 100, "last_success_ts": 99},
+    )
+
+    assert events == ["write", "flush", "file_fsync", "replace", "parent_fsync"]
+
+
+def test_write_state_cleans_temporary_file_when_fsync_fails(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text('{"last_attempt_ts":1,"last_success_ts":1}\n')
+    original = paths.state_path.read_bytes()
+
+    def fail_fsync(_descriptor):
+        raise OSError("injected fsync failure")
+
+    monkeypatch.setattr(cleanup.os, "fsync", fail_fsync)
+
+    with pytest.raises(OSError, match="injected fsync failure"):
+        cleanup._write_state(
+            paths.state_path,
+            {"last_attempt_ts": 100, "last_success_ts": 99},
+        )
+
+    assert paths.state_path.read_bytes() == original
+    assert list(paths.hooks_dir.glob(".jarvis_line_cleanup_state.json.*.tmp")) == []
+
+
+def test_parent_directory_fsync_uses_safe_directory_flags(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    real_open = cleanup.os.open
+    opened = []
+    fsynced = []
+
+    def record_open(path, flags, mode=0o777, *, dir_fd=None):
+        opened.append((Path(path), flags))
+        if dir_fd is None:
+            return real_open(path, flags, mode)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    def record_fsync(descriptor):
+        fsynced.append(descriptor)
+
+    monkeypatch.setattr(cleanup.os, "open", record_open)
+    monkeypatch.setattr(cleanup.os, "fsync", record_fsync)
+
+    cleanup._fsync_parent_directory(paths.hooks_dir)
+
+    assert len(opened) == 1
+    opened_path, flags = opened[0]
+    assert opened_path == paths.hooks_dir
+    if hasattr(os, "O_DIRECTORY"):
+        assert flags & os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        assert flags & os.O_NOFOLLOW
+    assert len(fsynced) == 1
+
+
+def test_parent_directory_fsync_tolerates_unsupported_platform_error(
+    tmp_path, monkeypatch
+):
+    paths = paths_for(tmp_path)
+
+    def unsupported_open(_path, _flags):
+        raise OSError(cleanup.errno.EINVAL, "directory fsync unsupported")
+
+    monkeypatch.setattr(cleanup.os, "open", unsupported_open)
+
+    cleanup._fsync_parent_directory(paths.hooks_dir)

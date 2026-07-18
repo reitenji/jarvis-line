@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
@@ -797,13 +798,46 @@ def _write_state(path: Path, state: Mapping[str, int]) -> None:
             suffix=".tmp",
             delete=False,
         ) as temporary:
-            temporary.write(payload)
             temporary_name = temporary.name
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
         os.chmod(temporary_name, 0o600)
         os.replace(temporary_name, path)
+        _fsync_parent_directory(path.parent)
     finally:
         if temporary_name:
             Path(temporary_name).unlink(missing_ok=True)
+
+
+def _fsync_parent_directory(path: Path) -> None:
+    unsupported = {
+        errno.EBADF,
+        errno.EINVAL,
+        getattr(errno, "ENOTSUP", errno.EINVAL),
+        getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+    }
+    if os.name == "nt":
+        unsupported.update({errno.EACCES, errno.EPERM})
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        if error.errno in unsupported:
+            return
+        raise
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError as error:
+            if error.errno not in unsupported:
+                raise
+    finally:
+        os.close(descriptor)
 
 
 def _operation_error_report(name: str) -> CleanupReport:
@@ -866,6 +900,102 @@ def _remove_claimed_cleanup_lock(
         return True
     except OSError:
         return False
+
+
+def _remove_failed_cleanup_lock(
+    claimed: _Candidate,
+    expected_owner: _Candidate | None,
+) -> bool:
+    try:
+        if not _same_directory_object(claimed, claimed.path.lstat()):
+            return False
+        with os.scandir(claimed.path) as entries:
+            entry = next(entries, None)
+            if entry is None:
+                claimed.path.rmdir()
+                return True
+            if (
+                expected_owner is None
+                or entry.name != LOCK_OWNER_NAME
+                or next(entries, None) is not None
+            ):
+                return False
+            owner_info = entry.stat(follow_symlinks=False)
+        if not _same_identity(expected_owner, owner_info):
+            return False
+        if not _same_directory_object(claimed, claimed.path.lstat()):
+            return False
+        owner_path = claimed.path / LOCK_OWNER_NAME
+        if not _same_identity(expected_owner, owner_path.lstat()):
+            return False
+        owner_path.unlink()
+        if not _same_directory_object(claimed, claimed.path.lstat()):
+            return False
+        if not _directory_is_empty(claimed.path):
+            return False
+        claimed.path.rmdir()
+        return True
+    except OSError:
+        return False
+
+
+def _prepare_cleanup_lock_quarantine(path: Path) -> bool:
+    quarantine_path = _lock_quarantine_path(path)
+    try:
+        info = quarantine_path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode):
+        return False
+    quarantine = _candidate_from_stat(
+        quarantine_path,
+        "cleanup",
+        info,
+        is_directory=True,
+    )
+    return _remove_failed_cleanup_lock(quarantine, None)
+
+
+def _quarantine_failed_cleanup_lock(
+    directory: _Candidate,
+    expected_owner: _Candidate | None,
+) -> bool:
+    quarantine_path = _lock_quarantine_path(directory.path)
+    try:
+        quarantine_path.lstat()
+        return False
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+
+    try:
+        if not _same_directory_object(directory, directory.path.lstat()):
+            return False
+        os.rename(directory.path, quarantine_path)
+    except OSError:
+        return False
+
+    claimed = _candidate_at_path(directory, quarantine_path)
+    try:
+        claimed_info = claimed.path.lstat()
+        if not _same_directory_object(claimed, claimed_info):
+            if stat.S_ISDIR(claimed_info.st_mode):
+                replacement = _candidate_from_stat(
+                    claimed.path,
+                    "cleanup",
+                    claimed_info,
+                    is_directory=True,
+                )
+                _restore_claim(replacement, directory.path)
+            return False
+    except OSError:
+        return False
+
+    _remove_failed_cleanup_lock(claimed, expected_owner)
+    return True
 
 
 def _recover_cleanup_lock(candidate: _Candidate, *, now: float) -> bool:
@@ -950,6 +1080,8 @@ def _release_cleanup_lock(acquired: _AcquiredCleanupLock) -> None:
 
 
 def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanupLock | None:
+    created_directory: _Candidate | None = None
+    created_owner: _Candidate | None = None
     try:
         try:
             hooks_info = paths.hooks_dir.lstat()
@@ -966,6 +1098,8 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
         )
 
         for _attempt in range(2):
+            if not _prepare_cleanup_lock_quarantine(paths.lock_dir):
+                raise OSError("blocked cleanup lock quarantine")
             try:
                 paths.lock_dir.mkdir()
             except FileExistsError:
@@ -977,17 +1111,66 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
             directory = _cleanup_lock_candidate(paths.lock_dir)
             if directory is None:
                 raise OSError("invalid cleanup lock")
+            created_directory = directory
             owner_path = paths.lock_dir / LOCK_OWNER_NAME
-            owner_path.write_text(
-                json.dumps({"pid": os.getpid(), "created_ts": int(now)}),
-                encoding="utf-8",
-            )
-            os.chmod(owner_path, 0o600)
+            owner_payload = json.dumps(
+                {"pid": os.getpid(), "created_ts": int(now)},
+                separators=(",", ":"),
+            ).encode("utf-8")
+            if len(owner_payload) > MAX_LOCK_OWNER_BYTES:
+                raise OSError("oversized cleanup lock owner")
+            descriptor = -1
+            try:
+                flags = (
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_NOFOLLOW", 0)
+                )
+                descriptor = os.open(owner_path, flags, 0o600)
+                owner_info = os.fstat(descriptor)
+                if not stat.S_ISREG(owner_info.st_mode):
+                    raise OSError("invalid cleanup lock owner")
+                created_owner = _candidate_from_stat(
+                    owner_path,
+                    "cleanup",
+                    owner_info,
+                )
+                written = 0
+                while written < len(owner_payload):
+                    count = os.write(descriptor, owner_payload[written:])
+                    if count <= 0:
+                        raise OSError("incomplete cleanup lock owner")
+                    written += count
+                os.fsync(descriptor)
+            finally:
+                if descriptor >= 0:
+                    try:
+                        owner_info = os.fstat(descriptor)
+                        if stat.S_ISREG(owner_info.st_mode):
+                            created_owner = _candidate_from_stat(
+                                owner_path,
+                                "cleanup",
+                                owner_info,
+                            )
+                    finally:
+                        os.close(descriptor)
+            if not _same_directory_object(
+                created_directory,
+                paths.lock_dir.lstat(),
+            ):
+                raise OSError("changed cleanup lock")
             directory = _cleanup_lock_candidate(paths.lock_dir)
             if directory is None:
                 raise OSError("invalid cleanup lock")
             owner = _read_lock_owner(directory)
-            if owner is None:
+            if (
+                owner is None
+                or owner.pid != os.getpid()
+                or owner.created_ts != int(now)
+                or created_owner is None
+                or not _same_identity(created_owner, owner_path.lstat())
+            ):
                 raise OSError("invalid cleanup lock owner")
             acquired = _AcquiredCleanupLock(directory=directory, owner=owner)
             if not _same_directory_object(hooks_root, paths.hooks_dir.lstat()):
@@ -995,16 +1178,8 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
                 raise OSError("changed hooks root")
             return acquired
     except OSError:
-        candidate = _cleanup_lock_candidate(paths.lock_dir)
-        if candidate is not None:
-            try:
-                owner = _read_lock_owner(candidate)
-            except OSError:
-                owner = None
-            if owner is not None and owner.pid == os.getpid():
-                _release_cleanup_lock(
-                    _AcquiredCleanupLock(directory=candidate, owner=owner)
-                )
+        if created_directory is not None:
+            _quarantine_failed_cleanup_lock(created_directory, created_owner)
         raise
     return None
 
