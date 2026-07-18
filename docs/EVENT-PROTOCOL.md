@@ -98,7 +98,9 @@ same session.
 
 The bundled Codex installer adds `SessionStart` and the official
 `PermissionRequest` hook. The permission hook classifies a bounded request
-locally and never approves or denies it.
+locally and never approves or denies it. Permission requests handled by Codex's
+automatic reviewer stay silent; requests routed to the user retain their spoken
+alert.
 
 A normal Plan-mode question is different: Codex records it as a structured
 `request_user_input` function call rather than a lifecycle hook. The existing

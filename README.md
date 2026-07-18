@@ -71,9 +71,10 @@ Jarvis Line has two complementary event paths:
 | Input required | "Your release choice is required." | Codex `request_user_input` or explicit protocol event |
 
 Attention alerts are opt-in. Entering Plan mode by itself does not speak;
-only an actual permission request or structured question does. Raw commands,
-answer choices, answers, and call IDs are not persisted by the built-in Codex
-attention adapters.
+only a user-reviewed permission request or structured question does. Codex
+requests handled by its automatic reviewer remain silent. Raw commands, answer
+choices, answers, and call IDs are not persisted by the built-in Codex attention
+adapters.
 
 See [Attention Alerts](https://github.com/reitenji/jarvis-line/wiki/Attention-Alerts) for behavior and controls.
 

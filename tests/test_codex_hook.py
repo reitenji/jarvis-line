@@ -52,6 +52,128 @@ def test_permission_hook_emits_normalized_event_without_stdout(monkeypatch, caps
     assert capsys.readouterr().out == ""
 
 
+def test_permission_hook_skips_auto_review_from_payload(monkeypatch, capsys):
+    patch_runtime(monkeypatch)
+    accepted = []
+    monkeypatch.setattr(
+        codex_hook.events,
+        "emit_event",
+        lambda event: accepted.append(event) or True,
+    )
+
+    assert codex_hook.permission_request_main(
+        io.StringIO(
+            json.dumps(
+                permission_payload(
+                    approval_context={"approvals_reviewer": "auto_review"}
+                )
+            )
+        )
+    ) == 0
+
+    assert accepted == []
+    assert capsys.readouterr().out == ""
+
+
+def test_permission_hook_skips_auto_review_from_latest_turn_context(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    patch_runtime(monkeypatch)
+    sessions_root = tmp_path / "sessions"
+    session_dir = sessions_root / "2026" / "07" / "18"
+    session_dir.mkdir(parents=True)
+    session_path = (
+        session_dir / "rollout-2026-07-18T00-00-00-session-transcript.jsonl"
+    )
+    session_path.write_text(
+        json.dumps(
+            {
+                "type": "turn_context",
+                "payload": {"approvals_reviewer": "auto_review"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(codex_hook, "SESSIONS_ROOT", sessions_root, raising=False)
+    accepted = []
+    monkeypatch.setattr(
+        codex_hook.events,
+        "emit_event",
+        lambda event: accepted.append(event) or True,
+    )
+
+    assert codex_hook.permission_request_main(
+        io.StringIO(
+            json.dumps(permission_payload(session_id="session-transcript"))
+        )
+    ) == 0
+
+    assert accepted == []
+    assert capsys.readouterr().out == ""
+
+
+def test_permission_hook_skips_auto_review_from_watcher_cache(
+    tmp_path,
+    monkeypatch,
+):
+    patch_runtime(monkeypatch)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "__approval_contexts__": {
+                    "codex:session-1": {
+                        "approvals_reviewer": "auto_review",
+                        "updated_ts_ms": 100_000,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(codex_hook.events.watcher, "STATE_PATH", state_path)
+    monkeypatch.setattr(codex_hook.events.watcher.time, "time", lambda: 100.0)
+    monkeypatch.setattr(codex_hook, "SESSIONS_ROOT", tmp_path / "missing", raising=False)
+    accepted = []
+    monkeypatch.setattr(
+        codex_hook.events,
+        "emit_event",
+        lambda event: accepted.append(event) or True,
+    )
+
+    assert codex_hook.permission_request_main(
+        io.StringIO(json.dumps(permission_payload()))
+    ) == 0
+
+    assert accepted == []
+
+
+def test_permission_hook_keeps_user_reviewed_request(monkeypatch):
+    patch_runtime(monkeypatch)
+    accepted = []
+    monkeypatch.setattr(
+        codex_hook.events,
+        "emit_event",
+        lambda event: accepted.append(event) or True,
+    )
+
+    assert codex_hook.permission_request_main(
+        io.StringIO(
+            json.dumps(
+                permission_payload(
+                    approval_context={"approvals_reviewer": "user"}
+                )
+            )
+        )
+    ) == 0
+
+    assert len(accepted) == 1
+    assert accepted[0].attention_type == "permission_request"
+
+
 def test_permission_hook_discards_raw_request_content(monkeypatch):
     patch_runtime(monkeypatch)
     accepted = []

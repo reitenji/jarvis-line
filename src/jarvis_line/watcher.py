@@ -57,6 +57,7 @@ AUDIO_QUEUE_MAX_JOBS = 8
 ATTENTION_TTL_SECONDS = 30
 ATTENTION_CANCELLATION_MAX_ENTRIES = 64
 SESSION_RECOVERY_WINDOW_SECONDS = 5 * 60
+APPROVAL_CONTEXTS_MAX_ENTRIES = 64
 CODEX_SESSION_ID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
@@ -630,6 +631,58 @@ def latest_cached_message(
     return entry
 
 
+def remember_approval_reviewer(session_key: str, reviewer: object) -> bool:
+    normalized = str(reviewer or "").strip().lower()
+    if normalized not in {"user", "auto_review", "guardian_subagent"}:
+        return False
+    now_ms = int(time.time() * 1000)
+
+    def mutate(state):
+        contexts = state.setdefault("__approval_contexts__", {})
+        if not isinstance(contexts, dict):
+            contexts = {}
+            state["__approval_contexts__"] = contexts
+        contexts[session_key] = {
+            "approvals_reviewer": normalized,
+            "updated_ts_ms": now_ms,
+        }
+        stale_before = now_ms - SESSION_SCAN_WINDOW_SECONDS * 1000
+        ordered = sorted(
+            (
+                (key, value)
+                for key, value in contexts.items()
+                if isinstance(value, dict)
+            ),
+            key=lambda item: int(item[1].get("updated_ts_ms") or 0),
+            reverse=True,
+        )
+        state["__approval_contexts__"] = {
+            key: value
+            for key, value in ordered[:APPROVAL_CONTEXTS_MAX_ENTRIES]
+            if int(value.get("updated_ts_ms") or 0) >= stale_before
+        }
+
+    update_json(STATE_PATH, {}, mutate)
+    return True
+
+
+def cached_approval_reviewer(session_key: str) -> str | None:
+    state = load_json(STATE_PATH, {})
+    contexts = state.get("__approval_contexts__") if isinstance(state, dict) else {}
+    if not isinstance(contexts, dict):
+        return None
+    context = contexts.get(session_key)
+    if not isinstance(context, dict):
+        return None
+    updated_ts_ms = int(context.get("updated_ts_ms") or 0)
+    if updated_ts_ms < int(time.time() * 1000) - SESSION_SCAN_WINDOW_SECONDS * 1000:
+        return None
+    reviewer = str(context.get("approvals_reviewer") or "").strip().lower()
+    if reviewer not in {"user", "auto_review", "guardian_subagent"}:
+        return None
+    return reviewer
+
+
 def enqueue_audio_job(
     session_key: str,
     phase: str,
@@ -1056,6 +1109,14 @@ def process_line(raw_line: str, session_key: str) -> None:
     except Exception:
         return
     if not isinstance(event, dict):
+        return
+    if event.get("type") == "turn_context":
+        turn_payload = event.get("payload")
+        if isinstance(turn_payload, dict):
+            remember_approval_reviewer(
+                session_key,
+                turn_payload.get("approvals_reviewer"),
+            )
         return
     if event.get("type") == "response_item":
         response_payload = event.get("payload")

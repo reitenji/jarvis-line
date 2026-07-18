@@ -271,6 +271,66 @@ def test_process_line_ignores_auto_resolving_plan_mode_input(monkeypatch):
     assert queued == []
 
 
+def test_process_line_caches_effective_approval_reviewer(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+
+    watcher.process_line(
+        json.dumps(
+            {
+                "type": "turn_context",
+                "payload": {"approvals_reviewer": "auto_review"},
+            }
+        ),
+        "codex:session-1",
+    )
+
+    state = watcher.load_json(tmp_path / "state.json", {})
+    assert state["__approval_contexts__"]["codex:session-1"][
+        "approvals_reviewer"
+    ] == "auto_review"
+
+
+def test_cached_approval_reviewer_ignores_stale_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher.time, "time", lambda: 100_000.0)
+    watcher.save_json(
+        tmp_path / "state.json",
+        {
+            "__approval_contexts__": {
+                "codex:session-1": {
+                    "approvals_reviewer": "auto_review",
+                    "updated_ts_ms": 1,
+                }
+            }
+        },
+    )
+
+    assert watcher.cached_approval_reviewer("codex:session-1") is None
+
+
+def test_process_line_replaces_malformed_approval_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    watcher.save_json(
+        tmp_path / "state.json",
+        {"__approval_contexts__": {"broken": "not-an-object"}},
+    )
+
+    watcher.process_line(
+        json.dumps(
+            {
+                "type": "turn_context",
+                "payload": {"approvals_reviewer": "user"},
+            }
+        ),
+        "codex:session-1",
+    )
+
+    assert watcher.cached_approval_reviewer("codex:session-1") == "user"
+
+
 def test_process_line_cancels_matching_plan_mode_input_result(monkeypatch):
     cancelled = []
     monkeypatch.setattr(

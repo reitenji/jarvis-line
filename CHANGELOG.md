@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add opt-in, content-aware attention alerts for Codex permission requests and Plan-mode questions.
+- Keep Codex permission alerts silent when the effective reviewer is automatic, while preserving alerts routed to the user.
 - Extend the versioned event protocol with `attention`, `permission_request`, and `input_required` events for third-party adapters.
 - Prioritize short-lived attention jobs without interrupting active playback, isolate them by session, and cancel answered Plan-mode prompts before playback when possible.
 - Keep raw tool input, answer choices, answers, and call IDs out of queue metadata, diagnostics, and support output.
