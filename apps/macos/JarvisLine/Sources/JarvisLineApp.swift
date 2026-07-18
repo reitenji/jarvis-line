@@ -201,6 +201,8 @@ final class JarvisLineModel: ObservableObject {
     private let configStore: JarvisConfigStore
     private var setupInspectionState = SetupFirstRunInspectionState()
     private var confirmationID: UUID?
+    private var cleanupStatusRefreshRequested = false
+    private(set) var cleanupStatusRefreshTask: Task<Void, Never>?
     var onInitialSetupInspection: ((SetupInspection) -> Void)?
 
     init(
@@ -313,6 +315,11 @@ final class JarvisLineModel: ObservableObject {
         }
     }
 
+    func requestCleanupStatusRefresh() {
+        cleanupStatusRefreshRequested = true
+        startCleanupStatusRefreshIfPossible()
+    }
+
     func cleanStorage() async {
         await run(label: "Clean Storage") {
             var pendingError: Error?
@@ -328,7 +335,7 @@ final class JarvisLineModel: ObservableObject {
                 cleanupStatus = try await loadCleanupStatus()
             } catch {
                 if pendingError == nil {
-                    pendingError = error
+                    cleanupResultText += ". Status refresh unavailable"
                 }
             }
 
@@ -512,12 +519,36 @@ final class JarvisLineModel: ObservableObject {
         onInitialSetupInspection?(inspection)
     }
 
+    private func startCleanupStatusRefreshIfPossible() {
+        guard cleanupStatusRefreshRequested,
+              !isBusy,
+              cleanupStatusRefreshTask == nil else {
+            return
+        }
+
+        cleanupStatusRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard !self.isBusy else {
+                self.cleanupStatusRefreshTask = nil
+                return
+            }
+
+            self.cleanupStatusRefreshRequested = false
+            await self.refreshCleanupStatus()
+            self.cleanupStatusRefreshTask = nil
+            self.startCleanupStatusRefreshIfPossible()
+        }
+    }
+
     @discardableResult
     private func run(label: String, operation: () async throws -> Void) async -> Bool {
         guard !isBusy else { return false }
         isBusy = true
         errorMessage = nil
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            startCleanupStatusRefreshIfPossible()
+        }
 
         do {
             try await operation()

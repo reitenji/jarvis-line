@@ -55,7 +55,7 @@ struct SettingsWindowView: View {
         }
         .onChange(of: destination) { newDestination in
             guard newDestination == .diagnostics else { return }
-            Task { await model.refreshCleanupStatus() }
+            model.requestCleanupStatusRefresh()
         }
     }
 
@@ -563,6 +563,7 @@ struct SettingsWindowView: View {
                         .buttonStyle(.borderless)
                         .help("Refresh cleanup status")
                         .accessibilityLabel("Refresh cleanup status")
+                        .accessibilityHint("Updates cleanup history and reclaimable storage")
 
                         Button {
                             Task { await model.cleanStorage() }
@@ -570,6 +571,9 @@ struct SettingsWindowView: View {
                             Label("Clean Now", systemImage: "trash")
                         }
                         .buttonStyle(.borderedProminent)
+                        .help("Clean eligible storage now")
+                        .accessibilityLabel("Clean storage now")
+                        .accessibilityHint("Removes eligible files and refreshes cleanup status")
                     }
                     .disabled(model.isBusy)
                 }
@@ -721,7 +725,8 @@ struct SettingsWindowView: View {
 
     private var cleanupResultState: SettingsStatusState? {
         if model.cleanupResultText == "Cleanup failed"
-            || model.cleanupResultText.contains("error") {
+            || model.cleanupResultText.contains("error")
+            || model.cleanupResultText.contains("unavailable") {
             return .warning
         }
         if model.cleanupResultText != "Not checked" {
