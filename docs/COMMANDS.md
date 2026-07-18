@@ -218,6 +218,74 @@ cached_sessions: 2
 speak_mode: final_only
 ```
 
+## `cleanup`
+
+Inspect safe, reclaimable Jarvis Line runtime artifacts without changing files:
+
+```bash
+jarvis-line cleanup status
+jarvis-line cleanup status --json
+```
+
+Remove the same eligible artifacts now:
+
+```bash
+jarvis-line cleanup run
+jarvis-line cleanup run --json
+```
+
+`status` is read-only: it does not delete files or update cleanup scheduling
+state. This is a current human-readable `status` result:
+
+```text
+Jarvis Line cleanup status
+Eligible: 12 files
+Reclaimable: 2.7 MB
+Skipped: 0 files
+Errors: 0
+Last successful cleanup: never
+```
+
+`--json` writes one JSON object to standard output. Its stable public shape is
+the following; it contains aggregate counters plus the same counters for each
+allowlisted category, never filesystem paths or file contents:
+
+```json
+{
+  "mode": "status",
+  "eligible_files": 12,
+  "eligible_bytes": 2844176,
+  "removed_files": 0,
+  "removed_bytes": 0,
+  "skipped_files": 0,
+  "error_count": 0,
+  "errors": [],
+  "already_running": false,
+  "last_success_at": null,
+  "categories": {
+    "generated_audio": {"eligible_files": 12, "eligible_bytes": 2844176, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0},
+    "rotated_logs": {"eligible_files": 0, "eligible_bytes": 0, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0},
+    "runtime_temp": {"eligible_files": 0, "eligible_bytes": 0, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0},
+    "stale_locks": {"eligible_files": 0, "eligible_bytes": 0, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0}
+  }
+}
+```
+
+`run` exits `0` when it completes without errors. It returns `1` for a partial
+result or a cleanup error, after reporting every successful deletion and up to
+50 redacted error details. An already-running cleanup is a safe no-op and exits
+`0` with `Cleanup already running; no action taken.`
+
+Cleanup only considers fixed Jarvis Line locations: generated audio older than
+10 minutes for a manual run, recognized temporary artifacts older than one
+hour, rotated logs older than seven days, and stale locks only when their owner
+is proven dead. It skips symlinks, unknown names, nested content, and active
+or changed entries. Configuration, hook definitions, queue/state/cache files,
+current logs and trace, Kokoro models and voices, custom TTS/output paths,
+support reports, and other user files are excluded. For the rare failed lock
+recovery, cleanup uses a bounded fixed quarantine; manual intervention is only
+needed if that recovery cannot complete.
+
 ## `update`
 
 ```bash
