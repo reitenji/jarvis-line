@@ -56,6 +56,8 @@ enum SettingsApplyImpact: Equatable {
         guard saved != draft else { return .none }
 
         var normalizedSaved = saved
+        normalizedSaved.cleanupEnabled = draft.cleanupEnabled
+        normalizedSaved.cleanupIntervalHours = draft.cleanupIntervalHours
         normalizedSaved.updateCheckEnabled = draft.updateCheckEnabled
         normalizedSaved.updateCheckIntervalHours = draft.updateCheckIntervalHours
 

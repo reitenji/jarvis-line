@@ -218,6 +218,78 @@ cached_sessions: 2
 speak_mode: final_only
 ```
 
+## `cleanup`
+
+Inspect safe, reclaimable Jarvis Line runtime artifacts without changing files:
+
+```bash
+jarvis-line cleanup status
+jarvis-line cleanup status --json
+```
+
+Remove the same eligible artifacts now:
+
+```bash
+jarvis-line cleanup run
+jarvis-line cleanup run --json
+```
+
+`status` is read-only: it does not delete files or update cleanup scheduling
+state. This is a current human-readable `status` result:
+
+```text
+Jarvis Line cleanup status
+Eligible: 12 files
+Reclaimable: 2.7 MB
+Skipped: 0 files
+Errors: 0
+Last successful cleanup: never
+```
+
+`--json` writes one JSON object to standard output. Its stable public shape is
+the following; it contains aggregate counters plus the same counters for each
+allowlisted category, never filesystem paths or file contents:
+
+```json
+{
+  "mode": "status",
+  "eligible_files": 12,
+  "eligible_bytes": 2844176,
+  "removed_files": 0,
+  "removed_bytes": 0,
+  "skipped_files": 0,
+  "error_count": 0,
+  "errors": [],
+  "already_running": false,
+  "last_success_at": null,
+  "categories": {
+    "generated_audio": {"eligible_files": 12, "eligible_bytes": 2844176, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0},
+    "rotated_logs": {"eligible_files": 0, "eligible_bytes": 0, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0},
+    "runtime_temp": {"eligible_files": 0, "eligible_bytes": 0, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0},
+    "stale_locks": {"eligible_files": 0, "eligible_bytes": 0, "removed_files": 0, "removed_bytes": 0, "skipped_files": 0, "error_count": 0}
+  }
+}
+```
+
+`cleanup status` and `cleanup run` exit `0` on success. `cleanup run` also exits
+`0` when another cleanup is already running and it performs a safe no-op. Either
+command exits `1` when `error_count > 0`, including in `--json` mode. Partial
+results report aggregate file and byte totals, including `eligible`, `removed`,
+and `skipped` totals, plus the complete `error_count`; they do not report each
+successful deletion. The `errors` field contains at most 50 redacted error
+names. Human-readable output says `Cleanup already running; no action taken.`
+for the safe no-op.
+
+Cleanup only considers fixed Jarvis Line locations: generated audio older than
+10 minutes for a manual run, recognized temporary artifacts older than one
+hour, rotated logs older than seven days, and stale locks only when their owner
+is proven dead. It skips symlinks, unknown names, nested content, and active
+or changed entries. Configuration, hook definitions, queue/state/cache files,
+current logs and trace, Kokoro models and voices, custom TTS/output paths,
+support reports, and other user files are excluded. For the rare failed lock
+recovery, cleanup uses a bounded fixed quarantine; manual intervention is only
+needed if that recovery cannot complete.
+
 ## `update`
 
 ```bash
@@ -225,8 +297,8 @@ jarvis-line update check
 ```
 
 ```text
-Current version: 0.6.0
-Latest version: 0.6.0
+Current version: 0.7.0
+Latest version: 0.7.0
 Jarvis Line is up to date.
 ```
 
@@ -237,8 +309,8 @@ jarvis-line update check --source git --repo https://github.com/reitenji/jarvis-
 ```
 
 ```text
-Current version: 0.6.0
-Latest version: 0.6.0
+Current version: 0.7.0
+Latest version: 0.7.0
 Jarvis Line is up to date.
 ```
 
@@ -249,9 +321,9 @@ jarvis-line update apply
 ```
 
 ```text
-Current version: 0.5.0
-Latest version: 0.6.0
-Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.6.0
+Current version: 0.6.0
+Latest version: 0.7.0
+Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.7.0
 Next: run `jarvis-line --version` and `jarvis-line doctor`.
 ```
 

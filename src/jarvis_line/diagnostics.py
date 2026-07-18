@@ -100,7 +100,13 @@ def _trim_trace_unlocked() -> None:
         data = data[first_newline + 1 :]
     tmp_name = ""
     try:
-        with tempfile.NamedTemporaryFile("wb", dir=TRACE_PATH.parent, delete=False) as tmp_file:
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=TRACE_PATH.parent,
+            prefix=f".{TRACE_PATH.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
             tmp_file.write(data)
             tmp_name = tmp_file.name
         os.replace(tmp_name, TRACE_PATH)

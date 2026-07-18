@@ -15,6 +15,34 @@ def test_format_command_parts_replaces_placeholders():
     assert parts == ["tts", "--text", '"hello"', "--out", str(output_path)]
 
 
+def test_save_json_unlocked_uses_recognizable_temporary_name(tmp_path, monkeypatch):
+    path = tmp_path / "jarvis_line_audio_queue.json"
+    real_named_temporary_file = audio_worker.tempfile.NamedTemporaryFile
+    calls = []
+
+    def record_temporary_file(*args, **kwargs):
+        calls.append(kwargs)
+        return real_named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(
+        audio_worker.tempfile,
+        "NamedTemporaryFile",
+        record_temporary_file,
+    )
+
+    audio_worker.save_json_unlocked(path, {"jobs": []})
+
+    assert calls == [
+        {
+            "encoding": "utf-8",
+            "dir": path.parent,
+            "prefix": ".jarvis_line_audio_queue.json.",
+            "suffix": ".tmp",
+            "delete": False,
+        }
+    ]
+
+
 def test_dequeue_drops_stale_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_worker, "QUEUE_PATH", tmp_path / "queue.json")
     monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "lock")

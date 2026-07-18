@@ -53,6 +53,10 @@ struct SettingsWindowView: View {
         .task {
             await model.refresh()
         }
+        .onChange(of: destination) { newDestination in
+            guard newDestination == .diagnostics else { return }
+            model.requestCleanupStatusRefresh()
+        }
     }
 
     @ViewBuilder
@@ -516,6 +520,65 @@ struct SettingsWindowView: View {
                 SettingsValueRow(title: "Queue", value: "\(model.status.queueJobs) lines")
             }
 
+            SettingsSection(title: "Storage & Cleanup") {
+                SettingsRow(title: "Automatic cleanup") {
+                    Toggle("Automatic cleanup", isOn: $model.config.cleanupEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+
+                SettingsRow(title: "Frequency") {
+                    Picker("Cleanup frequency", selection: $model.config.cleanupIntervalHours) {
+                        Text("Daily").tag(24)
+                        Text("Weekly").tag(168)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                    .disabled(!model.config.cleanupEnabled)
+                }
+
+                SettingsValueRow(
+                    title: "Last cleanup",
+                    value: model.cleanupStatus.lastSuccessText
+                )
+                SettingsValueRow(
+                    title: "Reclaimable",
+                    value: cleanupReclaimableText
+                )
+                SettingsValueRow(
+                    title: "Last result",
+                    value: model.cleanupResultText,
+                    state: cleanupResultState
+                )
+
+                SettingsRow(title: "Maintenance") {
+                    HStack(spacing: 9) {
+                        Button {
+                            Task { await model.refreshCleanupStatus() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh cleanup status")
+                        .accessibilityLabel("Refresh cleanup status")
+                        .accessibilityHint("Updates cleanup history and reclaimable storage")
+
+                        Button {
+                            Task { await model.cleanStorage() }
+                        } label: {
+                            Label("Clean Now", systemImage: "trash")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .help("Clean eligible storage now")
+                        .accessibilityLabel("Clean storage now")
+                        .accessibilityHint("Removes eligible files and refreshes cleanup status")
+                    }
+                    .disabled(model.isBusy)
+                }
+            }
+
             SettingsSection(title: "Runtime Controls") {
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 9) {
@@ -652,6 +715,24 @@ struct SettingsWindowView: View {
         model.pendingApplyImpact == .restartRuntime
             ? "Save settings and restart the voice runtime"
             : "Save settings"
+    }
+
+    private var cleanupReclaimableText: String {
+        let count = model.cleanupStatus.eligibleFiles
+        let fileWord = count == 1 ? "file" : "files"
+        return "\(count) \(fileWord) · \(model.cleanupStatus.reclaimableText)"
+    }
+
+    private var cleanupResultState: SettingsStatusState? {
+        if model.cleanupResultText == "Cleanup failed"
+            || model.cleanupResultText.contains("error")
+            || model.cleanupResultText.contains("unavailable") {
+            return .warning
+        }
+        if model.cleanupResultText != "Not checked" {
+            return .healthy
+        }
+        return nil
     }
 
     private func validationText(first issue: String) -> String {

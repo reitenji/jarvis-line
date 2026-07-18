@@ -11,12 +11,20 @@ def test_contract_contains_defaults_fields_and_backends():
     assert contract["defaults"]["tts"] == "kokoro"
     assert contract["defaults"]["debug_content_logging"] is False
     assert contract["defaults"]["attention_enabled"] is False
+    assert contract["defaults"]["cleanup_enabled"] is True
+    assert contract["defaults"]["cleanup_interval_hours"] == 24
     assert contract["fields"]["attention_enabled"]["type"] == "boolean"
+    assert contract["fields"]["cleanup_enabled"]["type"] == "boolean"
+    assert contract["fields"]["cleanup_interval_hours"]["values"] == [24, 168]
     assert contract["fields"]["tts"]["values"] == ["command", "kokoro", "macos", "system"]
     assert contract["ui_options"]["tts"] == ["kokoro", "system", "macos", "command"]
+    assert contract["ui_options"]["cleanup_interval_hours"] == [24, 168]
     assert 185 in contract["ui_options"]["system_rate"]
     assert "system" in contract["backends"]
     assert isinstance(contract["backends"]["system"]["supports"], list)
+    for backend in contract["backends"].values():
+        assert "cleanup_enabled" in backend["supports"]
+        assert "cleanup_interval_hours" in backend["supports"]
 
 
 def test_default_config_is_a_deep_copy():

@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import diagnostics, kokoro_say as ks
+from jarvis_line import cleanup, diagnostics, kokoro_say as ks
 from jarvis_line.attention import (
     ATTENTION_TYPES,
     correlation_token,
@@ -58,6 +58,7 @@ ATTENTION_TTL_SECONDS = 30
 ATTENTION_CANCELLATION_MAX_ENTRIES = 64
 SESSION_RECOVERY_WINDOW_SECONDS = 5 * 60
 APPROVAL_CONTEXTS_MAX_ENTRIES = 64
+CLEANUP_CHECK_GATE_SECONDS = 60 * 60
 CODEX_SESSION_ID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
@@ -151,6 +152,33 @@ def append_log(message: str) -> None:
             f.write(f"{int(time.time())} {message}\n")
     except Exception:
         pass
+
+
+def maybe_run_cleanup(
+    last_check_monotonic: float,
+    now_monotonic: float | None = None,
+) -> float:
+    current = time.monotonic() if now_monotonic is None else now_monotonic
+    if (
+        last_check_monotonic > 0
+        and current - last_check_monotonic < CLEANUP_CHECK_GATE_SECONDS
+    ):
+        return last_check_monotonic
+    try:
+        report = cleanup.run_if_due(runtime_config())
+    except Exception as error:
+        append_log(
+            f"cleanup-error type={error.__class__.__name__} error_count=1"
+        )
+        return current
+    if report is not None and not report.already_running:
+        append_log(
+            "cleanup-run mode=automatic "
+            f"removed={report.removed_files} "
+            f"reclaimed_bytes={report.removed_bytes} "
+            f"error_count={report.error_count}"
+        )
+    return current
 
 
 def rotate_log_if_needed() -> None:
@@ -1310,10 +1338,12 @@ def watch_file(path: Path, read_existing: bool = False) -> int:
     session_key = session_key_for_path(path)
     append_log(f"watch-start {diagnostics.runtime_log_context(session_key=session_key)}")
     launch_audio_worker()
+    last_cleanup_check = maybe_run_cleanup(0.0)
     with path.open("r", encoding="utf-8", errors="ignore") as f:
         if not read_existing:
             f.seek(0, os.SEEK_END)
         while True:
+            last_cleanup_check = maybe_run_cleanup(last_cleanup_check)
             line = f.readline()
             if line:
                 process_line(line, session_key)
@@ -1324,6 +1354,7 @@ def watch_file(path: Path, read_existing: bool = False) -> int:
 def watch_sessions(read_existing: bool = False) -> int:
     append_log("watch-sessions-start")
     launch_audio_worker()
+    last_cleanup_check = maybe_run_cleanup(0.0)
 
     handles: dict[str, Any] = {}
     last_refresh = 0.0
@@ -1331,6 +1362,7 @@ def watch_sessions(read_existing: bool = False) -> int:
     recovery_min_ts_ms = int((time.time() - SESSION_RECOVERY_WINDOW_SECONDS) * 1000)
 
     while True:
+        last_cleanup_check = maybe_run_cleanup(last_cleanup_check)
         now = time.time()
         if now - last_heartbeat >= WATCHER_HEARTBEAT_SECONDS:
             reap_child_processes()

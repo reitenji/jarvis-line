@@ -3,6 +3,18 @@ import Testing
 @testable import JarvisLine
 
 struct JarvisConfigContractTests {
+    @Test func cleanupDefaultsAreBoundedAndPersist() {
+        var draft = JarvisConfigDraft([:])
+
+        #expect(draft.cleanupEnabled)
+        #expect(draft.cleanupIntervalHours == 24)
+        draft.cleanupEnabled = false
+        draft.cleanupIntervalHours = 168
+        let saved = draft.applying(to: [:])
+        #expect(saved["cleanup_enabled"] as? Bool == false)
+        #expect(saved["cleanup_interval_hours"] as? Int == 168)
+    }
+
     @Test func attentionDefaultsOffAndPersists() {
         var draft = JarvisConfigDraft([:])
 

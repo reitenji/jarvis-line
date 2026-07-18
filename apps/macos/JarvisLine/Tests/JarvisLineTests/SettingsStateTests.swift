@@ -31,6 +31,15 @@ struct SettingsStateTests {
         )
     }
 
+    @Test func cleanupOnlyChangesDoNotRestartRuntime() {
+        var draft = JarvisConfigDraft.defaults
+        draft.cleanupIntervalHours = 168
+
+        #expect(
+            SettingsApplyImpact.between(.defaults, draft) == .saveOnly
+        )
+    }
+
     @Test func speechChangesRestartRuntime() {
         var draft = JarvisConfigDraft.defaults
         draft.volume = 0.6
