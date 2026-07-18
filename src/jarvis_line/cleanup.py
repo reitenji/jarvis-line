@@ -307,17 +307,17 @@ def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
             or next(entries, None) is not None
         ):
             return None
-        owner_info = owner_entry.stat(follow_symlinks=False)
-        if (
-            not stat.S_ISREG(owner_info.st_mode)
-            or owner_info.st_size > MAX_LOCK_OWNER_BYTES
-        ):
-            return None
 
     if not _same_identity(candidate, candidate.path.lstat()):
         return None
 
     owner_path = candidate.path / LOCK_OWNER_NAME
+    owner_info = owner_path.lstat()
+    if (
+        not stat.S_ISREG(owner_info.st_mode)
+        or owner_info.st_size > MAX_LOCK_OWNER_BYTES
+    ):
+        return None
     owner_candidate = _candidate_from_stat(owner_path, "cleanup", owner_info)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(owner_path, flags)
