@@ -1509,3 +1509,14 @@ def test_parent_directory_fsync_tolerates_unsupported_platform_error(
     monkeypatch.setattr(cleanup.os, "open", unsupported_open)
 
     cleanup._fsync_parent_directory(paths.hooks_dir)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific lock regression")
+def test_cleanup_lock_can_be_acquired_on_windows(tmp_path):
+    paths = paths_for(tmp_path)
+
+    acquired = cleanup._acquire_cleanup_lock(paths, now=200_000)
+
+    assert acquired is not None
+    cleanup._release_cleanup_lock(acquired)
+    assert not paths.lock_dir.exists()
