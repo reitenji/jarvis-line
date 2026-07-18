@@ -2,12 +2,17 @@ import argparse
 import json
 import os
 import stat
+import tempfile
 
 from jarvis_line import cli, diagnostics
 
 
 def configure_paths(tmp_path, monkeypatch):
-    monkeypatch.setattr(diagnostics, "TRACE_PATH", tmp_path / "trace.jsonl")
+    monkeypatch.setattr(
+        diagnostics,
+        "TRACE_PATH",
+        tmp_path / "jarvis_line_trace.jsonl",
+    )
     monkeypatch.setattr(diagnostics, "TRACE_LOCK_PATH", tmp_path / "trace.lock")
 
 
@@ -51,6 +56,31 @@ def test_trace_rotation_preserves_newest_events(tmp_path, monkeypatch):
     events = diagnostics.read_events(3)
     assert [event["message_id"] for event in events] == ["37", "38", "39"]
     assert diagnostics.TRACE_PATH.stat().st_size <= 1024
+
+
+def test_trace_trim_uses_recognizable_temp_name(tmp_path, monkeypatch):
+    configure_paths(tmp_path, monkeypatch)
+    diagnostics.TRACE_PATH.write_bytes(b'{"event":"old"}\n{"event":"new"}\n')
+    monkeypatch.setattr(diagnostics, "TRACE_MAX_BYTES", 1)
+    real_named_temporary_file = tempfile.NamedTemporaryFile
+    calls = []
+
+    def record_temporary_file(*args, **kwargs):
+        calls.append(kwargs)
+        return real_named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", record_temporary_file)
+
+    diagnostics._trim_trace_unlocked()
+
+    assert calls == [
+        {
+            "dir": diagnostics.TRACE_PATH.parent,
+            "prefix": ".jarvis_line_trace.jsonl.",
+            "suffix": ".tmp",
+            "delete": False,
+        }
+    ]
 
 
 def test_runtime_log_context_is_private_by_default():

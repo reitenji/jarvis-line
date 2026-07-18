@@ -173,6 +173,7 @@ def test_run_removes_only_exact_old_diagnostics_and_atomic_temp_allowlists(tmp_p
     paths = paths_for(tmp_path)
     rotated = paths.watcher_log.with_suffix(".log.1")
     temporary = paths.hooks_dir / ".jarvis_line_audio_queue.json.1.2.tmp"
+    state_temporary = paths.hooks_dir / ".jarvis_line_cleanup_state.json.old.tmp"
     current_log = paths.watcher_log
     current_queue = paths.hooks_dir / "jarvis_line_audio_queue.json"
     current_state = paths.state_path
@@ -182,6 +183,7 @@ def test_run_removes_only_exact_old_diagnostics_and_atomic_temp_allowlists(tmp_p
     for path in (
         rotated,
         temporary,
+        state_temporary,
         current_log,
         current_queue,
         current_state,
@@ -196,15 +198,16 @@ def test_run_removes_only_exact_old_diagnostics_and_atomic_temp_allowlists(tmp_p
 
     assert not rotated.exists()
     assert not temporary.exists()
+    assert not state_temporary.exists()
     assert current_log.exists()
     assert current_queue.exists()
     assert current_state.exists()
     assert unexpected_temp.exists()
     assert near_match_log.exists()
     assert near_match_temp.exists()
-    assert report.removed_files == 2
+    assert report.removed_files == 3
     assert report.categories["rotated_logs"].removed_files == 1
-    assert report.categories["runtime_temp"].removed_files == 1
+    assert report.categories["runtime_temp"].removed_files == 2
 
 
 def test_runtime_temp_requires_one_hour_age(tmp_path):
@@ -292,7 +295,7 @@ def test_run_removes_only_old_known_lock_with_a_dead_recorded_owner(
     assert not stale.exists()
     assert recent.exists()
     assert nonempty.exists()
-    assert cleanup_lock.exists()
+    assert not cleanup_lock.exists()
     assert unknown.exists()
     assert not quarantine_for(stale).exists()
     assert report.categories["stale_locks"].removed_files == 1
@@ -314,7 +317,7 @@ def test_cleanup_claims_dead_lock_before_removing_owner(tmp_path, monkeypatch):
     owner_locations = []
 
     def unlink(path, *args, **kwargs):
-        if path.name == "owner.json":
+        if path.parent == quarantine and path.name == "owner.json":
             owner_locations.append((path.parent, lock.exists()))
         return original_unlink(path, *args, **kwargs)
 
@@ -798,6 +801,7 @@ def test_cleanup_report_to_dict_has_stable_totals_and_categories(tmp_path):
         "removed_bytes",
         "skipped_files",
         "error_count",
+        "already_running",
         "errors",
         "categories",
     ]
@@ -823,3 +827,276 @@ def test_cleanup_paths_default_uses_only_known_storage_locations(monkeypatch, tm
         watcher_log=hooks / "jarvis_line_watcher.log",
         worker_log=hooks / "jarvis_line_audio_worker.log",
     )
+
+
+def test_run_if_due_respects_enabled_interval_and_records_success(tmp_path):
+    paths = paths_for(tmp_path)
+    audio = paths.generated_audio_dir / "kokoro_old.wav"
+    audio.write_bytes(b"x")
+    age(audio, cleanup.AUTO_AUDIO_AGE_SECONDS + 1, now=200_000)
+
+    first = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": 24},
+        paths,
+        now=200_000,
+    )
+    second = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": 24},
+        paths,
+        now=200_100,
+    )
+
+    assert first is not None and first.removed_files == 1
+    assert second is None
+    assert json.loads(paths.state_path.read_text()) == {
+        "last_attempt_ts": 200_000,
+        "last_success_ts": 200_000,
+    }
+
+
+def test_run_if_due_disabled_does_not_create_state_or_lock(tmp_path):
+    paths = paths_for(tmp_path)
+
+    report = cleanup.run_if_due(
+        {"cleanup_enabled": False, "cleanup_interval_hours": 24},
+        paths,
+        now=200_000,
+    )
+
+    assert report is None
+    assert not paths.state_path.exists()
+    assert not paths.lock_dir.exists()
+
+
+def test_run_if_due_supports_weekly_interval(tmp_path):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text(
+        json.dumps({"last_attempt_ts": 200_000, "last_success_ts": 100_000})
+    )
+
+    before_due = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": 168},
+        paths,
+        now=200_000 + (168 * 60 * 60) - 1,
+    )
+    when_due = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": 168},
+        paths,
+        now=200_000 + (168 * 60 * 60),
+    )
+
+    assert before_due is None
+    assert when_due is not None
+
+
+@pytest.mark.parametrize("invalid_interval", [None, 0, 12, 169, "168"])
+def test_run_if_due_invalid_interval_falls_back_to_daily(tmp_path, invalid_interval):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text(
+        json.dumps({"last_attempt_ts": 200_000, "last_success_ts": 100_000})
+    )
+
+    report = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": invalid_interval},
+        paths,
+        now=200_000 + (13 * 60 * 60),
+    )
+
+    assert report is None
+
+
+def test_run_if_due_partial_error_advances_attempt_but_not_success(
+    tmp_path, monkeypatch
+):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text(
+        json.dumps({"last_attempt_ts": 1, "last_success_ts": 123})
+    )
+    audio = paths.generated_audio_dir / "kokoro_old.wav"
+    audio.write_bytes(b"x")
+    age(audio, cleanup.AUTO_AUDIO_AGE_SECONDS + 1, now=200_000)
+    real_unlink = Path.unlink
+
+    def fail_audio_unlink(path, *args, **kwargs):
+        if path == audio:
+            raise PermissionError("denied")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_audio_unlink)
+
+    report = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": 24},
+        paths,
+        now=200_000,
+    )
+
+    assert report is not None and report.error_count == 1
+    assert json.loads(paths.state_path.read_text()) == {
+        "last_attempt_ts": 200_000,
+        "last_success_ts": 123,
+    }
+
+
+def test_run_returns_already_running_without_waiting(tmp_path):
+    paths = paths_for(tmp_path)
+    paths.lock_dir.mkdir()
+    write_lock_owner(paths.lock_dir, pid=os.getpid(), created_ts=200_000)
+
+    report = cleanup.run(paths, now=200_001)
+
+    assert report.already_running is True
+    assert report.removed_files == 0
+    assert paths.lock_dir.exists()
+
+
+def test_run_treats_permission_error_checking_owner_as_alive(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    paths.lock_dir.mkdir()
+    write_lock_owner(paths.lock_dir, pid=123, created_ts=100_000)
+    age(paths.lock_dir, cleanup.TEMP_AGE_SECONDS + 1, now=200_000)
+
+    def deny_signal(_pid, _signal):
+        raise PermissionError
+
+    monkeypatch.setattr(cleanup.os, "kill", deny_signal)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.already_running is True
+    assert paths.lock_dir.exists()
+
+
+def test_run_recovers_old_cleanup_lock_with_dead_owner(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    paths.lock_dir.mkdir()
+    write_lock_owner(paths.lock_dir, pid=123, created_ts=100_000)
+    age(paths.lock_dir, cleanup.TEMP_AGE_SECONDS + 1, now=200_000)
+
+    def dead_owner(_pid, _signal):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(cleanup.os, "kill", dead_owner)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.already_running is False
+    assert not paths.lock_dir.exists()
+
+
+def test_run_recovers_old_cleanup_lock_without_valid_owner(tmp_path):
+    paths = paths_for(tmp_path)
+    paths.lock_dir.mkdir()
+    (paths.lock_dir / "owner.json").write_text("not-json")
+    age(paths.lock_dir, cleanup.TEMP_AGE_SECONDS + 1, now=200_000)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.already_running is False
+    assert not paths.lock_dir.exists()
+
+
+def test_run_keeps_recent_cleanup_lock_without_valid_owner(tmp_path):
+    paths = paths_for(tmp_path)
+    paths.lock_dir.mkdir()
+    age(paths.lock_dir, cleanup.TEMP_AGE_SECONDS - 1, now=200_000)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.already_running is True
+    assert paths.lock_dir.exists()
+
+
+def test_run_does_not_release_replacement_cleanup_lock(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    displaced = paths.hooks_dir / ".displaced-cleanup-lock"
+    real_execute = cleanup._execute
+
+    def replace_lock(*args, **kwargs):
+        paths.lock_dir.rename(displaced)
+        paths.lock_dir.mkdir()
+        write_lock_owner(paths.lock_dir, pid=987, created_ts=200_000)
+        return real_execute(*args, **kwargs)
+
+    monkeypatch.setattr(cleanup, "_execute", replace_lock)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.already_running is False
+    assert paths.lock_dir.exists()
+    assert json.loads((paths.lock_dir / "owner.json").read_text())["pid"] == 987
+
+
+def test_run_if_due_rechecks_state_after_acquiring_lock(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text(
+        json.dumps({"last_attempt_ts": 1, "last_success_ts": 1})
+    )
+    audio = paths.generated_audio_dir / "kokoro_old.wav"
+    audio.write_bytes(b"x")
+    age(audio, cleanup.AUTO_AUDIO_AGE_SECONDS + 1, now=200_000)
+    real_mkdir = Path.mkdir
+    state_advanced = False
+
+    def advance_state_before_lock(path, *args, **kwargs):
+        nonlocal state_advanced
+        if path == paths.lock_dir and not state_advanced:
+            state_advanced = True
+            paths.state_path.write_text(
+                json.dumps({"last_attempt_ts": 200_000, "last_success_ts": 123})
+            )
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", advance_state_before_lock)
+
+    report = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": 24},
+        paths,
+        now=200_001,
+    )
+
+    assert report is None
+    assert audio.exists()
+    assert json.loads(paths.state_path.read_text()) == {
+        "last_attempt_ts": 200_000,
+        "last_success_ts": 123,
+    }
+    assert not paths.lock_dir.exists()
+
+
+def test_run_if_due_replaces_bounded_state_atomically(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text(
+        json.dumps(
+            {
+                "last_attempt_ts": "invalid",
+                "last_success_ts": None,
+                "unexpected": "discard me",
+            }
+        )
+    )
+    real_replace = cleanup.os.replace
+    replacements = []
+
+    def record_replace(source, destination):
+        replacements.append((Path(source), Path(destination)))
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(cleanup.os, "replace", record_replace)
+
+    report = cleanup.run_if_due(
+        {"cleanup_enabled": True, "cleanup_interval_hours": 24},
+        paths,
+        now=200_000.9,
+    )
+
+    assert report is not None and report.error_count == 0
+    assert json.loads(paths.state_path.read_text()) == {
+        "last_attempt_ts": 200_000,
+        "last_success_ts": 200_000,
+    }
+    state_replacements = [item for item in replacements if item[1] == paths.state_path]
+    assert len(state_replacements) == 2
+    for temporary, destination in state_replacements:
+        assert destination == paths.state_path
+        assert temporary.name.startswith(".jarvis_line_cleanup_state.json.")
+        assert temporary.name.endswith(".tmp")

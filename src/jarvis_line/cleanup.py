@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import stat
+import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,6 +16,7 @@ TEMP_AGE_SECONDS = 60 * 60
 ROTATED_LOG_AGE_SECONDS = 7 * 24 * 60 * 60
 MAX_ERROR_DETAILS = 50
 MAX_LOCK_OWNER_BYTES = 4096
+MAX_STATE_BYTES = 4096
 GENERATED_PREFIXES = ("kokoro_", "jarvis_line_")
 LOCK_OWNER_NAME = "owner.json"
 LOCK_QUARANTINE_SUFFIX = ".cleanup-quarantine"
@@ -93,6 +96,7 @@ class CleanupReport:
     )
     errors: list[dict[str, str]] = field(default_factory=list)
     operation_error_count: int = 0
+    already_running: bool = False
 
     @property
     def eligible_files(self) -> int:
@@ -128,6 +132,7 @@ class CleanupReport:
             "removed_bytes": self.removed_bytes,
             "skipped_files": self.skipped_files,
             "error_count": self.error_count,
+            "already_running": self.already_running,
             "errors": [dict(error) for error in self.errors],
             "categories": {
                 name: self.categories[name].to_dict() for name in CATEGORY_NAMES
@@ -154,6 +159,12 @@ class _LockOwner:
     inode: int
     size: int
     mtime_ns: int
+
+
+@dataclass(frozen=True)
+class _AcquiredCleanupLock:
+    directory: _Candidate
+    owner: _LockOwner
 
 
 def _record_error(report: CleanupReport, category: str, name: str) -> None:
@@ -330,14 +341,18 @@ def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
     )
 
 
-def _pid_is_dead(pid: int) -> bool:
+def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
-        return True
-    except (PermissionError, OSError):
         return False
-    return False
+    except (PermissionError, OSError):
+        return True
+    return True
+
+
+def _pid_is_dead(pid: int) -> bool:
+    return not _pid_alive(pid)
 
 
 def _directory_is_empty(path: Path) -> bool:
@@ -627,7 +642,10 @@ def _scan_generated_audio(
 
 def _is_atomic_temporary(name: str) -> bool:
     return name.endswith(".tmp") and any(
-        name.startswith(f".{target}.") for target in ATOMIC_TARGET_NAMES
+        name.startswith(f"{target}.")
+        if target.startswith(".")
+        else name.startswith(f".{target}.")
+        for target in ATOMIC_TARGET_NAMES
     )
 
 
@@ -729,6 +747,317 @@ def _scan_hooks(
             )
 
 
+def _bool(value: object, default: bool) -> bool:
+    return value if type(value) is bool else default
+
+
+def _interval_hours(value: object) -> int:
+    return value if type(value) is int and value in (24, 168) else 24
+
+
+def _read_state(path: Path) -> dict[str, int]:
+    state = {"last_attempt_ts": 0, "last_success_ts": 0}
+    descriptor = -1
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_STATE_BYTES:
+            return state
+        payload = os.read(descriptor, MAX_STATE_BYTES + 1)
+        record = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return state
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+    if not isinstance(record, dict):
+        return state
+    for key in state:
+        value = record.get(key)
+        if type(value) is int and value >= 0:
+            state[key] = value
+    return state
+
+
+def _write_state(path: Path, state: Mapping[str, int]) -> None:
+    bounded = {
+        "last_attempt_ts": int(state.get("last_attempt_ts", 0)),
+        "last_success_ts": int(state.get("last_success_ts", 0)),
+    }
+    payload = json.dumps(bounded, separators=(",", ":")) + "\n"
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f"{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary.write(payload)
+            temporary_name = temporary.name
+        os.chmod(temporary_name, 0o600)
+        os.replace(temporary_name, path)
+    finally:
+        if temporary_name:
+            Path(temporary_name).unlink(missing_ok=True)
+
+
+def _operation_error_report(name: str) -> CleanupReport:
+    report = CleanupReport(operation_error_count=1)
+    report.errors.append({"category": "cleanup", "name": Path(name).name})
+    return report
+
+
+def _record_operation_error(report: CleanupReport, name: str) -> None:
+    report.operation_error_count += 1
+    if len(report.errors) < MAX_ERROR_DETAILS:
+        report.errors.append({"category": "cleanup", "name": Path(name).name})
+
+
+def _cleanup_lock_candidate(path: Path) -> _Candidate | None:
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISDIR(info.st_mode):
+        return None
+    return _candidate_from_stat(path, "cleanup", info, is_directory=True)
+
+
+def _remove_claimed_cleanup_lock(
+    claimed: _Candidate,
+    expected_owner: _LockOwner | None,
+) -> bool:
+    try:
+        if not _same_directory_object(claimed, claimed.path.lstat()):
+            return False
+        with os.scandir(claimed.path) as entries:
+            entry = next(entries, None)
+            if entry is None:
+                claimed.path.rmdir()
+                return True
+            if entry.name != LOCK_OWNER_NAME or next(entries, None) is not None:
+                return False
+            owner_info = entry.stat(follow_symlinks=False)
+        if not stat.S_ISREG(owner_info.st_mode):
+            return False
+        if expected_owner is not None and not _same_owner_identity(
+            expected_owner, owner_info
+        ):
+            return False
+        if not _same_directory_object(claimed, claimed.path.lstat()):
+            return False
+        owner_path = claimed.path / LOCK_OWNER_NAME
+        if not _same_identity(
+            _candidate_from_stat(owner_path, "cleanup", owner_info),
+            owner_path.lstat(),
+        ):
+            return False
+        owner_path.unlink()
+        if not _same_directory_object(claimed, claimed.path.lstat()):
+            return False
+        if not _directory_is_empty(claimed.path):
+            return False
+        claimed.path.rmdir()
+        return True
+    except OSError:
+        return False
+
+
+def _recover_cleanup_lock(candidate: _Candidate, *, now: float) -> bool:
+    age_seconds = now - (candidate.mtime_ns / 1_000_000_000)
+    if age_seconds <= TEMP_AGE_SECONDS:
+        return False
+    try:
+        owner = _read_lock_owner(candidate)
+    except OSError:
+        return False
+    if owner is not None and _pid_alive(owner.pid):
+        return False
+
+    quarantine_path = _lock_quarantine_path(candidate.path)
+    try:
+        quarantine_path.lstat()
+        return False
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+
+    try:
+        if not _same_identity(candidate, candidate.path.lstat()):
+            return False
+        current_owner = _read_lock_owner(candidate)
+        if owner is None:
+            if current_owner is not None:
+                return False
+        elif current_owner is None or not _same_owner_identity(
+            owner, (candidate.path / LOCK_OWNER_NAME).lstat()
+        ):
+            return False
+        elif _pid_alive(current_owner.pid):
+            return False
+        os.rename(candidate.path, quarantine_path)
+    except OSError:
+        return False
+
+    claimed = _candidate_at_path(candidate, quarantine_path)
+    try:
+        if not _same_directory_object(claimed, claimed.path.lstat()):
+            return False
+        claimed_owner = _read_lock_owner(claimed)
+        if owner is None:
+            if claimed_owner is not None:
+                _restore_claim(claimed, candidate.path)
+                return False
+        elif claimed_owner is None or not _same_owner_identity(
+            owner, (claimed.path / LOCK_OWNER_NAME).lstat()
+        ):
+            _restore_claim(claimed, candidate.path)
+            return False
+        elif _pid_alive(claimed_owner.pid):
+            _restore_claim(claimed, candidate.path)
+            return False
+    except OSError:
+        _restore_claim(claimed, candidate.path)
+        return False
+
+    if _remove_claimed_cleanup_lock(claimed, owner):
+        return True
+    _restore_claim(claimed, candidate.path)
+    return False
+
+
+def _release_cleanup_lock(acquired: _AcquiredCleanupLock) -> None:
+    directory = acquired.directory
+    owner_path = directory.path / LOCK_OWNER_NAME
+    try:
+        if not _same_directory_object(directory, directory.path.lstat()):
+            return
+        if not _same_owner_identity(acquired.owner, owner_path.lstat()):
+            return
+        owner_path.unlink()
+        if not _same_directory_object(directory, directory.path.lstat()):
+            return
+        if _directory_is_empty(directory.path):
+            directory.path.rmdir()
+    except OSError:
+        return
+
+
+def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanupLock | None:
+    try:
+        try:
+            hooks_info = paths.hooks_dir.lstat()
+        except FileNotFoundError:
+            paths.hooks_dir.mkdir(parents=True, exist_ok=True)
+            hooks_info = paths.hooks_dir.lstat()
+        if not stat.S_ISDIR(hooks_info.st_mode):
+            raise OSError("invalid hooks root")
+        hooks_root = _candidate_from_stat(
+            paths.hooks_dir,
+            "cleanup",
+            hooks_info,
+            is_directory=True,
+        )
+
+        for _attempt in range(2):
+            try:
+                paths.lock_dir.mkdir()
+            except FileExistsError:
+                candidate = _cleanup_lock_candidate(paths.lock_dir)
+                if candidate is None or not _recover_cleanup_lock(candidate, now=now):
+                    return None
+                continue
+
+            directory = _cleanup_lock_candidate(paths.lock_dir)
+            if directory is None:
+                raise OSError("invalid cleanup lock")
+            owner_path = paths.lock_dir / LOCK_OWNER_NAME
+            owner_path.write_text(
+                json.dumps({"pid": os.getpid(), "created_ts": int(now)}),
+                encoding="utf-8",
+            )
+            os.chmod(owner_path, 0o600)
+            directory = _cleanup_lock_candidate(paths.lock_dir)
+            if directory is None:
+                raise OSError("invalid cleanup lock")
+            owner = _read_lock_owner(directory)
+            if owner is None:
+                raise OSError("invalid cleanup lock owner")
+            acquired = _AcquiredCleanupLock(directory=directory, owner=owner)
+            if not _same_directory_object(hooks_root, paths.hooks_dir.lstat()):
+                _release_cleanup_lock(acquired)
+                raise OSError("changed hooks root")
+            return acquired
+    except OSError:
+        candidate = _cleanup_lock_candidate(paths.lock_dir)
+        if candidate is not None:
+            try:
+                owner = _read_lock_owner(candidate)
+            except OSError:
+                owner = None
+            if owner is not None and owner.pid == os.getpid():
+                _release_cleanup_lock(
+                    _AcquiredCleanupLock(directory=candidate, owner=owner)
+                )
+        raise
+    return None
+
+
+def _is_due(state: Mapping[str, int], *, now: float, interval_seconds: int) -> bool:
+    last_attempt = state.get("last_attempt_ts", 0)
+    return last_attempt <= 0 or now - last_attempt >= interval_seconds
+
+
+def _run_with_lock(
+    paths: CleanupPaths,
+    *,
+    now: float,
+    automatic: bool,
+    update_state: bool,
+    interval_seconds: int = 0,
+) -> CleanupReport | None:
+    try:
+        acquired = _acquire_cleanup_lock(paths, now=now)
+    except OSError:
+        return _operation_error_report(paths.lock_dir.name)
+    if acquired is None:
+        return CleanupReport(already_running=True)
+
+    try:
+        state = _read_state(paths.state_path)
+        if update_state:
+            if not _is_due(state, now=now, interval_seconds=interval_seconds):
+                return None
+            state["last_attempt_ts"] = int(now)
+            try:
+                _write_state(paths.state_path, state)
+            except OSError:
+                return _operation_error_report(paths.state_path.name)
+
+        audio_age = AUTO_AUDIO_AGE_SECONDS if automatic else MANUAL_AUDIO_AGE_SECONDS
+        report = _execute(
+            paths,
+            now=now,
+            audio_age=audio_age,
+            delete=True,
+        )
+        if update_state and report.error_count == 0:
+            state["last_success_ts"] = int(now)
+            try:
+                _write_state(paths.state_path, state)
+            except OSError:
+                _record_operation_error(report, paths.state_path.name)
+        return report
+    finally:
+        _release_cleanup_lock(acquired)
+
+
 def _execute(
     paths: CleanupPaths,
     *,
@@ -775,10 +1104,38 @@ def run(
         return _refused_report()
     selected_paths = managed_paths
     selected_now = time.time() if now is None else now
-    audio_age = AUTO_AUDIO_AGE_SECONDS if automatic else MANUAL_AUDIO_AGE_SECONDS
-    return _execute(
+    report = _run_with_lock(
         selected_paths,
         now=selected_now,
-        audio_age=audio_age,
-        delete=True,
+        automatic=automatic,
+        update_state=False,
+    )
+    assert report is not None
+    return report
+
+
+def run_if_due(
+    config: Mapping[str, object],
+    paths: CleanupPaths | None = None,
+    now: float | None = None,
+) -> CleanupReport | None:
+    if not _bool(config.get("cleanup_enabled"), True):
+        return None
+    managed_paths = CleanupPaths.default()
+    if paths is not None and paths != managed_paths:
+        return _refused_report()
+    selected_paths = managed_paths
+    selected_now = time.time() if now is None else now
+    interval_seconds = _interval_hours(
+        config.get("cleanup_interval_hours")
+    ) * 60 * 60
+    state = _read_state(selected_paths.state_path)
+    if not _is_due(state, now=selected_now, interval_seconds=interval_seconds):
+        return None
+    return _run_with_lock(
+        selected_paths,
+        now=selected_now,
+        automatic=True,
+        update_state=True,
+        interval_seconds=interval_seconds,
     )

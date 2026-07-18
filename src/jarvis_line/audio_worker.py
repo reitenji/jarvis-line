@@ -108,7 +108,14 @@ def save_json_unlocked(path: Path, data) -> None:
     payload = json.dumps(data, ensure_ascii=False, indent=2)
     tmp_name = ""
     try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
             f.write(payload)
             f.write("\n")
             tmp_name = f.name
