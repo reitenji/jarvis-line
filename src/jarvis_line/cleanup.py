@@ -294,6 +294,52 @@ def _validated_scandir(
     return entries
 
 
+def _open_windows_owner_descriptor(path: Path) -> int:
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    generic_read = 0x80000000
+    file_share_read = 0x00000001
+    open_existing = 3
+    file_attribute_normal = 0x00000080
+    file_flag_open_reparse_point = 0x00200000
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    handle = create_file(
+        os.fspath(path),
+        generic_read,
+        file_share_read,
+        None,
+        open_existing,
+        file_attribute_normal | file_flag_open_reparse_point,
+        None,
+    )
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        return msvcrt.open_osfhandle(handle, flags)
+    except BaseException:
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (wintypes.HANDLE,)
+        close_handle.restype = wintypes.BOOL
+        close_handle(handle)
+        raise
+
+
 def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
     current_directory = candidate.path.lstat()
     if not _same_identity(candidate, current_directory):
@@ -319,8 +365,11 @@ def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
     ):
         return None
     owner_candidate = _candidate_from_stat(owner_path, "cleanup", owner_info)
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(owner_path, flags)
+    if _IS_WINDOWS:
+        descriptor = _open_windows_owner_descriptor(owner_path)
+    else:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(owner_path, flags)
     try:
         opened_info = os.fstat(descriptor)
         if (

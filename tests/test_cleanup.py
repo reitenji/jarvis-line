@@ -276,6 +276,11 @@ def test_lock_owner_read_tolerates_handle_timestamp_differences(
     directory = cleanup._cleanup_lock_candidate(paths.lock_dir)
     assert directory is not None
     real_fstat = cleanup.os.fstat
+    windows_opened = []
+
+    def windows_owner_open(path):
+        windows_opened.append(path)
+        return cleanup.os.open(path, cleanup.os.O_RDONLY)
 
     def windows_style_fstat(descriptor):
         info = real_fstat(descriptor)
@@ -293,12 +298,19 @@ def test_lock_owner_read_tolerates_handle_timestamp_differences(
 
     monkeypatch.setattr(cleanup.os, "fstat", windows_style_fstat)
     monkeypatch.setattr(cleanup, "_IS_WINDOWS", True, raising=False)
+    monkeypatch.setattr(
+        cleanup,
+        "_open_windows_owner_descriptor",
+        windows_owner_open,
+        raising=False,
+    )
 
     owner = cleanup._read_lock_owner(directory)
 
     assert owner is not None
     assert owner.pid == 123
     assert owner.created_ts == 456
+    assert windows_opened == [paths.lock_dir / cleanup.LOCK_OWNER_NAME]
 
 
 def test_run_removes_only_old_known_lock_with_a_dead_recorded_owner(
@@ -1557,3 +1569,22 @@ def test_cleanup_lock_can_be_acquired_on_windows(tmp_path):
     assert acquired is not None
     cleanup._release_cleanup_lock(acquired)
     assert not paths.lock_dir.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific handle regression")
+def test_windows_owner_descriptor_denies_write_and_rename(tmp_path):
+    owner_path = tmp_path / "owner.json"
+    owner_path.write_text('{"pid":123,"created_ts":456}')
+    renamed_path = tmp_path / "renamed-owner.json"
+
+    descriptor = cleanup._open_windows_owner_descriptor(owner_path)
+    try:
+        with pytest.raises(OSError):
+            competing = cleanup.os.open(owner_path, cleanup.os.O_WRONLY)
+            cleanup.os.close(competing)
+        with pytest.raises(OSError):
+            owner_path.rename(renamed_path)
+    finally:
+        cleanup.os.close(descriptor)
+
+    owner_path.write_text('{"pid":456,"created_ts":789}')
