@@ -1572,13 +1572,29 @@ def test_cleanup_lock_can_be_acquired_on_windows(tmp_path):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows-specific handle regression")
-def test_windows_owner_descriptor_denies_write_and_rename(tmp_path):
+def test_windows_owner_descriptor_denies_write_and_rename(tmp_path, monkeypatch):
+    import msvcrt
+
     owner_path = tmp_path / "owner.json"
     owner_path.write_text('{"pid":123,"created_ts":456}')
     renamed_path = tmp_path / "renamed-owner.json"
+    real_open_osfhandle = msvcrt.open_osfhandle
+    descriptor_flags = []
+
+    def capture_flags(handle, flags):
+        descriptor_flags.append(flags)
+        return real_open_osfhandle(handle, flags)
+
+    monkeypatch.setattr(msvcrt, "open_osfhandle", capture_flags)
 
     descriptor = cleanup._open_windows_owner_descriptor(owner_path)
     try:
+        assert descriptor_flags == [
+            cleanup.os.O_RDONLY
+            | cleanup.os.O_BINARY
+            | cleanup.os.O_NOINHERIT
+        ]
+        assert not cleanup.os.get_inheritable(descriptor)
         with pytest.raises(OSError):
             competing = cleanup.os.open(owner_path, cleanup.os.O_WRONLY)
             cleanup.os.close(competing)

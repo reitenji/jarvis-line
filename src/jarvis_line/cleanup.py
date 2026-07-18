@@ -330,7 +330,7 @@ def _open_windows_owner_descriptor(path: Path) -> int:
         raise ctypes.WinError(ctypes.get_last_error())
 
     try:
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags = os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT
         return msvcrt.open_osfhandle(handle, flags)
     except BaseException:
         close_handle = kernel32.CloseHandle
