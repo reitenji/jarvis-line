@@ -271,10 +271,14 @@ allowlisted category, never filesystem paths or file contents:
 }
 ```
 
-`run` exits `0` when it completes without errors. It returns `1` for a partial
-result or a cleanup error, after reporting every successful deletion and up to
-50 redacted error details. An already-running cleanup is a safe no-op and exits
-`0` with `Cleanup already running; no action taken.`
+`cleanup status` and `cleanup run` exit `0` on success. `cleanup run` also exits
+`0` when another cleanup is already running and it performs a safe no-op. Either
+command exits `1` when `error_count > 0`, including in `--json` mode. Partial
+results report aggregate file and byte totals, including `eligible`, `removed`,
+and `skipped` totals, plus the complete `error_count`; they do not report each
+successful deletion. The `errors` field contains at most 50 redacted error
+names. Human-readable output says `Cleanup already running; no action taken.`
+for the safe no-op.
 
 Cleanup only considers fixed Jarvis Line locations: generated audio older than
 10 minutes for a manual run, recognized temporary artifacts older than one

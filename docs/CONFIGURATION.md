@@ -71,10 +71,13 @@ jarvis-line config set cleanup_interval_hours 168
 
 ## Storage Cleanup
 
-Automatic cleanup is enabled by default. Its only supported intervals are Daily
-(`24` hours) and Weekly (`168` hours); other values are rejected. It is not a
-daemon, operating-system timer, or separate scheduler. The watcher checks once
-at startup and then uses an in-memory hourly gate before consulting its small
+Automatic cleanup is enabled by default. The CLI and macOS app save paths accept
+only integer interval values of Daily (`24`) or Weekly (`168`) hours; other
+values are rejected before saving. If a hand-edited or stale configuration
+contains another persisted value, runtime handles it conservatively by falling
+back to Daily (`24`) rather than rejecting it. Cleanup is not a daemon,
+operating-system timer, or separate scheduler. The watcher checks once at
+startup and then uses an in-memory hourly gate before consulting its small
 maintenance-state record, so actual work happens only after the selected
 interval has elapsed.
 
