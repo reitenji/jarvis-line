@@ -92,12 +92,14 @@ class CategoryReport:
 
 @dataclass
 class CleanupReport:
+    mode: str = "run"
     categories: dict[str, CategoryReport] = field(
         default_factory=lambda: {name: CategoryReport() for name in CATEGORY_NAMES}
     )
     errors: list[dict[str, str]] = field(default_factory=list)
     operation_error_count: int = 0
     already_running: bool = False
+    last_success_at: int | None = None
 
     @property
     def eligible_files(self) -> int:
@@ -127,14 +129,16 @@ class CleanupReport:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "mode": self.mode,
             "eligible_files": self.eligible_files,
             "eligible_bytes": self.eligible_bytes,
             "removed_files": self.removed_files,
             "removed_bytes": self.removed_bytes,
             "skipped_files": self.skipped_files,
             "error_count": self.error_count,
-            "already_running": self.already_running,
             "errors": [dict(error) for error in self.errors],
+            "already_running": self.already_running,
+            "last_success_at": self.last_success_at,
             "categories": {
                 name: self.categories[name].to_dict() for name in CATEGORY_NAMES
             },
@@ -174,8 +178,8 @@ def _record_error(report: CleanupReport, category: str, name: str) -> None:
         report.errors.append({"category": category, "name": Path(name).name})
 
 
-def _refused_report() -> CleanupReport:
-    report = CleanupReport(operation_error_count=1)
+def _refused_report(mode: str) -> CleanupReport:
+    report = CleanupReport(mode=mode, operation_error_count=1)
     report.errors.append({"category": "cleanup", "name": "unmanaged_paths"})
     return report
 
@@ -1221,7 +1225,7 @@ def _run_with_lock(
             audio_age=audio_age,
             delete=True,
         )
-        if update_state and report.error_count == 0:
+        if report.error_count == 0:
             state["last_success_ts"] = int(now)
             try:
                 _write_state(paths.state_path, state)
@@ -1251,20 +1255,36 @@ def _execute(
     return report
 
 
+def _with_maintenance_status(
+    report: CleanupReport,
+    *,
+    mode: str,
+    paths: CleanupPaths,
+) -> CleanupReport:
+    last_success = _read_state(paths.state_path).get("last_success_ts", 0)
+    report.mode = mode
+    report.last_success_at = last_success if last_success > 0 else None
+    return report
+
+
 def inspect(
     paths: CleanupPaths | None = None,
     now: float | None = None,
 ) -> CleanupReport:
     managed_paths = CleanupPaths.default()
     if paths is not None and paths != managed_paths:
-        return _refused_report()
+        return _refused_report("status")
     selected_paths = managed_paths
     selected_now = time.time() if now is None else now
-    return _execute(
-        selected_paths,
-        now=selected_now,
-        audio_age=MANUAL_AUDIO_AGE_SECONDS,
-        delete=False,
+    return _with_maintenance_status(
+        _execute(
+            selected_paths,
+            now=selected_now,
+            audio_age=MANUAL_AUDIO_AGE_SECONDS,
+            delete=False,
+        ),
+        mode="status",
+        paths=selected_paths,
     )
 
 
@@ -1275,7 +1295,7 @@ def run(
 ) -> CleanupReport:
     managed_paths = CleanupPaths.default()
     if paths is not None and paths != managed_paths:
-        return _refused_report()
+        return _refused_report("run")
     selected_paths = managed_paths
     selected_now = time.time() if now is None else now
     report = _run_with_lock(
@@ -1285,7 +1305,7 @@ def run(
         update_state=False,
     )
     assert report is not None
-    return report
+    return _with_maintenance_status(report, mode="run", paths=selected_paths)
 
 
 def run_if_due(
@@ -1297,7 +1317,7 @@ def run_if_due(
         return None
     managed_paths = CleanupPaths.default()
     if paths is not None and paths != managed_paths:
-        return _refused_report()
+        return _refused_report("automatic")
     selected_paths = managed_paths
     selected_now = time.time() if now is None else now
     interval_seconds = _interval_hours(
@@ -1306,10 +1326,17 @@ def run_if_due(
     state = _read_state(selected_paths.state_path)
     if not _is_due(state, now=selected_now, interval_seconds=interval_seconds):
         return None
-    return _run_with_lock(
+    report = _run_with_lock(
         selected_paths,
         now=selected_now,
         automatic=True,
         update_state=True,
         interval_seconds=interval_seconds,
+    )
+    if report is None:
+        return None
+    return _with_maintenance_status(
+        report,
+        mode="automatic",
+        paths=selected_paths,
     )

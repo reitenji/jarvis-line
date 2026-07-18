@@ -165,6 +165,7 @@ def test_public_cleanup_rejects_arbitrary_external_roots(tmp_path, operation):
     assert report.removed_files == 0
     assert report.error_count == 1
     assert report.errors == [{"category": "cleanup", "name": "unmanaged_paths"}]
+    assert report.mode == ("status" if operation is cleanup.inspect else "run")
     assert str(external_hooks) not in str(report.to_dict())
     assert str(external_audio) not in str(report.to_dict())
 
@@ -795,22 +796,56 @@ def test_cleanup_report_to_dict_has_stable_totals_and_categories(tmp_path):
     report = cleanup.inspect(paths, now=1_000_000).to_dict()
 
     assert list(report) == [
+        "mode",
         "eligible_files",
         "eligible_bytes",
         "removed_files",
         "removed_bytes",
         "skipped_files",
         "error_count",
-        "already_running",
         "errors",
+        "already_running",
+        "last_success_at",
         "categories",
     ]
+    assert report["mode"] == "status"
+    assert report["last_success_at"] is None
     assert list(report["categories"]) == [
         "generated_audio",
         "rotated_logs",
         "runtime_temp",
         "stale_locks",
     ]
+
+
+def test_inspect_reads_last_success_without_updating_maintenance_state(tmp_path):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text(
+        json.dumps({"last_attempt_ts": 123, "last_success_ts": 99})
+    )
+    original = paths.state_path.read_bytes()
+
+    report = cleanup.inspect(paths, now=1_000_000)
+
+    assert report.mode == "status"
+    assert report.last_success_at == 99
+    assert paths.state_path.read_bytes() == original
+
+
+def test_manual_run_records_success_without_advancing_schedule(tmp_path):
+    paths = paths_for(tmp_path)
+    paths.state_path.write_text(
+        json.dumps({"last_attempt_ts": 123, "last_success_ts": 99})
+    )
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.mode == "run"
+    assert report.last_success_at == 200_000
+    assert json.loads(paths.state_path.read_text()) == {
+        "last_attempt_ts": 123,
+        "last_success_ts": 200_000,
+    }
 
 
 def test_cleanup_paths_default_uses_only_known_storage_locations(monkeypatch, tmp_path):
@@ -1307,6 +1342,7 @@ def test_owner_is_created_exclusively_private_and_fsynced(tmp_path, monkeypatch)
     paths = paths_for(tmp_path)
     owner_path = paths.lock_dir / cleanup.LOCK_OWNER_NAME
     real_open = cleanup.os.open
+    real_close = cleanup.os.close
     real_fsync = cleanup.os.fsync
     owner_open = []
     owner_fsyncs = []
@@ -1328,7 +1364,14 @@ def test_owner_is_created_exclusively_private_and_fsynced(tmp_path, monkeypatch)
             owner_fsyncs.append(descriptor)
         return real_fsync(descriptor)
 
+    def record_close(descriptor):
+        nonlocal owner_descriptor
+        if descriptor == owner_descriptor:
+            owner_descriptor = -1
+        return real_close(descriptor)
+
     monkeypatch.setattr(cleanup.os, "open", record_open)
+    monkeypatch.setattr(cleanup.os, "close", record_close)
     monkeypatch.setattr(cleanup.os, "fsync", record_fsync)
 
     report = cleanup.run(paths, now=200_000)
