@@ -1103,7 +1103,7 @@ def test_run_if_due_replaces_bounded_state_atomically(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("unexpected_kind", ["symlink", "file"])
-def test_owner_creation_race_never_overwrites_unexpected_entry(
+def test_unknown_failed_owner_quarantine_does_not_block_immediate_retry(
     tmp_path, monkeypatch, unexpected_kind
 ):
     paths = paths_for(tmp_path)
@@ -1129,11 +1129,27 @@ def test_owner_creation_race_never_overwrites_unexpected_entry(
     monkeypatch.setattr(cleanup.os, "open", inject_owner)
 
     first = cleanup.run(paths, now=200_000)
+    real_execute = cleanup._execute
+    acquired_owners = []
+
+    def record_fresh_active_lock(*args, **kwargs):
+        candidate = cleanup._cleanup_lock_candidate(paths.lock_dir)
+        acquired_owners.append(
+            None if candidate is None else cleanup._read_lock_owner(candidate)
+        )
+        return real_execute(*args, **kwargs)
+
+    monkeypatch.setattr(cleanup, "_execute", record_fresh_active_lock)
     second = cleanup.run(paths, now=200_001)
 
     assert injected is True
     assert first.error_count == 1
-    assert second.error_count == 1
+    assert second.error_count == 0
+    assert second.already_running is False
+    assert len(acquired_owners) == 1
+    assert acquired_owners[0] is not None
+    assert acquired_owners[0].pid == os.getpid()
+    assert acquired_owners[0].created_ts == 200_001
     assert external.read_bytes() == b"private"
     assert not paths.lock_dir.exists()
     assert quarantine.is_dir()
@@ -1143,6 +1159,67 @@ def test_owner_creation_race_never_overwrites_unexpected_entry(
     else:
         assert quarantined_owner.read_bytes() == b"unexpected"
     assert list(paths.hooks_dir.glob(f"{paths.lock_dir.name}*")) == [quarantine]
+
+
+def test_quarantine_cleanup_failure_does_not_block_active_lock(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    quarantine = quarantine_for(paths.lock_dir)
+    quarantine.mkdir()
+    real_rmdir = Path.rmdir
+
+    def fail_quarantine_rmdir(path, *args, **kwargs):
+        if path == quarantine:
+            raise PermissionError("injected quarantine cleanup failure")
+        return real_rmdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "rmdir", fail_quarantine_rmdir)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.error_count == 0
+    assert report.already_running is False
+    assert quarantine.is_dir()
+    assert not paths.lock_dir.exists()
+    assert list(paths.hooks_dir.glob(f"{paths.lock_dir.name}*")) == [quarantine]
+
+
+def test_failed_acquisition_with_occupied_quarantine_preserves_replacement_lock(
+    tmp_path, monkeypatch
+):
+    paths = paths_for(tmp_path)
+    quarantine = quarantine_for(paths.lock_dir)
+    quarantine.mkdir()
+    unknown = quarantine / "unknown"
+    unknown.write_bytes(b"preserve exactly")
+    real_read_owner = cleanup._read_lock_owner
+    replaced = False
+
+    def replace_before_failed_readback(candidate):
+        nonlocal replaced
+        if candidate.path == paths.lock_dir and not replaced:
+            replaced = True
+            (paths.lock_dir / cleanup.LOCK_OWNER_NAME).unlink()
+            paths.lock_dir.rmdir()
+            paths.lock_dir.mkdir()
+            write_lock_owner(paths.lock_dir, pid=987, created_ts=200_000)
+            return None
+        return real_read_owner(candidate)
+
+    monkeypatch.setattr(cleanup, "_read_lock_owner", replace_before_failed_readback)
+
+    report = cleanup.run(paths, now=200_000)
+
+    assert report.error_count == 1
+    assert replaced is True
+    assert unknown.read_bytes() == b"preserve exactly"
+    assert json.loads((paths.lock_dir / "owner.json").read_text()) == {
+        "pid": 987,
+        "created_ts": 200_000,
+    }
+    assert set(paths.hooks_dir.glob(f"{paths.lock_dir.name}*")) == {
+        paths.lock_dir,
+        quarantine,
+    }
 
 
 @pytest.mark.parametrize("failure_mode", ["empty", "partial", "readback"])

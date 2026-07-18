@@ -939,23 +939,23 @@ def _remove_failed_cleanup_lock(
         return False
 
 
-def _prepare_cleanup_lock_quarantine(path: Path) -> bool:
+def _maintain_cleanup_lock_quarantine(path: Path) -> None:
     quarantine_path = _lock_quarantine_path(path)
     try:
         info = quarantine_path.lstat()
     except FileNotFoundError:
-        return True
+        return
     except OSError:
-        return False
+        return
     if not stat.S_ISDIR(info.st_mode):
-        return False
+        return
     quarantine = _candidate_from_stat(
         quarantine_path,
         "cleanup",
         info,
         is_directory=True,
     )
-    return _remove_failed_cleanup_lock(quarantine, None)
+    _remove_failed_cleanup_lock(quarantine, None)
 
 
 def _quarantine_failed_cleanup_lock(
@@ -1098,8 +1098,7 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
         )
 
         for _attempt in range(2):
-            if not _prepare_cleanup_lock_quarantine(paths.lock_dir):
-                raise OSError("blocked cleanup lock quarantine")
+            _maintain_cleanup_lock_quarantine(paths.lock_dir)
             try:
                 paths.lock_dir.mkdir()
             except FileExistsError:
