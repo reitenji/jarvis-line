@@ -1,6 +1,6 @@
 import Foundation
 
-struct JarvisConfigDraft {
+struct JarvisConfigDraft: Equatable {
     static let ttsOptions = ["kokoro", "system", "macos", "command"]
     static let speakModeOptions = ["final_only", "commentary_and_final", "off"]
     static let lineLanguageOptions = ["English", "Turkish", "French", "Italian", "Japanese", "Chinese"]
