@@ -1,6 +1,6 @@
 import Foundation
 
-struct JarvisConfigDraft {
+struct JarvisConfigDraft: Equatable {
     static let ttsOptions = ["kokoro", "system", "macos", "command"]
     static let speakModeOptions = ["final_only", "commentary_and_final", "off"]
     static let lineLanguageOptions = ["English", "Turkish", "French", "Italian", "Japanese", "Chinese"]
@@ -22,6 +22,7 @@ struct JarvisConfigDraft {
     var tts: String
     var speakMode: String
     var speechEnabled: Bool
+    var attentionEnabled: Bool
     var speakWithoutPrefix: Bool
     var lineLanguage: String
     var assistantName: String
@@ -167,6 +168,7 @@ struct JarvisConfigDraft {
         tts: "kokoro",
         speakMode: "final_only",
         speechEnabled: true,
+        attentionEnabled: false,
         speakWithoutPrefix: false,
         lineLanguage: "English",
         assistantName: "Jarvis",
@@ -195,6 +197,7 @@ struct JarvisConfigDraft {
         tts = Self.string(data["tts"], defaults.tts)
         speakMode = Self.string(data["speak_mode"], defaults.speakMode)
         speechEnabled = Self.bool(data["speech_enabled"], defaults.speechEnabled)
+        attentionEnabled = Self.bool(data["attention_enabled"], defaults.attentionEnabled)
         speakWithoutPrefix = Self.bool(data["speak_without_prefix"], defaults.speakWithoutPrefix)
         lineLanguage = Self.string(data["line_language"], defaults.lineLanguage)
         assistantName = Self.string(data["assistant_name"], defaults.assistantName)
@@ -227,6 +230,7 @@ struct JarvisConfigDraft {
         tts: String,
         speakMode: String,
         speechEnabled: Bool,
+        attentionEnabled: Bool,
         speakWithoutPrefix: Bool,
         lineLanguage: String,
         assistantName: String,
@@ -252,6 +256,7 @@ struct JarvisConfigDraft {
         self.tts = tts
         self.speakMode = speakMode
         self.speechEnabled = speechEnabled
+        self.attentionEnabled = attentionEnabled
         self.speakWithoutPrefix = speakWithoutPrefix
         self.lineLanguage = lineLanguage
         self.assistantName = assistantName
@@ -280,6 +285,7 @@ struct JarvisConfigDraft {
         updated["tts"] = tts
         updated["speak_mode"] = speakMode
         updated["speech_enabled"] = speechEnabled
+        updated["attention_enabled"] = attentionEnabled
         updated["speak_without_prefix"] = speakWithoutPrefix
         updated["line_language"] = lineLanguage.trimmedOrDefault("English")
         updated["assistant_name"] = assistantName.trimmedOrDefault("Jarvis")
@@ -439,6 +445,7 @@ struct JarvisConfigStore {
             "message_template": "{line}",
             "assistant_name": "Jarvis",
             "speech_enabled": true,
+            "attention_enabled": false,
             "update_check_enabled": true,
             "update_check_interval_hours": 24,
             "update_index_url": "https://pypi.org/pypi/jarvis-line/json",

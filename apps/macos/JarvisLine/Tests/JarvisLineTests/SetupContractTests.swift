@@ -45,10 +45,21 @@ struct SetupContractTests {
         #expect(text.contains("\"agent_target\""))
         #expect(text.contains("\"install_codex_hook\""))
         #expect(text.contains("\"accept_kokoro_license\""))
+        #expect(text.contains("\"attention_enabled\""))
         #expect(!text.contains("instruction_path"))
         #expect(!text.contains("\"command\""))
         #expect(SetupPlanPayload.defaults.agentTarget == "agents")
         #expect(!SetupPlanPayload.defaults.installCodexHook)
+        #expect(!SetupPlanPayload.defaults.attentionEnabled)
+    }
+
+    @Test func planPreservesInspectedAttentionPreference() throws {
+        let inspection = try SetupInspection.decode(#"{"version":1,"config_exists":true,"platform":"Darwin","languages":["English"],"backend_options":[],"current":{"language":"English","tts":"system","speak_mode":"final_only","attention_enabled":true}}"#)
+
+        let plan = SetupPlanPayload(inspection: inspection)
+
+        #expect(inspection.current.attentionEnabled)
+        #expect(plan.attentionEnabled)
     }
 
     @Test func firstRunPolicyOffersOnlyOnceWithoutConfig() {
@@ -244,7 +255,7 @@ struct SetupContractTests {
     @Test func cliTimeoutTerminatesTheIsolatedDescendantProcessGroup() async {
         let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let child = "import pathlib,time;time.sleep(1);pathlib.Path(r'\(marker.path)').touch()"
-        let parent = "import os,subprocess,sys,time;os.setsid();subprocess.Popen([sys.executable,'-c',\"\(child)\"]);time.sleep(5)"
+        let parent = "import os,subprocess,sys,time;os.setsid() if os.getpgrp() != os.getpid() else None;subprocess.Popen([sys.executable,'-c',\"\(child)\"]);time.sleep(5)"
         let runner = JarvisLineCLI(
             executable: "/usr/bin/python3",
             timeoutSeconds: 0.1,

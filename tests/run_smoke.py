@@ -31,12 +31,14 @@ def main() -> int:
         cli.CONFIG_PATH = root / "config.json"
         cli.LEGACY_CONFIG_PATH = root / "kokoro_tts_config.json"
         cli.HOOKS_JSON = root / "hooks.json"
+        cli.enable_codex_hooks_feature = lambda: True
         cli.save_json(cli.CONFIG_PATH, {"tts": "command", "command": "echo {text}"})
         assert cli.config_set(argparse.Namespace(key="custom_voice_id", value="abc")) == 0
         assert cli.load_json(cli.CONFIG_PATH, {})["custom_voice_id"] == "abc"
         cli.save_json(cli.HOOKS_JSON, {"hooks": {}})
         assert cli.install_codex(argparse.Namespace()) == 0
         assert "SessionStart" in cli.load_json(cli.HOOKS_JSON, {})["hooks"]
+        assert "PermissionRequest" in cli.load_json(cli.HOOKS_JSON, {})["hooks"]
         assert cli.uninstall_codex(argparse.Namespace()) == 0
         assert cli.migrate_config(argparse.Namespace(remove_legacy=False)) == 0
         assert cli.kokoro_configure(argparse.Namespace(

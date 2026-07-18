@@ -52,6 +52,7 @@ def test_inspection_exposes_only_safe_current_setup_values():
             "tts": "command",
             "line_language": "English",
             "speak_mode": "commentary_and_final",
+            "attention_enabled": True,
             "command": 'curl -H "Authorization: Bearer secret" https://example.test',
             "command_env": {"API_KEY": "top-secret"},
             "command_cwd": "/Users/example/private-project",
@@ -64,6 +65,7 @@ def test_inspection_exposes_only_safe_current_setup_values():
         "tts": "command",
         "line_language": "English",
         "speak_mode": "commentary_and_final",
+        "attention_enabled": True,
     }
     assert "secret" not in str(inspection)
     assert "/Users/example" not in str(inspection)
@@ -78,6 +80,71 @@ def test_language_preview_does_not_overwrite_the_reported_current_language():
 
     assert inspection["language"] == "Turkish"
     assert inspection["current"]["line_language"] == "English"
+
+
+def test_attention_plan_defaults_off_and_requires_a_strict_boolean():
+    plan = setup_flow.SetupPlan.from_mapping(valid_plan())
+
+    assert plan.attention_enabled is False
+
+    with pytest.raises(setup_flow.SetupContractError, match="attention_enabled"):
+        setup_flow.SetupPlan.from_mapping(
+            {**valid_plan(), "attention_enabled": "true"}
+        )
+
+
+def test_build_config_and_review_persist_enabled_attention():
+    plan = setup_flow.SetupPlan.from_mapping(
+        {**valid_plan(), "attention_enabled": True}
+    )
+
+    config = setup_flow.build_config(plan, {})
+    review = "\n".join(setup_flow.review_lines(plan, environment()))
+
+    assert config["attention_enabled"] is True
+    assert "Attention alerts: enabled" in review
+
+
+def test_collect_setup_plan_recommends_attention_for_codex():
+    answers = iter(["1", "1", "1", "2", "1", "", "n", "n", "n"])
+
+    plan = setup_flow.collect_setup_plan(
+        environment(),
+        {},
+        input_fn=lambda _prompt: next(answers),
+        output_fn=lambda _line: None,
+    )
+
+    assert plan.agent_target == "codex"
+    assert plan.attention_enabled is True
+
+
+def test_collect_setup_plan_keeps_attention_opt_in_for_generic_agent():
+    answers = iter(["1", "1", "1", "1", "1", "", "n", "n"])
+
+    plan = setup_flow.collect_setup_plan(
+        environment(),
+        {},
+        input_fn=lambda _prompt: next(answers),
+        output_fn=lambda _line: None,
+    )
+
+    assert plan.agent_target == "agents"
+    assert plan.attention_enabled is False
+
+
+def test_collect_setup_plan_does_not_opt_existing_codex_config_into_attention():
+    answers = iter(["1", "1", "1", "2", "1", "", "n", "n", "n"])
+
+    plan = setup_flow.collect_setup_plan(
+        environment(config_exists=True),
+        {},
+        input_fn=lambda _prompt: next(answers),
+        output_fn=lambda _line: None,
+    )
+
+    assert plan.agent_target == "codex"
+    assert plan.attention_enabled is False
 
 
 def test_backend_preflight_rejects_non_english_kokoro_even_when_ready():
@@ -265,7 +332,7 @@ def test_collect_setup_plan_hides_advanced_command_without_existing_command():
 
 
 def test_collect_setup_plan_reuses_an_existing_advanced_command():
-    answers = iter(["1", "4", "1", "1", "1", "n", "n"])
+    answers = iter(["1", "4", "1", "1", "1", "n", "n", "n"])
 
     plan = setup_flow.collect_setup_plan(
         environment(),
@@ -280,7 +347,7 @@ def test_collect_setup_plan_reuses_an_existing_advanced_command():
 
 def test_collect_setup_plan_discloses_backend_and_kokoro_install_details():
     output = []
-    answers = iter(["1", "1", "1", "1", "1", "y", "n", "n"])
+    answers = iter(["1", "1", "1", "1", "1", "n", "y", "n", "n"])
 
     plan = setup_flow.collect_setup_plan(
         environment(kokoro_ready=False, kokoro_detail="model missing"),
@@ -318,7 +385,7 @@ def test_review_lines_name_agent_and_non_english_voice_compatibility():
 
 
 def test_collect_setup_plan_forces_voice_test_when_requested():
-    answers = iter(["1", "1", "1", "1", "1", "n", "y"])
+    answers = iter(["1", "1", "1", "1", "1", "n", "n"])
 
     plan = setup_flow.collect_setup_plan(
         environment(),
@@ -332,7 +399,7 @@ def test_collect_setup_plan_forces_voice_test_when_requested():
 
 
 def test_collect_setup_plan_falls_back_from_invalid_speak_mode():
-    answers = iter(["1", "1", "", "1", "1", "n", "n"])
+    answers = iter(["1", "1", "", "1", "1", "n", "n", "n"])
 
     plan = setup_flow.collect_setup_plan(
         environment(),

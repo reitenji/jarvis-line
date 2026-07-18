@@ -7,7 +7,6 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime, timedelta
 from contextlib import contextmanager
@@ -15,7 +14,18 @@ from pathlib import Path
 from typing import Any
 
 from jarvis_line import diagnostics, kokoro_say as ks
-from jarvis_line.queue_policy import schedule_job
+from jarvis_line.attention import (
+    ATTENTION_TYPES,
+    correlation_token,
+    format_input_required,
+    parse_input_request_payload,
+)
+from jarvis_line.queue_policy import (
+    attention_cancellation_key,
+    is_attention_phase,
+    prune_attention_cancellations,
+    schedule_job,
+)
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -44,7 +54,13 @@ WATCHER_STALE_SECONDS = 30
 AUDIO_WORKER_STALE_SECONDS = 120
 AUDIO_QUEUE_STALE_SECONDS = 90
 AUDIO_QUEUE_MAX_JOBS = 8
+ATTENTION_TTL_SECONDS = 30
+ATTENTION_CANCELLATION_MAX_ENTRIES = 64
 SESSION_RECOVERY_WINDOW_SECONDS = 5 * 60
+APPROVAL_CONTEXTS_MAX_ENTRIES = 64
+CODEX_SESSION_ID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 
 try:
@@ -77,6 +93,8 @@ def speak_mode_allows(phase: str, cfg: dict[str, Any] | None = None) -> bool:
     mode = str(cfg.get("speak_mode") or "final_only").strip().lower()
     if mode in ("off", "silent", "disabled"):
         return False
+    if is_attention_phase(phase):
+        return True
     if mode in ("both", "commentary_and_final", "all"):
         return True
     if mode in ("commentary_only", "commentary"):
@@ -183,18 +201,32 @@ def load_json(path: Path, default):
 
 
 def save_json_unlocked(path: Path, data) -> None:
+    tmp_path = path.with_name(
+        f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    descriptor: int | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(data, ensure_ascii=False, indent=2)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as f:
+        descriptor = os.open(
+            tmp_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = None
+        with stream as f:
             f.write(payload)
             f.write("\n")
-            tmp_name = f.name
-        os.replace(tmp_name, path)
+        os.replace(tmp_path, path)
     except Exception:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         try:
-            if "tmp_name" in locals():
-                Path(tmp_name).unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
         pass
@@ -452,6 +484,13 @@ def current_session_candidates() -> list[Path]:
     return paths
 
 
+def session_key_for_path(path: Path) -> str:
+    matches = CODEX_SESSION_ID_RE.findall(path.name)
+    if matches:
+        return f"codex:{matches[-1].lower()}"
+    return str(path.resolve())
+
+
 def collect_text(value: Any) -> list[str]:
     parts: list[str] = []
     if isinstance(value, str):
@@ -532,8 +571,15 @@ def assistant_text_from_payload(payload: dict) -> tuple[str, str]:
     return phase, "\n".join(parts).strip()
 
 
-def message_id(session_key: str, phase: str, jarvis_line: str) -> str:
-    digest = hashlib.sha256(f"{session_key}\0{phase}\0{jarvis_line}".encode("utf-8")).hexdigest()
+def message_id(
+    session_key: str,
+    phase: str,
+    jarvis_line: str,
+    attention_type: str | None = None,
+) -> str:
+    digest = hashlib.sha256(
+        f"{session_key}\0{phase}\0{attention_type or ''}\0{jarvis_line}".encode("utf-8")
+    ).hexdigest()
     return digest[:20]
 
 
@@ -585,11 +631,70 @@ def latest_cached_message(
     return entry
 
 
-def enqueue_audio_job(session_key: str, phase: str, jarvis_line: str, text: str = "") -> str | None:
+def remember_approval_reviewer(session_key: str, reviewer: object) -> bool:
+    normalized = str(reviewer or "").strip().lower()
+    if normalized not in {"user", "auto_review", "guardian_subagent"}:
+        return False
+    now_ms = int(time.time() * 1000)
+
+    def mutate(state):
+        contexts = state.setdefault("__approval_contexts__", {})
+        if not isinstance(contexts, dict):
+            contexts = {}
+            state["__approval_contexts__"] = contexts
+        contexts[session_key] = {
+            "approvals_reviewer": normalized,
+            "updated_ts_ms": now_ms,
+        }
+        stale_before = now_ms - SESSION_SCAN_WINDOW_SECONDS * 1000
+        ordered = sorted(
+            (
+                (key, value)
+                for key, value in contexts.items()
+                if isinstance(value, dict)
+            ),
+            key=lambda item: int(item[1].get("updated_ts_ms") or 0),
+            reverse=True,
+        )
+        state["__approval_contexts__"] = {
+            key: value
+            for key, value in ordered[:APPROVAL_CONTEXTS_MAX_ENTRIES]
+            if int(value.get("updated_ts_ms") or 0) >= stale_before
+        }
+
+    update_json(STATE_PATH, {}, mutate)
+    return True
+
+
+def cached_approval_reviewer(session_key: str) -> str | None:
+    state = load_json(STATE_PATH, {})
+    contexts = state.get("__approval_contexts__") if isinstance(state, dict) else {}
+    if not isinstance(contexts, dict):
+        return None
+    context = contexts.get(session_key)
+    if not isinstance(context, dict):
+        return None
+    updated_ts_ms = int(context.get("updated_ts_ms") or 0)
+    if updated_ts_ms < int(time.time() * 1000) - SESSION_SCAN_WINDOW_SECONDS * 1000:
+        return None
+    reviewer = str(context.get("approvals_reviewer") or "").strip().lower()
+    if reviewer not in {"user", "auto_review", "guardian_subagent"}:
+        return None
+    return reviewer
+
+
+def enqueue_audio_job(
+    session_key: str,
+    phase: str,
+    jarvis_line: str,
+    text: str = "",
+    attention_type: str | None = None,
+    correlation_token: str | None = None,
+) -> str | None:
     jarvis_line = str(jarvis_line or "").strip()
     if not jarvis_line:
         return None
-    job_id = message_id(session_key, phase, jarvis_line)
+    job_id = message_id(session_key, phase, jarvis_line, attention_type)
     now_ms = int(time.time() * 1000)
     cfg = runtime_config()
 
@@ -604,6 +709,10 @@ def enqueue_audio_job(session_key: str, phase: str, jarvis_line: str, text: str 
             "text": text[:4096],
             "enqueued_ts_ms": now_ms,
         }
+        if is_attention_phase(phase):
+            new_job["attention_type"] = attention_type
+            new_job["correlation_token"] = correlation_token
+            new_job["expires_ts_ms"] = now_ms + ATTENTION_TTL_SECONDS * 1000
         max_jobs = int(cfg.get("max_queue_size") or AUDIO_QUEUE_MAX_JOBS)
         jobs = schedule_job(jobs, new_job, max_jobs, stale_before)
         queue["jobs"] = jobs
@@ -611,6 +720,57 @@ def enqueue_audio_job(session_key: str, phase: str, jarvis_line: str, text: str 
         return job_id
 
     return update_json(AUDIO_QUEUE_PATH, {"jobs": []}, mutate)
+
+
+def cancel_attention_job(
+    session_key: str,
+    attention_type: str,
+    correlation_token: str,
+) -> bool:
+    if not session_key or attention_type not in ATTENTION_TYPES or not correlation_token:
+        return False
+    cancellation_key = attention_cancellation_key(
+        session_key,
+        attention_type,
+        correlation_token,
+    )
+    if not cancellation_key:
+        return False
+    now_ms = int(time.time() * 1000)
+
+    def mutate(queue):
+        jobs = list(queue.get("jobs") or [])
+        kept = [
+            job
+            for job in jobs
+            if not (
+                job.get("session_key") == session_key
+                and is_attention_phase(str(job.get("phase") or ""))
+                and job.get("attention_type") == attention_type
+                and job.get("correlation_token") == correlation_token
+            )
+        ]
+        cancellations = prune_attention_cancellations(
+            queue.get("attention_cancellations"),
+            now_ms - AUDIO_QUEUE_STALE_SECONDS * 1000,
+            ATTENTION_CANCELLATION_MAX_ENTRIES - 1,
+        )
+        cancellations[cancellation_key] = now_ms
+        queue["jobs"] = kept
+        queue["attention_cancellations"] = cancellations
+        queue["updated_ts_ms"] = now_ms
+        return len(kept) != len(jobs)
+
+    removed = bool(update_json(AUDIO_QUEUE_PATH, {"jobs": []}, mutate))
+    append_log(f"attention-cancelled type={attention_type} queued={str(removed).lower()}")
+    diagnostics.record_event(
+        "cancelled",
+        session_key=session_key,
+        phase="attention",
+        attention_type=attention_type,
+        queued=removed,
+    )
+    return True
 
 
 def audio_worker_is_healthy(state: dict[str, Any] | None = None) -> bool:
@@ -662,12 +822,49 @@ def launch_audio_worker() -> None:
     append_log(f"audio-worker-launch pid={proc.pid}")
 
 
-def queue_jarvis_line(session_key: str, phase: str, jarvis_line: str, text: str = "") -> bool:
+def queue_jarvis_line(
+    session_key: str,
+    phase: str,
+    jarvis_line: str,
+    text: str = "",
+    attention_type: str | None = None,
+    correlation_token: str | None = None,
+) -> bool:
     cfg = runtime_config()
+    if runtime_is_stopped():
+        append_log(f"skip-queue runtime-stopped phase={phase}")
+        diagnostics.record_event(
+            "skipped",
+            session_key=session_key,
+            phase=phase,
+            attention_type=attention_type,
+            reason="runtime_stopped",
+        )
+        return False
     if cfg.get("speech_enabled") is False:
         append_log(f"skip-queue speech-disabled phase={phase}")
         diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="speech_disabled")
         return False
+    if is_attention_phase(phase):
+        if not bool(cfg.get("attention_enabled", False)):
+            append_log(f"skip-queue attention-disabled type={attention_type or 'unknown'}")
+            diagnostics.record_event(
+                "skipped",
+                session_key=session_key,
+                phase=phase,
+                attention_type=attention_type,
+                reason="attention_disabled",
+            )
+            return False
+        if attention_type not in ATTENTION_TYPES:
+            append_log("skip-queue invalid-attention-type")
+            return False
+        text = jarvis_line
+        if correlation_token and not re.fullmatch(r"[a-f0-9]{20}", correlation_token):
+            correlation_token = None
+    else:
+        attention_type = None
+        correlation_token = None
     if quiet_day_active(cfg):
         append_log(f"skip-queue quiet-day phase={phase}")
         diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="quiet_day")
@@ -683,7 +880,7 @@ def queue_jarvis_line(session_key: str, phase: str, jarvis_line: str, text: str 
     jarvis_line = trim_spoken_text(jarvis_line, cfg)
     template = str(cfg.get("message_template") or "{line}")
     jarvis_line = trim_spoken_text(template.replace("{line}", jarvis_line), cfg)
-    if not should_speak(session_key, phase, jarvis_line):
+    if not should_speak(session_key, phase, jarvis_line, attention_type):
         context = diagnostics.runtime_log_context(
             session_key=session_key,
             line=jarvis_line,
@@ -692,7 +889,14 @@ def queue_jarvis_line(session_key: str, phase: str, jarvis_line: str, text: str 
         append_log(f"skip-queue-debounced phase={phase} {context}".rstrip())
         diagnostics.record_event("skipped", session_key=session_key, phase=phase, reason="debounced")
         return False
-    job_id = enqueue_audio_job(session_key, phase, jarvis_line, text)
+    job_id = enqueue_audio_job(
+        session_key,
+        phase,
+        jarvis_line,
+        text,
+        attention_type,
+        correlation_token,
+    )
     if not job_id:
         return False
     context = diagnostics.runtime_log_context(
@@ -706,6 +910,7 @@ def queue_jarvis_line(session_key: str, phase: str, jarvis_line: str, text: str 
         session_key=session_key,
         message_id=job_id,
         phase=phase,
+        attention_type=attention_type,
     )
     launch_audio_worker()
     return True
@@ -787,7 +992,7 @@ def maybe_speak_from_payload(payload: dict[str, Any], session_key: str) -> bool:
 
 
 def speak_latest_final_from_session(path: Path) -> str:
-    session_key = str(path.resolve())
+    session_key = session_key_for_path(path)
     for raw_line in reversed(read_recent_lines(path)):
         try:
             event = json.loads(raw_line)
@@ -865,7 +1070,12 @@ def derive_spoken_line(text: str, cfg: dict[str, Any] | None = None) -> str | No
     return trim_spoken_text(spoken, cfg)
 
 
-def should_speak(session_key: str, phase: str, jarvis_line: str) -> bool:
+def should_speak(
+    session_key: str,
+    phase: str,
+    jarvis_line: str,
+    attention_type: str | None = None,
+) -> bool:
     def mutate(state):
         session_state = state.setdefault(session_key, {})
         now_ms = int(time.time() * 1000)
@@ -873,14 +1083,15 @@ def should_speak(session_key: str, phase: str, jarvis_line: str) -> bool:
         configured_window = cfg.get("dedupe_window_seconds")
         debounce_ms = int(float(configured_window) * 1000) if configured_window is not None else (COMMENTARY_DEBOUNCE_SECONDS if phase == "commentary" else FINAL_DEBOUNCE_SECONDS) * 1000
         last_text = str(session_state.get("last_text") or "")
+        identity_phase = f"attention:{attention_type}" if is_attention_phase(phase) else phase
         last_phase = str(session_state.get("last_phase") or "")
         last_ts = int(session_state.get("last_ts_ms") or 0)
-        if jarvis_line == last_text and phase == last_phase and is_final_phase(phase):
+        if jarvis_line == last_text and identity_phase == last_phase and is_final_phase(phase):
             return False
-        if jarvis_line == last_text and phase == last_phase and now_ms - last_ts < debounce_ms:
+        if jarvis_line == last_text and identity_phase == last_phase and now_ms - last_ts < debounce_ms:
             return False
         session_state["last_text"] = jarvis_line
-        session_state["last_phase"] = phase
+        session_state["last_phase"] = identity_phase
         session_state["last_ts_ms"] = now_ms
         stale_before = now_ms - (SESSION_SCAN_WINDOW_SECONDS * 1000)
         for key in list(state.keys()):
@@ -899,6 +1110,43 @@ def process_line(raw_line: str, session_key: str) -> None:
         return
     if not isinstance(event, dict):
         return
+    if event.get("type") == "turn_context":
+        turn_payload = event.get("payload")
+        if isinstance(turn_payload, dict):
+            remember_approval_reviewer(
+                session_key,
+                turn_payload.get("approvals_reviewer"),
+            )
+        return
+    if event.get("type") == "response_item":
+        response_payload = event.get("payload")
+        if isinstance(response_payload, dict):
+            input_request = parse_input_request_payload(response_payload)
+            if input_request is not None:
+                cfg = runtime_config()
+                if bool(cfg.get("attention_enabled", False)):
+                    message = format_input_required(
+                        input_request.header,
+                        input_request.question,
+                        cfg.get("line_language", "English"),
+                    )
+                    queue_jarvis_line(
+                        session_key,
+                        "attention",
+                        message.line,
+                        message.line,
+                        attention_type="input_required",
+                        correlation_token=input_request.correlation_token,
+                    )
+                return
+            if response_payload.get("type") in {
+                "function_call_output",
+                "custom_tool_call_output",
+            }:
+                token = correlation_token(response_payload.get("call_id"))
+                if token:
+                    cancel_attention_job(session_key, "input_required", token)
+                return
     payload = assistant_payload_from_event(event)
     if payload:
         maybe_speak_from_payload(payload, session_key)
@@ -1051,7 +1299,7 @@ def notify_trigger(arg_payload: str = "") -> int:
         return 0
 
     append_log(f"notify-turn-complete {diagnostics.runtime_log_context(session_key=target)}")
-    session_key = str(target.resolve())
+    session_key = session_key_for_path(target)
 
     remember_latest_message(session_key, phase, text, jarvis_line)
     queue_jarvis_line(session_key, phase, jarvis_line, text)
@@ -1059,7 +1307,7 @@ def notify_trigger(arg_payload: str = "") -> int:
 
 
 def watch_file(path: Path, read_existing: bool = False) -> int:
-    session_key = str(path.resolve())
+    session_key = session_key_for_path(path)
     append_log(f"watch-start {diagnostics.runtime_log_context(session_key=session_key)}")
     launch_audio_worker()
     with path.open("r", encoding="utf-8", errors="ignore") as f:
@@ -1103,7 +1351,11 @@ def watch_sessions(read_existing: bool = False) -> int:
                 try:
                     f = path.open("r", encoding="utf-8", errors="ignore")
                     if not read_existing:
-                        if recover_latest_recent_line(path, key, recovery_min_ts_ms):
+                        if recover_latest_recent_line(
+                            path,
+                            session_key_for_path(path),
+                            recovery_min_ts_ms,
+                        ):
                             append_log(f"watch-recover {diagnostics.runtime_log_context(session_key=key)}")
                         f.seek(0, os.SEEK_END)
                     handles[key] = f
@@ -1138,7 +1390,7 @@ def watch_sessions(read_existing: bool = False) -> int:
             if not line:
                 continue
             had_line = True
-            process_line(line, key)
+            process_line(line, session_key_for_path(Path(key)))
 
         if not had_line:
             time.sleep(0.2)

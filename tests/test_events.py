@@ -25,6 +25,51 @@ def test_speech_event_normalizes_final_phase():
     assert event.session_key == "claude:abc"
 
 
+def test_speech_event_accepts_attention_with_supported_type():
+    event = SpeechEvent.from_mapping(
+        {
+            "version": 1,
+            "source": "Claude",
+            "session_id": "abc",
+            "phase": "attention",
+            "attention_type": "input_required",
+            "line": "Your input is needed.",
+        }
+    )
+
+    assert event.phase == "attention"
+    assert event.attention_type == "input_required"
+
+
+@pytest.mark.parametrize("attention_type", [None, "", "unknown"])
+def test_speech_event_rejects_missing_or_unknown_attention_type(attention_type):
+    with pytest.raises(ValueError, match="attention_type"):
+        SpeechEvent.from_mapping(
+            {
+                "version": 1,
+                "source": "custom",
+                "session_id": "abc",
+                "phase": "attention",
+                "attention_type": attention_type,
+                "line": "Attention.",
+            }
+        )
+
+
+def test_speech_event_rejects_attention_type_on_regular_phase():
+    with pytest.raises(ValueError, match="attention_type"):
+        SpeechEvent.from_mapping(
+            {
+                "version": 1,
+                "source": "custom",
+                "session_id": "abc",
+                "phase": "final",
+                "attention_type": "input_required",
+                "line": "Done.",
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -83,6 +128,47 @@ def test_emit_event_queues_normalized_session_key(monkeypatch):
     assert queued == [("gemini:abc", "commentary", "Working.", "Longer optional context.")]
 
 
+def test_emit_attention_does_not_replace_cached_assistant_message(monkeypatch):
+    remembered = []
+    queued = []
+    monkeypatch.setattr(
+        events.watcher,
+        "remember_latest_message",
+        lambda *args: remembered.append(args),
+    )
+    monkeypatch.setattr(
+        events.watcher,
+        "queue_jarvis_line",
+        lambda session, phase, line, text="", attention_type=None: queued.append(
+            (session, phase, line, text, attention_type)
+        )
+        or True,
+    )
+    monkeypatch.setattr(events.diagnostics, "record_event", lambda *_args, **_kwargs: None)
+    event = SpeechEvent.from_mapping(
+        {
+            "source": "codex",
+            "session_id": "abc",
+            "phase": "attention",
+            "attention_type": "permission_request",
+            "line": "Permission is required for Bash.",
+            "text": "raw command with TOKEN=secret must be discarded",
+        }
+    )
+
+    assert events.emit_event(event) is True
+    assert remembered == []
+    assert queued == [
+        (
+            "codex:abc",
+            "attention",
+            "Permission is required for Bash.",
+            "Permission is required for Bash.",
+            "permission_request",
+        )
+    ]
+
+
 def test_emit_stdin_accepts_versioned_json(monkeypatch, capsys):
     payload = {
         "version": 1,
@@ -135,3 +221,25 @@ def test_emit_parser_supports_direct_arguments():
     assert args.func is cli.emit_command
     assert args.source == "claude"
     assert args.session == "abc"
+
+
+def test_emit_parser_supports_attention_arguments():
+    args = cli.build_parser().parse_args(
+        [
+            "emit",
+            "--source",
+            "claude",
+            "--session",
+            "abc",
+            "--phase",
+            "attention",
+            "--attention-type",
+            "input_required",
+            "--line",
+            "Your deployment choice is required.",
+        ]
+    )
+
+    assert args.func is cli.emit_command
+    assert args.phase == "attention"
+    assert args.attention_type == "input_required"

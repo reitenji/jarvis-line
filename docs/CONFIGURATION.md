@@ -38,6 +38,7 @@ jarvis-line config set message_template "Jarvis says: {line}"
 jarvis-line config set fallback_tts system
 jarvis-line config set quiet_days saturday,sunday
 jarvis-line config set speech_enabled false
+jarvis-line config set attention_enabled true
 ```
 
 ## Common Settings
@@ -59,9 +60,29 @@ jarvis-line config set speech_enabled false
 | `audio_worker_idle_exit_seconds` | `60` | Seconds the audio worker may stay idle before exiting to release TTS memory |
 | `audio_worker_max_rss_mb` | `512` | Maximum audio worker RSS in MB before it drains the current burst and exits |
 | `speech_enabled` | `true` | Global/project switch for speech |
+| `attention_enabled` | `false` | Speak opt-in permission and input-required alerts |
 | `debug_content_logging` | `false` | Include spoken text in local legacy logs; the structured trace remains metadata-only |
 | `volume` | `0.7` | Playback volume where supported |
 | `final_trigger_mode` | `notify` | Trigger strategy for final responses |
+
+## Attention Alerts
+
+`attention_enabled` is a strict boolean and defaults to `false`, including when
+an older configuration does not contain the key. Guided setup recommends it for
+a new Codex setup but does not silently enable it for an existing install.
+
+When enabled, Codex `PermissionRequest` hooks produce locally formatted
+permission alerts only when approval is routed to the user. Requests handled by
+Codex `auto_review` or the legacy `guardian_subagent` reviewer remain silent.
+Blocking Plan-mode `request_user_input` calls produce input-required alerts
+through the fail-soft session adapter; questions with an automatic resolution
+timer remain silent. Claude, Gemini, and other integrations must submit an
+explicit `attention` event through the public protocol.
+
+Attention uses the same TTS, volume, maximum length, quiet-time, queue, and
+resource settings as status speech. `final_only` still allows enabled attention
+alerts; `speak_mode = off` or `speech_enabled = false` suppresses them. The
+toggle does not expose custom templates or raw request formatting rules.
 
 ## Prefixes
 
@@ -88,6 +109,7 @@ Fresh setup starts from this shape:
 {
   "tts": "kokoro",
   "speak_mode": "final_only",
+  "attention_enabled": false,
   "line_prefixes": ["Jarvis line:"],
   "speak_without_prefix": false,
   "line_language": "English",
@@ -119,6 +141,7 @@ If Kokoro is not ready, or if the user chooses not to use Kokoro, `system` is th
 {
   "tts": "system",
   "speak_mode": "final_only",
+  "attention_enabled": false,
   "line_prefixes": ["Jarvis line:"],
   "speak_without_prefix": false,
   "line_language": "English",
@@ -154,6 +177,7 @@ Example quieter config:
 {
   "tts": "system",
   "speak_mode": "final_only",
+  "attention_enabled": false,
   "line_prefixes": ["Jarvis line:"],
   "speak_without_prefix": false,
   "line_language": "English",

@@ -8,12 +8,18 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from jarvis_line import diagnostics, kokoro_say as ks
-from jarvis_line.queue_policy import dequeue_next
+from jarvis_line.queue_policy import (
+    attention_cancellation_key,
+    dequeue_next,
+    is_attention_phase,
+    prune_attention_cancellations,
+)
 
 
 CODEX_HOME = Path.home() / ".codex"
@@ -27,6 +33,7 @@ LOCK_PATH = HOOKS_DIR / ".jarvis_line.lock"
 AUDIO_LOCK_PATH = HOOKS_DIR / ".jarvis_line_audio.lock"
 
 QUEUE_STALE_SECONDS = 90
+ATTENTION_CANCELLATION_MAX_ENTRIES = 64
 WORKER_HEARTBEAT_SECONDS = 5.0
 IDLE_SLEEP_SECONDS = 0.2
 LOG_ROTATE_BYTES = 2 * 1024 * 1024
@@ -122,7 +129,15 @@ def update_json(path: Path, default, mutator, lock_path: Path | None = None) -> 
 
 def drop_stale_jobs(jobs: list[dict[str, Any]], now_ms: int) -> list[dict[str, Any]]:
     stale_before = now_ms - QUEUE_STALE_SECONDS * 1000
-    return [job for job in jobs if int(job.get("enqueued_ts_ms") or 0) >= stale_before]
+    return [
+        job
+        for job in jobs
+        if int(job.get("enqueued_ts_ms") or 0) >= stale_before
+        and (
+            not int(job.get("expires_ts_ms") or 0)
+            or int(job.get("expires_ts_ms") or 0) > now_ms
+        )
+    ]
 
 
 def dequeue_audio_job() -> dict[str, Any] | None:
@@ -133,6 +148,7 @@ def dequeue_audio_job() -> dict[str, Any] | None:
         job, remaining, last_session_key = dequeue_next(
             jobs,
             str(queue.get("last_session_key") or ""),
+            now_ms=now_ms,
         )
         queue["jobs"] = remaining
         queue["last_session_key"] = last_session_key
@@ -140,6 +156,38 @@ def dequeue_audio_job() -> dict[str, Any] | None:
         return job
 
     return update_json(QUEUE_PATH, {"jobs": []}, mutate)
+
+
+def attention_job_is_cancelled(job: dict[str, Any]) -> bool:
+    if not is_attention_phase(str(job.get("phase") or "")):
+        return False
+    cancellation_key = attention_cancellation_key(
+        job.get("session_key"),
+        job.get("attention_type"),
+        job.get("correlation_token"),
+    )
+    if not cancellation_key:
+        return False
+    now_ms = int(time.time() * 1000)
+    try:
+        with file_lock(LOCK_PATH):
+            queue = load_json(QUEUE_PATH, {"jobs": []})
+            if not isinstance(queue, dict):
+                return False
+            stored = queue.get("attention_cancellations")
+            cancellations = prune_attention_cancellations(
+                stored,
+                now_ms - QUEUE_STALE_SECONDS * 1000,
+                ATTENTION_CANCELLATION_MAX_ENTRIES,
+            )
+            if cancellations != stored:
+                queue["attention_cancellations"] = cancellations
+                queue["updated_ts_ms"] = now_ms
+                save_json_unlocked(QUEUE_PATH, queue)
+            return cancellation_key in cancellations
+    except Exception as exc:
+        append_log(f"cancel-check-error reason={exc.__class__.__name__}")
+        return False
 
 
 def update_worker_heartbeat() -> None:
@@ -238,71 +286,121 @@ def warm_tts_if_configured() -> None:
         append_log(f"tts-warm-error backend=kokoro reason={exc.__class__.__name__}")
 
 
-def speak_line(line: str) -> None:
+def cancellation_requested(check: Callable[[], bool] | None) -> bool:
+    if check is None:
+        return False
+    try:
+        return bool(check())
+    except Exception as exc:
+        append_log(f"cancel-check-error reason={exc.__class__.__name__}")
+        return False
+
+
+def speak_line(
+    line: str,
+    should_cancel: Callable[[], bool] | None = None,
+) -> bool:
     if not line:
-        return
+        return False
     with file_lock(AUDIO_LOCK_PATH):
+        if cancellation_requested(should_cancel):
+            return False
         started = time.perf_counter()
         cfg = ks.load_config()
         fallback = str(cfg.get("fallback_tts") or "").strip().lower()
         backend = str(cfg.get("tts") or "kokoro").strip().lower()
         try:
-            speak_with_backend(line, cfg, backend)
-            append_log(f"backend-done backend={backend} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
-            return
+            if not speak_with_backend(line, cfg, backend, should_cancel):
+                return False
+            append_log(
+                f"backend-done backend={backend} "
+                f"duration_ms={(time.perf_counter() - started) * 1000:.0f}"
+            )
+            return True
         except Exception as exc:
             if not fallback or fallback == backend:
                 raise
             append_log(f"backend-fallback from={backend} to={fallback} reason={exc.__class__.__name__}")
+            if cancellation_requested(should_cancel):
+                return False
             fallback_cfg = dict(cfg)
             fallback_cfg["tts"] = fallback
-            speak_with_backend(line, fallback_cfg, fallback)
-            append_log(f"backend-done backend={fallback} fallback_from={backend} duration_ms={(time.perf_counter() - started) * 1000:.0f}")
+            if not speak_with_backend(line, fallback_cfg, fallback, should_cancel):
+                return False
+            append_log(
+                f"backend-done backend={fallback} fallback_from={backend} "
+                f"duration_ms={(time.perf_counter() - started) * 1000:.0f}"
+            )
+            return True
 
 
-def speak_with_backend(line: str, cfg: dict[str, Any], backend: str) -> None:
-        if backend == "command":
-            speak_command(line, cfg)
-            return
-        if backend == "system":
-            speak_system(line, cfg)
-            return
-        if backend == "macos":
-            speak_macos(line, cfg)
-            return
-        speaker = ensure_speaker()
-        voice_spec = str(speaker["config"].get("voice", "bm_george:70,bm_lewis:30"))
-        voice_cache = speaker["voice_cache"]
-        if voice_spec not in voice_cache:
-            voice_cache[voice_spec] = ks.build_voice_tensor(speaker["engine"], voice_spec)
+def speak_with_backend(
+    line: str,
+    cfg: dict[str, Any],
+    backend: str,
+    should_cancel: Callable[[], bool] | None = None,
+) -> bool:
+    if backend == "command":
+        if cancellation_requested(should_cancel):
+            return False
+        speak_command(line, cfg)
+        return True
+    if backend == "system":
+        if cancellation_requested(should_cancel):
+            return False
+        speak_system(line, cfg)
+        return True
+    if backend == "macos":
+        if cancellation_requested(should_cancel):
+            return False
+        speak_macos(line, cfg)
+        return True
+    speaker = ensure_speaker()
+    voice_spec = str(speaker["config"].get("voice", "bm_george:70,bm_lewis:30"))
+    voice_cache = speaker["voice_cache"]
+    if voice_spec not in voice_cache:
+        voice_cache[voice_spec] = ks.build_voice_tensor(speaker["engine"], voice_spec)
+    if cancellation_requested(should_cancel):
+        return False
 
-        playback_mode = str(speaker["config"].get("playback_mode", "stream")).strip().lower()
-        volume = float(speaker["config"].get("volume", 0.7))
-        lang = str(speaker["config"].get("lang", "en-gb"))
-        speed = float(speaker["config"].get("speed", 1.08))
-        voice = voice_cache[voice_spec]
+    playback_mode = str(speaker["config"].get("playback_mode", "stream")).strip().lower()
+    volume = float(speaker["config"].get("volume", 0.7))
+    lang = str(speaker["config"].get("lang", "en-gb"))
+    speed = float(speaker["config"].get("speed", 1.08))
+    voice = voice_cache[voice_spec]
 
-        if playback_mode == "stream":
-            try:
-                metrics = ks.play_stream(speaker["engine"], line, voice, lang, speed, volume) or {}
-                first_chunk_ms = metrics.get("first_chunk_ms") if isinstance(metrics, dict) else None
-                if first_chunk_ms is not None:
-                    append_log(f"stream-played first_chunk_ms={float(first_chunk_ms):.0f}")
-                return
-            except Exception as exc:
-                append_log(f"stream-fallback reason={exc.__class__.__name__}")
-                if str(speaker["config"].get("fallback_playback_mode", "tempfile")).strip().lower() != "tempfile":
-                    raise
-
-        temp_dir = Path(speaker["config"].get("temp_dir", str(TTS_HOME / "generated")))
-        filename = f"kokoro_{int(time.time() * 1000)}.wav"
-        out_path = temp_dir / filename
-        ks.synthesize_to_file(speaker["engine"], line, voice, lang, speed, out_path)
+    if playback_mode == "stream":
         try:
-            ks.spawn_player(out_path, volume)
-        finally:
-            if speaker["config"].get("delete_after_play", True):
-                out_path.unlink(missing_ok=True)
+            metrics = ks.play_stream(
+                speaker["engine"], line, voice, lang, speed, volume
+            ) or {}
+            first_chunk_ms = (
+                metrics.get("first_chunk_ms") if isinstance(metrics, dict) else None
+            )
+            if first_chunk_ms is not None:
+                append_log(f"stream-played first_chunk_ms={float(first_chunk_ms):.0f}")
+            return True
+        except Exception as exc:
+            append_log(f"stream-fallback reason={exc.__class__.__name__}")
+            fallback_mode = str(
+                speaker["config"].get("fallback_playback_mode", "tempfile")
+            ).strip().lower()
+            if fallback_mode != "tempfile":
+                raise
+
+    temp_dir = Path(speaker["config"].get("temp_dir", str(TTS_HOME / "generated")))
+    filename = f"kokoro_{int(time.time() * 1000)}.wav"
+    out_path = temp_dir / filename
+    ks.synthesize_to_file(speaker["engine"], line, voice, lang, speed, out_path)
+    if cancellation_requested(should_cancel):
+        out_path.unlink(missing_ok=True)
+        return False
+    try:
+        ks.spawn_player(out_path, volume)
+    finally:
+        if speaker["config"].get("delete_after_play", True):
+            out_path.unlink(missing_ok=True)
+    return True
 
 
 def format_command_parts(parts: list[str], line: str, output_path: Path | None = None) -> list[str]:
@@ -469,9 +567,30 @@ def run_worker() -> int:
         session_key = str(job.get("session_key") or "")
         message_id = str(job.get("message_id") or "")
         enqueued_ts_ms = int(job.get("enqueued_ts_ms") or 0)
+        expires_ts_ms = int(job.get("expires_ts_ms") or 0)
         queue_delay_ms = max(0, int(time.time() * 1000) - enqueued_ts_ms) if enqueued_ts_ms else 0
         if not line:
             append_log("job-skip empty-line")
+            continue
+        if expires_ts_ms and expires_ts_ms <= int(time.time() * 1000):
+            append_log(f"job-skip expired phase={phase}")
+            diagnostics.record_event(
+                "expired",
+                session_key=session_key,
+                message_id=message_id,
+                phase=phase,
+                attention_type=job.get("attention_type"),
+            )
+            continue
+        if attention_job_is_cancelled(job):
+            append_log(f"job-skip cancelled phase={phase}")
+            diagnostics.record_event(
+                "cancelled",
+                session_key=session_key,
+                message_id=message_id,
+                phase=phase,
+                attention_type=job.get("attention_type"),
+            )
             continue
         cfg = ks.load_config()
         context = diagnostics.runtime_log_context(
@@ -491,7 +610,21 @@ def run_worker() -> int:
         update_worker_heartbeat()
         started = time.perf_counter()
         try:
-            speak_line(line)
+            played = (
+                speak_line(line, lambda: attention_job_is_cancelled(job))
+                if is_attention_phase(phase)
+                else speak_line(line)
+            )
+            if played is False:
+                append_log(f"job-skip cancelled-before-play phase={phase}")
+                diagnostics.record_event(
+                    "cancelled",
+                    session_key=session_key,
+                    message_id=message_id,
+                    phase=phase,
+                    attention_type=job.get("attention_type"),
+                )
+                continue
             duration_ms = (time.perf_counter() - started) * 1000
             append_log(f"job-done phase={phase} duration_ms={duration_ms:.0f}")
             diagnostics.record_event(

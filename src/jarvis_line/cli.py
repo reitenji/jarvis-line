@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -926,13 +927,23 @@ def watcher_command() -> list[str]:
 
 
 def hook_command_string() -> str:
-    return " ".join(watcher_command())
+    return shlex.join(watcher_command())
+
+
+def permission_hook_command() -> list[str]:
+    py = KOKORO_PY if KOKORO_PY.exists() else Path(sys.executable)
+    return [str(py), "-m", "jarvis_line.codex_hook"]
+
+
+def permission_hook_command_string() -> str:
+    return shlex.join(permission_hook_command())
 
 
 def is_jarvis_hook_command(command: str) -> bool:
     return any(marker in command for marker in (
         "jarvis_line_watcher.py",
         "jarvis_line.watcher",
+        "jarvis_line.codex_hook",
         "jarvis-line",
     ))
 
@@ -1607,6 +1618,7 @@ def emit_command(args) -> int:
                 "source": getattr(args, "source", None),
                 "session_id": getattr(args, "session", None),
                 "phase": getattr(args, "phase", None),
+                "attention_type": getattr(args, "attention_type", None),
                 "line": getattr(args, "line", None),
                 "text": getattr(args, "text", None),
             }
@@ -1732,27 +1744,120 @@ def support_report(args) -> int:
     return 0
 
 
+def enable_codex_hooks_feature() -> bool:
+    codex = shutil.which("codex")
+    if not codex:
+        print("Codex CLI was not found; could not enable the hooks feature.", file=sys.stderr)
+        return False
+    env = os.environ.copy()
+    env["CODEX_HOME"] = str(HOOKS_JSON.parent)
+    config_path = HOOKS_JSON.parent / "config.toml"
+    legacy_flag_present = _codex_features_has_key(config_path, "codex_hooks")
+    try:
+        proc = subprocess.run(
+            [codex, "features", "enable", "hooks"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    if not legacy_flag_present:
+        return True
+    try:
+        legacy_proc = subprocess.run(
+            [codex, "features", "disable", "codex_hooks"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return legacy_proc.returncode == 0
+
+
+def _codex_features_has_key(path: Path, key: str) -> bool:
+    try:
+        if path.stat().st_size > 1_048_576:
+            return False
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    section = ""
+    assignment = re.compile(rf"^{re.escape(key)}\s*=")
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section == "features" and assignment.match(line):
+            return True
+    return False
+
+
+def _upsert_codex_hook(
+    events: dict[str, Any],
+    event_name: str,
+    command: str,
+    timeout: int,
+) -> None:
+    entries = events.setdefault(event_name, [])
+    if not isinstance(entries, list):
+        raise ValueError(f"invalid Codex hook list for {event_name}")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        hooks = entry.get("hooks")
+        if not isinstance(hooks, list):
+            continue
+        for hook in hooks:
+            if not isinstance(hook, dict):
+                continue
+            if is_jarvis_hook_command(str(hook.get("command", ""))):
+                hook.update({"type": "command", "command": command, "timeout": timeout})
+                return
+    entries.append(
+        {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": command, "timeout": timeout}],
+        }
+    )
+
+
 def install_codex(_args) -> int:
     hooks = load_json(HOOKS_JSON, {"hooks": {}})
-    hooks.setdefault("hooks", {})
-    session_hooks = hooks["hooks"].setdefault("SessionStart", [])
-    command = hook_command_string()
-    for entry in session_hooks:
-        for hook in entry.get("hooks", []):
-            if is_jarvis_hook_command(str(hook.get("command", ""))):
-                hook["command"] = command
-                print("Codex hook already installed.")
-                save_json(HOOKS_JSON, hooks)
-                return 0
+    if not isinstance(hooks, dict):
+        print("Invalid Codex hooks.json root.", file=sys.stderr)
+        return 1
+    events = hooks.setdefault("hooks", {})
+    if not isinstance(events, dict):
+        print("Invalid Codex hooks.json events object.", file=sys.stderr)
+        return 1
+    if not enable_codex_hooks_feature():
+        print("Could not enable the Codex hooks feature.", file=sys.stderr)
+        return 1
     backup = HOOKS_JSON.with_suffix(".json.jarvis-line.bak")
     if HOOKS_JSON.exists() and not backup.exists():
         backup.write_text(HOOKS_JSON.read_text(encoding="utf-8"), encoding="utf-8")
-    session_hooks.append({
-        "matcher": "",
-        "hooks": [{"type": "command", "command": command, "timeout": 30}],
-    })
+    try:
+        _upsert_codex_hook(events, "SessionStart", hook_command_string(), 30)
+        _upsert_codex_hook(
+            events,
+            "PermissionRequest",
+            permission_hook_command_string(),
+            5,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     save_json(HOOKS_JSON, hooks)
-    print("Installed Codex SessionStart hook.")
+    print("Installed or refreshed Codex SessionStart and PermissionRequest hooks.")
     return 0
 
 
@@ -2241,7 +2346,12 @@ def build_parser() -> argparse.ArgumentParser:
     emit.add_argument("--stdin", action="store_true", help="Read one versioned JSON event from stdin.")
     emit.add_argument("--source", help="Agent or adapter name, for example claude or gemini.")
     emit.add_argument("--session", help="Stable session identifier from the source agent.")
-    emit.add_argument("--phase", help="commentary or final")
+    emit.add_argument("--phase", help="commentary, final, or attention")
+    emit.add_argument(
+        "--attention-type",
+        choices=("input_required", "permission_request"),
+        help="Required for attention events.",
+    )
     emit.add_argument("--line", help="Short spoken status line.")
     emit.add_argument("--text", help="Optional longer context retained only in local queue/cache state.")
     emit.set_defaults(func=emit_command)

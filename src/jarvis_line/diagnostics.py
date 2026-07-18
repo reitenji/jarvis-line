@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -89,6 +88,8 @@ def _safe_value(value: object) -> str | int | float | bool | None:
 
 
 def _trim_trace_unlocked() -> None:
+    import tempfile
+
     if not TRACE_PATH.exists() or TRACE_PATH.stat().st_size < TRACE_MAX_BYTES:
         return
     with TRACE_PATH.open("rb") as trace_file:

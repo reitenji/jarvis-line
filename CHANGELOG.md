@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-07-18
+
+- Add opt-in, content-aware attention alerts for Codex permission requests and Plan-mode questions.
+- Keep Codex permission alerts silent when the effective reviewer is automatic, while preserving alerts routed to the user.
+- Extend the versioned event protocol with `attention`, `permission_request`, and `input_required` events for third-party adapters.
+- Prioritize short-lived attention jobs without interrupting active playback, isolate them by session, and cancel answered Plan-mode prompts before playback when possible.
+- Keep raw tool input, answer choices, answers, and call IDs out of queue metadata, diagnostics, and support output.
+- Add shared CLI/setup configuration and a controlled macOS `Attention alerts` toggle while leaving existing configurations disabled by default.
+- Migrate installed Codex integrations from the deprecated `codex_hooks` feature flag to `hooks` through the Codex CLI.
+- Improve Turkish, French, and Italian attention phrasing and avoid duplicate terminal punctuation.
+- Redesign the Preview macOS Settings window around General, Speech, Voice, Updates, Diagnostics, and Advanced destinations.
+- Add draft-aware Apply, Apply & Restart, Revert, and close-confirmation flows that preserve failed edits safely.
+- Constrain backend-specific voice controls and improve update status, queue diagnostics, accessibility, and Dock visibility handling.
+- Simplify the project README and route detailed setup, TTS, agent, and troubleshooting guidance to the Wiki.
+
 ## 0.5.0 - 2026-07-11
 
 - Add a reviewed interactive `jarvis-line setup` wizard with controlled language, TTS, speech, agent, scope, hook, runtime, and voice-test choices.

@@ -4,6 +4,37 @@ import types
 from jarvis_line import watcher
 
 
+def test_save_json_unlocked_closes_descriptor_when_fdopen_fails(tmp_path, monkeypatch):
+    real_open = watcher.os.open
+    real_close = watcher.os.close
+    opened = []
+    closed = []
+
+    def recording_open(*args, **kwargs):
+        descriptor = real_open(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor
+
+    def recording_close(descriptor):
+        closed.append(descriptor)
+        real_close(descriptor)
+
+    monkeypatch.setattr(watcher.os, "open", recording_open)
+    monkeypatch.setattr(watcher.os, "close", recording_close)
+    monkeypatch.setattr(
+        watcher.os,
+        "fdopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("fdopen failed")),
+    )
+
+    watcher.save_json_unlocked(tmp_path / "state.json", {"ok": True})
+
+    leaked = [descriptor for descriptor in opened if descriptor not in closed]
+    for descriptor in leaked:
+        real_close(descriptor)
+    assert leaked == []
+
+
 def test_custom_prefix_and_trim(monkeypatch):
     monkeypatch.setattr(
         watcher,
@@ -33,6 +64,7 @@ def test_speak_mode_final_only(monkeypatch):
 
     assert watcher.speak_mode_allows("final_answer") is True
     assert watcher.speak_mode_allows("commentary") is False
+    assert watcher.speak_mode_allows("attention") is True
 
 
 def test_codex_history_user_payload_is_ignored(monkeypatch):
@@ -136,6 +168,219 @@ def test_assistant_message_without_prefix_can_be_disabled(tmp_path, monkeypatch)
             "content": "Implemented the watcher fix and verified it.",
         },
     }), "session-1")
+
+    assert queued == []
+
+
+def test_process_line_queues_structured_plan_mode_input_without_options(monkeypatch):
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {
+            "attention_enabled": True,
+            "speak_mode": "final_only",
+            "line_language": "English",
+        },
+    )
+    queued = []
+    monkeypatch.setattr(
+        watcher,
+        "queue_jarvis_line",
+        lambda *args, **kwargs: queued.append((args, kwargs)) or True,
+    )
+    event = {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "request_user_input",
+            "call_id": "call-private-1",
+            "arguments": json.dumps(
+                {
+                    "questions": [
+                        {
+                            "header": "Release",
+                            "id": "release",
+                            "question": "Which release channel should be used?",
+                            "options": [
+                                {
+                                    "label": "Secret beta",
+                                    "description": "TOKEN=do-not-store",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ),
+        },
+    }
+
+    watcher.process_line(json.dumps(event), "codex-session-1")
+
+    assert len(queued) == 1
+    args, kwargs = queued[0]
+    assert args[:3] == (
+        "codex-session-1",
+        "attention",
+        "Your input is needed: Release. Which release channel should be used?",
+    )
+    assert kwargs["attention_type"] == "input_required"
+    assert len(kwargs["correlation_token"]) == 20
+    assert "call-private-1" not in repr(queued)
+    assert "Secret beta" not in repr(queued)
+    assert "do-not-store" not in repr(queued)
+
+
+def test_process_line_ignores_auto_resolving_plan_mode_input(monkeypatch):
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {
+            "attention_enabled": True,
+            "speak_mode": "final_only",
+            "line_language": "English",
+        },
+    )
+    queued = []
+    monkeypatch.setattr(
+        watcher,
+        "queue_jarvis_line",
+        lambda *args, **kwargs: queued.append((args, kwargs)) or True,
+    )
+    event = {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "request_user_input",
+            "call_id": "call-optional-1",
+            "arguments": json.dumps(
+                {
+                    "autoResolutionMs": 60_000,
+                    "questions": [
+                        {
+                            "header": "Preference",
+                            "question": "Which option do you prefer?",
+                        }
+                    ],
+                }
+            ),
+        },
+    }
+
+    watcher.process_line(json.dumps(event), "codex-session-1")
+
+    assert queued == []
+
+
+def test_process_line_caches_effective_approval_reviewer(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+
+    watcher.process_line(
+        json.dumps(
+            {
+                "type": "turn_context",
+                "payload": {"approvals_reviewer": "auto_review"},
+            }
+        ),
+        "codex:session-1",
+    )
+
+    state = watcher.load_json(tmp_path / "state.json", {})
+    assert state["__approval_contexts__"]["codex:session-1"][
+        "approvals_reviewer"
+    ] == "auto_review"
+
+
+def test_cached_approval_reviewer_ignores_stale_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher.time, "time", lambda: 100_000.0)
+    watcher.save_json(
+        tmp_path / "state.json",
+        {
+            "__approval_contexts__": {
+                "codex:session-1": {
+                    "approvals_reviewer": "auto_review",
+                    "updated_ts_ms": 1,
+                }
+            }
+        },
+    )
+
+    assert watcher.cached_approval_reviewer("codex:session-1") is None
+
+
+def test_process_line_replaces_malformed_approval_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    watcher.save_json(
+        tmp_path / "state.json",
+        {"__approval_contexts__": {"broken": "not-an-object"}},
+    )
+
+    watcher.process_line(
+        json.dumps(
+            {
+                "type": "turn_context",
+                "payload": {"approvals_reviewer": "user"},
+            }
+        ),
+        "codex:session-1",
+    )
+
+    assert watcher.cached_approval_reviewer("codex:session-1") == "user"
+
+
+def test_process_line_cancels_matching_plan_mode_input_result(monkeypatch):
+    cancelled = []
+    monkeypatch.setattr(
+        watcher,
+        "cancel_attention_job",
+        lambda *args: cancelled.append(args) or True,
+    )
+    event = {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call_output",
+            "call_id": "call-private-1",
+            "output": "Beta TOKEN=do-not-store",
+        },
+    }
+
+    watcher.process_line(json.dumps(event), "codex-session-1")
+
+    assert cancelled == [
+        (
+            "codex-session-1",
+            "input_required",
+            watcher.correlation_token("call-private-1"),
+        )
+    ]
+    assert "do-not-store" not in repr(cancelled)
+
+
+def test_process_line_ignores_malformed_plan_mode_input(monkeypatch):
+    queued = []
+    monkeypatch.setattr(
+        watcher,
+        "queue_jarvis_line",
+        lambda *args, **kwargs: queued.append((args, kwargs)) or True,
+    )
+
+    watcher.process_line(
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "request_user_input",
+                    "call_id": "call-1",
+                    "arguments": "not-json",
+                },
+            }
+        ),
+        "codex-session-1",
+    )
 
     assert queued == []
 
@@ -284,6 +529,19 @@ def test_current_session_candidates_prefers_active_thread_id(tmp_path, monkeypat
     assert unrelated in candidates
 
 
+def test_session_key_for_path_matches_codex_hook_session_identity(tmp_path):
+    session_id = "019e1590-7384-76a3-bb84-363d7045f9e5"
+    path = tmp_path / f"rollout-2026-05-11T08-44-08-{session_id}.jsonl"
+
+    assert watcher.session_key_for_path(path) == f"codex:{session_id}"
+
+
+def test_session_key_for_path_falls_back_for_unknown_filename(tmp_path):
+    path = tmp_path / "session.jsonl"
+
+    assert watcher.session_key_for_path(path) == str(path.resolve())
+
+
 def test_should_speak_preserves_runtime_metadata(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
@@ -335,6 +593,169 @@ def test_queue_trimming_preserves_finals_before_commentary(tmp_path, monkeypatch
 
     queue = watcher.load_json(tmp_path / "queue.json", {})
     assert [job["jarvis_line"] for job in queue["jobs"]] == ["final one", "final three"]
+
+
+def test_attention_queue_requires_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {"speak_mode": "final_only", "attention_enabled": False},
+    )
+    launched = []
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: launched.append(True))
+
+    assert watcher.queue_jarvis_line(
+        "s1",
+        "attention",
+        "Permission is needed.",
+        attention_type="permission_request",
+    ) is False
+    assert not (tmp_path / "queue.json").exists()
+    assert launched == []
+
+
+def test_attention_queue_respects_stopped_runtime(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    watcher.save_json(tmp_path / "state.json", {"__runtime__": {"stopped": True}})
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {"speak_mode": "final_only", "attention_enabled": True},
+    )
+    launched = []
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: launched.append(True))
+
+    assert watcher.queue_jarvis_line(
+        "s1",
+        "attention",
+        "Permission is needed.",
+        attention_type="permission_request",
+    ) is False
+    assert not (tmp_path / "queue.json").exists()
+    assert launched == []
+
+
+def test_attention_queue_stores_only_bounded_metadata_and_expiry(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher, "LOG_PATH", tmp_path / "watcher.log")
+    monkeypatch.setattr(
+        watcher,
+        "runtime_config",
+        lambda: {"speak_mode": "final_only", "attention_enabled": True},
+    )
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: None)
+    monkeypatch.setattr(watcher.time, "time", lambda: 100.0)
+
+    assert watcher.queue_jarvis_line(
+        "codex:s1",
+        "attention",
+        "Permission is needed to push changes.",
+        "Permission is needed to push changes.",
+        attention_type="permission_request",
+        correlation_token="0123456789abcdef0123",
+    ) is True
+
+    job = watcher.load_json(tmp_path / "queue.json", {})["jobs"][0]
+    assert job["attention_type"] == "permission_request"
+    assert job["correlation_token"] == "0123456789abcdef0123"
+    assert job["expires_ts_ms"] == 130_000
+    assert set(job) == {
+        "message_id",
+        "session_key",
+        "phase",
+        "attention_type",
+        "correlation_token",
+        "jarvis_line",
+        "text",
+        "enqueued_ts_ms",
+        "expires_ts_ms",
+    }
+
+
+def test_cancel_attention_job_is_session_and_token_isolated(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    watcher.save_json(
+        tmp_path / "queue.json",
+        {
+            "jobs": [
+                {
+                    "message_id": "a1",
+                    "session_key": "codex:s1",
+                    "phase": "attention",
+                    "attention_type": "input_required",
+                    "correlation_token": "token-1",
+                },
+                {
+                    "message_id": "a2",
+                    "session_key": "codex:s2",
+                    "phase": "attention",
+                    "attention_type": "input_required",
+                    "correlation_token": "token-1",
+                },
+            ]
+        },
+    )
+
+    assert watcher.cancel_attention_job(
+        "codex:s1", "input_required", "token-1"
+    ) is True
+
+    jobs = watcher.load_json(tmp_path / "queue.json", {})["jobs"]
+    assert [job["message_id"] for job in jobs] == ["a2"]
+
+
+def test_cancel_attention_job_records_in_flight_tombstone(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    watcher.save_json(tmp_path / "queue.json", {"jobs": []})
+
+    assert watcher.cancel_attention_job(
+        "codex:s1", "input_required", "token-1"
+    ) is True
+
+    queue = watcher.load_json(tmp_path / "queue.json", {})
+    assert len(queue["attention_cancellations"]) == 1
+    assert "codex:s1" not in repr(queue["attention_cancellations"])
+    assert "token-1" not in repr(queue["attention_cancellations"])
+
+
+def test_cancel_attention_job_keeps_new_tombstone_at_capacity(tmp_path, monkeypatch):
+    monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
+    monkeypatch.setattr(watcher.time, "time", lambda: 100.0)
+    watcher.save_json(
+        tmp_path / "queue.json",
+        {
+            "jobs": [],
+            "attention_cancellations": {
+                f"existing-{index}": 100_000
+                for index in range(watcher.ATTENTION_CANCELLATION_MAX_ENTRIES)
+            },
+        },
+    )
+
+    assert watcher.cancel_attention_job(
+        "codex:s1", "input_required", "token-1"
+    ) is True
+
+    cancellations = watcher.load_json(tmp_path / "queue.json", {})[
+        "attention_cancellations"
+    ]
+    expected_key = watcher.attention_cancellation_key(
+        "codex:s1", "input_required", "token-1"
+    )
+    assert len(cancellations) == watcher.ATTENTION_CANCELLATION_MAX_ENTRIES
+    assert expected_key in cancellations
 
 
 def test_queue_log_is_private_and_trace_records_metadata(tmp_path, monkeypatch):

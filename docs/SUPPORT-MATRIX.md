@@ -16,7 +16,7 @@ regularly exercised from integrations that are available as Preview.
 
 | Platform surface | Status | Current evidence and limits |
 |---|---|---|
-| macOS CLI, watcher, queue, and Codex hook | Validated beta | CI plus regular local Codex sessions on Apple silicon |
+| macOS CLI, watcher, queue, and Codex hooks | Validated beta | CI plus regular local Codex sessions on Apple silicon; opt-in attention hook latency is benchmarked locally before release |
 | macOS system TTS and Kokoro playback | Validated beta | Tested locally; available voices and audio-device behavior still depend on the Mac |
 | macOS manager app | Preview | Swift tests and DMG smoke checks run in CI; the public DMG is ad-hoc signed and not notarized |
 | Windows CLI, watcher, and queue | Preview | Python 3.10/3.12 CI and clean-install checks; not yet validated in sustained real Windows sessions |
@@ -28,9 +28,9 @@ regularly exercised from integrations that are available as Preview.
 
 | Integration | Status | Notes |
 |---|---|---|
-| Codex | Validated beta | Session watcher and hook installer are included |
-| Claude | Protocol | Instruction template and `jarvis-line emit` protocol are available; no bundled native hook adapter yet |
-| Gemini | Protocol | Instruction template and `jarvis-line emit` protocol are available; no bundled native hook adapter yet |
+| Codex | Validated beta | Session watcher, `SessionStart`, and official `PermissionRequest` hook integration are included; Plan-mode `request_user_input` uses a fail-soft session compatibility adapter |
+| Claude | Protocol | Instruction template and explicit commentary, final, and attention `jarvis-line emit` events are available; no bundled native hook adapter yet |
+| Gemini | Protocol | Instruction template and explicit commentary, final, and attention `jarvis-line emit` events are available; no bundled native hook adapter yet |
 | Other agents and editors | Protocol | Submit versioned events described in [EVENT-PROTOCOL.md](EVENT-PROTOCOL.md) |
 
 ## TTS Backends
@@ -51,5 +51,5 @@ more Windows/Linux real-device reports, a notarized macOS distribution path,
 and a period without high-impact queue or watcher regressions.
 
 Please open a reviewed support report when you find a platform-specific rough
-edge. See [the issue guide](../README.md#support-reports) and feel free to open an
-issue when the behavior is reproducible.
+edge. See [the issue guide](../README.md#help-and-community) and feel free to
+open an issue when the behavior is reproducible.

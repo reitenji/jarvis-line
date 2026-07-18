@@ -3,6 +3,14 @@ import Testing
 @testable import JarvisLine
 
 struct JarvisConfigContractTests {
+    @Test func attentionDefaultsOffAndPersists() {
+        var draft = JarvisConfigDraft([:])
+
+        #expect(!draft.attentionEnabled)
+        draft.attentionEnabled = true
+        #expect(draft.applying(to: [:])["attention_enabled"] as? Bool == true)
+    }
+
     @Test func contractDecodesDefaultsAndOptions() throws {
         let json = #"""
         {

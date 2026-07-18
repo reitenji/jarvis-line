@@ -99,6 +99,10 @@ final class SetupAssistantModel: ObservableObject {
         plan.language.caseInsensitiveCompare("English") != .orderedSame
     }
 
+    var attentionAlertsAvailable: Bool {
+        plan.speakMode != "off"
+    }
+
     var languageValidationMessage: String? {
         Self.languageValidationMessage(for: languageInputForValidation)
     }
@@ -771,6 +775,12 @@ struct SetupAssistantView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(JarvisTheme.mutedText)
             }
+            Toggle("Attention alerts", isOn: $model.plan.attentionEnabled)
+                .disabled(!model.attentionAlertsAvailable)
+            Text("Recommended for Codex. With its hook installed, permission prompts and Plan-mode questions are detected automatically; other agents require attention protocol events.")
+                .font(.system(size: 12))
+                .foregroundStyle(JarvisTheme.mutedText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -823,6 +833,7 @@ struct SetupAssistantView: View {
             reviewValue("Language", model.plan.language)
             reviewValue("Voice", model.selectedBackend?.label ?? model.plan.tts)
             reviewValue("Speech", speechLabel(model.plan.speakMode))
+            reviewValue("Attention alerts", model.plan.attentionEnabled ? "Enabled" : "Disabled")
             reviewValue("Agent", agentLabel(model.plan.agentTarget))
             reviewValue("Instructions", model.plan.instructionScope == "project" ? "Project folder, manual paste" : "Global instructions, manual paste")
             Divider()

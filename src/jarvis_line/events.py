@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from jarvis_line import diagnostics, watcher
+from jarvis_line.attention import ATTENTION_TYPES
 
 
 EVENT_VERSION = 1
@@ -20,6 +21,7 @@ PHASE_ALIASES = {
     "final_answer": "final",
     "final-response": "final",
     "final_response": "final",
+    "attention": "attention",
 }
 
 
@@ -46,8 +48,20 @@ def _phase(value: object) -> str:
     phase = _identifier(value, "phase").lower().replace(" ", "_")
     normalized = PHASE_ALIASES.get(phase)
     if not normalized:
-        raise ValueError("phase must be commentary or final")
+        raise ValueError("phase must be commentary, final, or attention")
     return normalized
+
+
+def _attention_type(value: object, phase: str) -> str | None:
+    raw = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if phase != "attention":
+        if raw:
+            raise ValueError("attention_type is only valid for attention events")
+        return None
+    if raw not in ATTENTION_TYPES:
+        allowed = ", ".join(sorted(ATTENTION_TYPES))
+        raise ValueError(f"attention_type must be one of: {allowed}")
+    return raw
 
 
 def _line(value: object) -> str:
@@ -67,6 +81,7 @@ class SpeechEvent:
     phase: str
     line: str
     text: str = ""
+    attention_type: str | None = None
 
     @property
     def session_key(self) -> str:
@@ -85,13 +100,15 @@ class SpeechEvent:
         text = str(value.get("text") or "")
         if len(text) > MAX_TEXT_CHARS:
             raise ValueError(f"text must be at most {MAX_TEXT_CHARS} characters")
+        phase = _phase(value.get("phase"))
         return cls(
             version=version,
             source=_source(value.get("source")),
             session_id=_identifier(value.get("session_id"), "session_id"),
-            phase=_phase(value.get("phase")),
+            phase=phase,
             line=_line(value.get("line")),
             text=text,
+            attention_type=_attention_type(value.get("attention_type"), phase),
         )
 
 
@@ -102,7 +119,17 @@ def emit_event(event: SpeechEvent) -> bool:
         session_key=event.session_key,
         source=event.source,
         phase=event.phase,
+        attention_type=event.attention_type,
     )
+    if event.phase == "attention":
+        text = event.line
+        return watcher.queue_jarvis_line(
+            event.session_key,
+            event.phase,
+            event.line,
+            text,
+            attention_type=event.attention_type,
+        )
     watcher.remember_latest_message(
         event.session_key,
         event.phase,
