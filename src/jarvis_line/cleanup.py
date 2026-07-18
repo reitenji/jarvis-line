@@ -907,7 +907,8 @@ def _remove_claimed_cleanup_lock(
                 return True
             if entry.name != LOCK_OWNER_NAME or next(entries, None) is not None:
                 return False
-            owner_info = entry.stat(follow_symlinks=False)
+        owner_path = claimed.path / LOCK_OWNER_NAME
+        owner_info = owner_path.lstat()
         if not stat.S_ISREG(owner_info.st_mode):
             return False
         if expected_owner is not None and not _same_owner_identity(
@@ -916,7 +917,6 @@ def _remove_claimed_cleanup_lock(
             return False
         if not _same_directory_object(claimed, claimed.path.lstat()):
             return False
-        owner_path = claimed.path / LOCK_OWNER_NAME
         if not _same_identity(
             _candidate_from_stat(owner_path, "cleanup", owner_info),
             owner_path.lstat(),
@@ -951,12 +951,12 @@ def _remove_failed_cleanup_lock(
                 or next(entries, None) is not None
             ):
                 return False
-            owner_info = entry.stat(follow_symlinks=False)
+        owner_path = claimed.path / LOCK_OWNER_NAME
+        owner_info = owner_path.lstat()
         if not _same_identity(expected_owner, owner_info):
             return False
         if not _same_directory_object(claimed, claimed.path.lstat()):
             return False
-        owner_path = claimed.path / LOCK_OWNER_NAME
         if not _same_identity(expected_owner, owner_path.lstat()):
             return False
         owner_path.unlink()
@@ -1225,6 +1225,18 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
             return acquired
     except OSError:
         if created_directory is not None:
+            if _IS_WINDOWS and created_owner is not None:
+                try:
+                    owner_path = created_directory.path / LOCK_OWNER_NAME
+                    owner_info = owner_path.lstat()
+                    if stat.S_ISREG(owner_info.st_mode):
+                        created_owner = _candidate_from_stat(
+                            owner_path,
+                            "cleanup",
+                            owner_info,
+                        )
+                except OSError:
+                    pass
             _quarantine_failed_cleanup_lock(created_directory, created_owner)
         raise
     return None
