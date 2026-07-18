@@ -38,6 +38,7 @@ STALE_LOCK_DIR_NAMES = (
     ".jarvis_line_audio.lock.d",
     ".jarvis_line_trace.lock.d",
 )
+_IS_WINDOWS = os.name == "nt"
 
 CATEGORY_NAMES = (
     "generated_audio",
@@ -323,8 +324,13 @@ def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
     try:
         opened_info = os.fstat(descriptor)
         if (
-            not _same_regular_file_object(owner_candidate, opened_info)
+            not stat.S_ISREG(opened_info.st_mode)
             or opened_info.st_size != owner_info.st_size
+        ):
+            return None
+        if not _IS_WINDOWS and not _same_regular_file_object(
+            owner_candidate,
+            opened_info,
         ):
             return None
         opened_candidate = _candidate_from_stat(
@@ -333,15 +339,17 @@ def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
             opened_info,
         )
         payload = os.read(descriptor, MAX_LOCK_OWNER_BYTES + 1)
+        final_info = owner_path.lstat()
+        if not _same_identity(owner_candidate, final_info):
+            return None
+        if not _IS_WINDOWS and not _same_regular_file_object(
+            opened_candidate,
+            final_info,
+        ):
+            return None
     finally:
         os.close(descriptor)
 
-    final_info = owner_path.lstat()
-    if not _same_identity(owner_candidate, final_info) or not _same_regular_file_object(
-        opened_candidate,
-        final_info,
-    ):
-        return None
     if len(payload) > MAX_LOCK_OWNER_BYTES:
         return None
     try:
@@ -1177,9 +1185,13 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
                     finally:
                         os.close(descriptor)
             owner_info = owner_path.lstat()
-            if created_owner is None or not _same_regular_file_object(
-                created_owner,
-                owner_info,
+            if not stat.S_ISREG(owner_info.st_mode) or owner_info.st_size != len(
+                owner_payload
+            ):
+                raise OSError("changed cleanup lock owner")
+            if not _IS_WINDOWS and (
+                created_owner is None
+                or not _same_regular_file_object(created_owner, owner_info)
             ):
                 raise OSError("changed cleanup lock owner")
             created_owner = _candidate_from_stat(

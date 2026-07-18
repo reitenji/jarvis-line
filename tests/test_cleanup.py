@@ -284,14 +284,15 @@ def test_lock_owner_read_tolerates_handle_timestamp_differences(
             (),
             {
                 "st_mode": info.st_mode,
-                "st_dev": info.st_dev,
-                "st_ino": info.st_ino,
+                "st_dev": 0,
+                "st_ino": 0,
                 "st_size": info.st_size,
                 "st_mtime_ns": info.st_mtime_ns + 1,
             },
         )()
 
     monkeypatch.setattr(cleanup.os, "fstat", windows_style_fstat)
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", True, raising=False)
 
     owner = cleanup._read_lock_owner(directory)
 
