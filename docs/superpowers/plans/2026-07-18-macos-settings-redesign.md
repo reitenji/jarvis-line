@@ -38,7 +38,7 @@
 - Create: `apps/macos/JarvisLine/Tests/JarvisLineTests/SettingsStateTests.swift`
 - Modify: `apps/macos/JarvisLine/Sources/JarvisConfig.swift`
 
-- [ ] **Step 1: Write failing destination and impact tests**
+- [x] **Step 1: Write failing destination and impact tests**
 
 Cover the stable order `general`, `speech`, `voice`, `updates`, `diagnostics`, `advanced`; unique SF Symbols; update-only save behavior; runtime restart behavior; and equal drafts producing no action.
 
@@ -56,23 +56,23 @@ Cover the stable order `general`, `speech`, `voice`, `updates`, `diagnostics`, `
 }
 ```
 
-- [ ] **Step 2: Verify the tests fail before implementation**
+- [x] **Step 2: Verify the tests fail before implementation**
 
 Run: `cd apps/macos/JarvisLine && swift test --filter SettingsStateTests`
 
 Expected: FAIL because the state types and draft equality do not exist.
 
-- [ ] **Step 3: Implement value equality, destinations, and impact classification**
+- [x] **Step 3: Implement value equality, destinations, and impact classification**
 
 Make `JarvisConfigDraft` conform to `Equatable`. Add `SettingsDestination` with title, icon, and concise accessibility description. Add `SettingsApplyImpact` with `.none`, `.saveOnly`, and `.restartRuntime`; classify only `updateCheckEnabled` and `updateCheckIntervalHours` as save-only differences.
 
-- [ ] **Step 4: Run state tests**
+- [x] **Step 4: Run state tests**
 
 Run: `cd apps/macos/JarvisLine && swift test --filter SettingsStateTests`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit state primitives**
+- [x] **Step 5: Commit state primitives**
 
 ```bash
 git add apps/macos/JarvisLine/Sources/SettingsState.swift apps/macos/JarvisLine/Sources/JarvisConfig.swift apps/macos/JarvisLine/Tests/JarvisLineTests/SettingsStateTests.swift
@@ -85,27 +85,27 @@ git commit -m "feat: add settings state model"
 - Modify: `apps/macos/JarvisLine/Sources/JarvisLineApp.swift`
 - Modify: `apps/macos/JarvisLine/Tests/JarvisLineTests/JarvisLineModelTests.swift`
 
-- [ ] **Step 1: Write failing model tests**
+- [x] **Step 1: Write failing model tests**
 
 Cover a clean initial draft, dirty state after editing, revert restoring the saved snapshot, update-only apply omitting `restart`, runtime-impact apply invoking `restart`, failed save preserving the draft, and the quick attention toggle keeping the snapshot synchronized.
 
-- [ ] **Step 2: Run model tests and verify failure**
+- [x] **Step 2: Run model tests and verify failure**
 
 Run: `cd apps/macos/JarvisLine && swift test --filter JarvisLineModelTests`
 
 Expected: FAIL because snapshot, dirty, revert, and impact-aware apply behavior do not exist.
 
-- [ ] **Step 3: Implement snapshot-backed editing**
+- [x] **Step 3: Implement snapshot-backed editing**
 
 Add a private published saved draft, `hasUnsavedChanges`, `pendingApplyImpact`, `revertConfig()`, and `applyConfig() async -> Bool`. Update refresh/load to replace both draft and snapshot. Update successful direct attention persistence to synchronize the corresponding snapshot value. Keep failed drafts untouched and expose a short success message separately from command output.
 
-- [ ] **Step 4: Run model tests**
+- [x] **Step 4: Run model tests**
 
 Run: `cd apps/macos/JarvisLine && swift test --filter JarvisLineModelTests`
 
 Expected: PASS, including legacy attention-toggle tests.
 
-- [ ] **Step 5: Commit model behavior**
+- [x] **Step 5: Commit model behavior**
 
 ```bash
 git add apps/macos/JarvisLine/Sources/JarvisLineApp.swift apps/macos/JarvisLine/Tests/JarvisLineTests/JarvisLineModelTests.swift
@@ -118,15 +118,15 @@ git commit -m "feat: stage and apply settings safely"
 - Create: `apps/macos/JarvisLine/Sources/SettingsWindowView.swift`
 - Modify: `apps/macos/JarvisLine/Sources/JarvisLineApp.swift`
 
-- [ ] **Step 1: Add a compile-level view test surface**
+- [x] **Step 1: Add a compile-level view test surface**
 
 Keep destination content selected by `SettingsDestination` and expose pure labels/options through internal helpers so state tests can verify bounded choices without snapshot testing private SwiftUI internals.
 
-- [ ] **Step 2: Implement the settings shell**
+- [x] **Step 2: Implement the settings shell**
 
 Build a stable-width sidebar and independently scrolling content pane. Add a compact header with app mark, app/CLI versions, explicit runtime state, and refresh icon. Put Apply and Revert in the window toolbar and show them only while dirty. Preserve minimum size at 700 by 660 and default to approximately 860 by 720.
 
-- [ ] **Step 3: Implement destination views**
+- [x] **Step 3: Implement destination views**
 
 Implement:
 
@@ -139,17 +139,17 @@ Implement:
 
 Use unframed grouped rows with dividers, no nested cards, and no visible how-to copy except validation or compatibility guidance.
 
-- [ ] **Step 4: Replace the legacy settings host**
+- [x] **Step 4: Replace the legacy settings host**
 
 Change `SettingsWindowController` to host `SettingsWindowView`. Remove `settingsWindowBody`, `settingsView`, old settings sections, and the persistent footer from `JarvisLinePanel`; keep all quick-menu helpers still referenced by quick mode.
 
-- [ ] **Step 5: Build and fix all compiler errors**
+- [x] **Step 5: Build and fix all compiler errors**
 
 Run: `cd apps/macos/JarvisLine && swift build`
 
 Expected: PASS with no unused settings-only code left in `JarvisLinePanel`.
 
-- [ ] **Step 6: Commit the view redesign**
+- [x] **Step 6: Commit the view redesign**
 
 ```bash
 git add apps/macos/JarvisLine/Sources/SettingsWindowView.swift apps/macos/JarvisLine/Sources/JarvisLineApp.swift
@@ -163,25 +163,25 @@ git commit -m "feat: redesign macos settings window"
 - Modify: `apps/macos/JarvisLine/Sources/SettingsWindowView.swift`
 - Modify: `apps/macos/JarvisLine/Tests/JarvisLineTests/SettingsStateTests.swift`
 
-- [ ] **Step 1: Write failing close-decision tests**
+- [x] **Step 1: Write failing close-decision tests**
 
 Add a pure `SettingsCloseAction` decision surface covering clean close, apply, discard, and cancel. Verify discard calls revert and apply closes only after persistence succeeds.
 
-- [ ] **Step 2: Implement AppKit close confirmation**
+- [x] **Step 2: Implement AppKit close confirmation**
 
 Store the model in `SettingsWindowController`. In `windowShouldClose`, allow clean closes immediately; otherwise show a native alert with Apply, Discard, and Cancel. Apply asynchronously and close only on success. Discard restores the snapshot before closing.
 
-- [ ] **Step 3: Add explicit loading, validation, error, and success states**
+- [x] **Step 3: Add explicit loading, validation, error, and success states**
 
 Disable only affected actions while busy, keep sidebar navigation stable, show blocking validation near Apply, retain failed drafts, and clear the short success confirmation after a brief delay.
 
-- [ ] **Step 4: Run focused and full Swift tests**
+- [x] **Step 4: Run focused and full Swift tests**
 
 Run: `cd apps/macos/JarvisLine && swift test`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit close and failure handling**
+- [x] **Step 5: Commit close and failure handling**
 
 ```bash
 git add apps/macos/JarvisLine/Sources/JarvisLineApp.swift apps/macos/JarvisLine/Sources/SettingsWindowView.swift apps/macos/JarvisLine/Tests/JarvisLineTests/SettingsStateTests.swift
@@ -193,25 +193,25 @@ git commit -m "feat: protect unsaved settings changes"
 **Files:**
 - Modify only files required by findings from this task.
 
-- [ ] **Step 1: Build and launch the debug app**
+- [x] **Step 1: Build and launch the debug app**
 
 Run: `cd apps/macos/JarvisLine && swift build`
 
 Launch through the repository packaging/run script used by the existing app README. Capture Settings at the 700 by 660 minimum and a wider desktop size.
 
-- [ ] **Step 2: Inspect all destinations and key states**
+- [x] **Step 2: Inspect all destinations and key states**
 
 Check default, dirty, validation error, loading, stopped runtime, empty voice list, custom command, and Advanced states. Verify no clipping, overlap, nested cards, uncontrolled free input, or titlebar drag regression.
 
-- [ ] **Step 3: Verify keyboard and accessibility behavior**
+- [x] **Step 3: Verify keyboard and accessibility behavior**
 
 Confirm sidebar selection, tab order, switch/picker labels, toolbar labels/tooltips, visible focus rings, and non-color health descriptions.
 
-- [ ] **Step 4: Apply only evidence-backed polish fixes**
+- [x] **Step 4: Apply only evidence-backed polish fixes**
 
 Keep the graphite/cyan/gold brand, corners at 8 points or less, compact type, stable row heights, and restrained transitions. Re-run `swift test` and `swift build` after edits.
 
-- [ ] **Step 5: Commit QA fixes if any**
+- [x] **Step 5: Commit QA fixes if any**
 
 ```bash
 git add apps/macos/JarvisLine
@@ -223,7 +223,7 @@ git commit -m "fix: polish macos settings experience"
 **Files:**
 - Modify packaging files only if the existing scripts fail for a reproducible project reason.
 
-- [ ] **Step 1: Run the full verification suite**
+- [x] **Step 1: Run the full verification suite**
 
 Run:
 
@@ -236,18 +236,18 @@ git diff --check
 
 Expected: all commands pass.
 
-- [ ] **Step 2: Package the app using the repository script**
+- [x] **Step 2: Package the app using the repository script**
 
 Use the documented packaging command and confirm the bundle reports version `0.5.0`, has the expected bundle identifier, icon, executable, and only one Jarvis Line app bundle in the generated artifact.
 
-- [ ] **Step 3: Replace the local app safely**
+- [x] **Step 3: Replace the local app safely**
 
 Quit the running Jarvis Line app, replace `/Applications/Jarvis Line.app` with the newly built bundle, launch it once, and confirm one application instance, one watcher, and one audio worker. Preserve `~/.codex/hooks/jarvis_line_config.json` and all user TTS assets.
 
-- [ ] **Step 4: Verify persistence and runtime behavior**
+- [x] **Step 4: Verify persistence and runtime behavior**
 
 Open Settings, change one update-only setting and one runtime setting, verify the appropriate apply impact, revert both, run a voice test, and confirm the worker remains healthy without duplicate playback.
 
-- [ ] **Step 5: Record final branch state**
+- [x] **Step 5: Record final branch state**
 
 Confirm commits are limited to the Settings feature and its plan. Do not push or open the final PR until PR #75 is merged and this branch is rebased onto current `develop`.

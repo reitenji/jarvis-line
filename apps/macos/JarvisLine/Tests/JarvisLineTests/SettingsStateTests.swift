@@ -39,4 +39,52 @@ struct SettingsStateTests {
             SettingsApplyImpact.between(.defaults, draft) == .restartRuntime
         )
     }
+
+    @Test func closeDecisionProtectsUnsavedChanges() {
+        #expect(
+            SettingsCloseDecision.resolve(hasUnsavedChanges: false) == .close
+        )
+        #expect(
+            SettingsCloseDecision.resolve(
+                hasUnsavedChanges: true,
+                choice: .apply
+            ) == .applyAndClose
+        )
+        #expect(
+            SettingsCloseDecision.resolve(
+                hasUnsavedChanges: true,
+                choice: .discard
+            ) == .revertAndClose
+        )
+        #expect(
+            SettingsCloseDecision.resolve(
+                hasUnsavedChanges: true,
+                choice: .cancel
+            ) == .keepOpen
+        )
+    }
+
+    @Test func customCommandFallbackIsAvailableOnlyWhenConfigured() {
+        let withoutCommand = SettingsPresentation.fallbackOptions(
+            contract: .empty,
+            command: ""
+        )
+        let withCommand = SettingsPresentation.fallbackOptions(
+            contract: .empty,
+            command: "speak --text {text_json}"
+        )
+
+        #expect(!withoutCommand.contains("command"))
+        #expect(withCommand.contains("command"))
+        #expect(Set(withCommand).count == withCommand.count)
+    }
+
+    @Test func presentationPreservesAnInstalledVoiceOutsideTheContract() {
+        #expect(
+            SettingsPresentation.options(
+                ["System default", "Samantha"],
+                preserving: "Siri Voice 2"
+            ) == ["System default", "Samantha", "Siri Voice 2"]
+        )
+    }
 }

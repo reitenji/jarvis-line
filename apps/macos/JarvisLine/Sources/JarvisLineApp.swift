@@ -13,8 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         SingleInstanceGuard.enforce()
         DispatchQueue.main.async {
-            self.pruneMainMenu()
+            Self.applyDockVisibility(JarvisAppPreferences.showDockIcon)
+            Self.pruneMainMenu()
         }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Self.applyDockVisibility(JarvisAppPreferences.showDockIcon)
+        Self.pruneMainMenu()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -28,13 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    private func pruneMainMenu() {
+    private static func pruneMainMenu() {
         guard let mainMenu = NSApplication.shared.mainMenu else {
             return
         }
 
-        for item in mainMenu.items.reversed() where ["File", "Edit", "View", "Window", "Help"].contains(item.title) {
-            mainMenu.removeItem(item)
+        let hiddenMenus = Set(["File", "Edit", "View", "Window", "Help"])
+        for item in mainMenu.items.reversed() {
+            let titles = [item.title, item.submenu?.title].compactMap { $0 }
+            if titles.contains(where: hiddenMenus.contains) {
+                mainMenu.removeItem(item)
+            }
         }
     }
 
@@ -140,7 +150,7 @@ struct JarvisLineApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            JarvisLinePanel(model: model, mode: .quick)
+            JarvisLinePanel(model: model)
                 .frame(width: 430)
                 .task {
                     await model.refresh()
@@ -177,6 +187,8 @@ final class JarvisLineModel: ObservableObject {
     @Published var systemVoices: [String] = [""]
     @Published var doctorText = ""
     @Published var lastOutput = ""
+    @Published private(set) var updateStatusText = "Not checked in this app session"
+    @Published private(set) var settingsConfirmation: String?
     @Published var isBusy = false
     @Published var errorMessage: String?
     @Published var codexHookInstalled = false
@@ -186,6 +198,7 @@ final class JarvisLineModel: ObservableObject {
     private let cli: any JarvisLineCommandRunning
     private let configStore: JarvisConfigStore
     private var setupInspectionState = SetupFirstRunInspectionState()
+    private var confirmationID: UUID?
     var onInitialSetupInspection: ((SetupInspection) -> Void)?
 
     init(
@@ -233,7 +246,7 @@ final class JarvisLineModel: ObservableObject {
                 config = loadedConfig
                 savedConfig = loadedConfig
             }
-            systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
+            systemVoices = await JarvisLineCLI.systemVoices(preserving: config.systemVoice)
             let statusOutput = try await cli.run(["status"])
             let doctorOutput = try await cli.run(["doctor"])
             status = RuntimeStatus.parse(statusOutput)
@@ -270,6 +283,28 @@ final class JarvisLineModel: ObservableObject {
         await refresh()
     }
 
+    func clearQueue() async {
+        await command("Clear Queue", ["queue", "clear"])
+        await refresh()
+    }
+
+    func checkForUpdates() async {
+        var output = ""
+        let succeeded = await run(label: "Check for Updates") {
+            do {
+                output = try await cli.run(["update", "check"])
+            } catch let error as CLIError
+                where error.stdout.localizedCaseInsensitiveContains("update available") {
+                output = error.stdout
+            }
+            lastOutput = output
+            updateStatusText = Self.updateStatusSummary(output)
+        }
+        if !succeeded {
+            updateStatusText = "Check failed"
+        }
+    }
+
     func installCodexHook() async {
         await command("Install Codex Hook", ["install", "codex"])
         await refresh()
@@ -304,15 +339,16 @@ final class JarvisLineModel: ObservableObject {
             let loadedConfig = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
             config = loadedConfig
             savedConfig = loadedConfig
-            systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
+            systemVoices = await JarvisLineCLI.systemVoices(preserving: config.systemVoice)
             lastOutput = "Loaded config from \(configStore.displayPath)"
         }
     }
 
     func revertConfig() {
         config = savedConfig
-        systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
+        systemVoices = JarvisLineCLI.voiceOptions(systemVoices, preserving: config.systemVoice)
         errorMessage = nil
+        showSettingsConfirmation("Changes reverted")
     }
 
     @discardableResult
@@ -321,7 +357,14 @@ final class JarvisLineModel: ObservableObject {
         let impact = pendingApplyImpact
         guard impact != .none else { return true }
 
-        return await run(label: "Apply Settings") {
+        let issues = validationIssues
+        guard issues.isEmpty else {
+            errorMessage = ConfigValidationError(issues: issues).localizedDescription
+            return false
+        }
+
+        settingsConfirmation = nil
+        let succeeded = await run(label: "Apply Settings") {
             try configStore.save(draft, contract: configContract)
             lastOutput = "Saved config to \(configStore.displayPath)"
             if impact == .restartRuntime {
@@ -332,20 +375,14 @@ final class JarvisLineModel: ObservableObject {
             codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             savedConfig = draft
         }
-    }
-
-    func saveConfig(restart: Bool) async {
-        await run(label: "Save Config") {
-            try configStore.save(config, contract: configContract)
-            lastOutput = "Saved config to \(configStore.displayPath)"
-            if restart {
-                lastOutput += "\n" + (try await cli.run(["restart"]))
-            }
-            let doctorOutput = try await cli.run(["doctor"])
-            doctorText = doctorOutput
-            codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
+        if succeeded {
+            showSettingsConfirmation(
+                impact == .restartRuntime
+                    ? "Settings applied and runtime restarted"
+                    : "Settings applied"
+            )
         }
-        await refresh()
+        return succeeded
     }
 
     func openConfig() {
@@ -419,12 +456,42 @@ final class JarvisLineModel: ObservableObject {
         let expanded = NSString(string: path).expandingTildeInPath
         NSWorkspace.shared.open(URL(fileURLWithPath: expanded))
     }
+
+    private func showSettingsConfirmation(_ message: String) {
+        let id = UUID()
+        confirmationID = id
+        settingsConfirmation = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard self?.confirmationID == id else { return }
+            self?.settingsConfirmation = nil
+            self?.confirmationID = nil
+        }
+    }
+
+    private static func updateStatusSummary(_ output: String) -> String {
+        let lines = output
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        if let latest = lines.first(where: { $0.hasPrefix("Latest version:") }) {
+            return latest.replacingOccurrences(of: "Latest version:", with: "Latest")
+        }
+        if lines.contains(where: { $0.localizedCaseInsensitiveContains("up to date") }) {
+            return "Up to date"
+        }
+        if lines.contains(where: { $0.localizedCaseInsensitiveContains("update available") }) {
+            return "Update available"
+        }
+        return lines.first ?? "Check completed"
+    }
 }
 
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
+    private weak var model: JarvisLineModel?
+    private var isClosingAfterDecision = false
 
     func show(model: JarvisLineModel) {
         if let window {
@@ -433,20 +500,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let rootView = JarvisLinePanel(model: model, mode: .settingsWindow)
+        self.model = model
+        let rootView = SettingsWindowView(model: model)
             .frame(minWidth: 700, minHeight: 660)
-            .task {
-                await model.refresh()
-            }
         let hostingController = NSHostingController(rootView: rootView)
         let window = NSWindow(contentViewController: hostingController)
         window.title = "Jarvis Line Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 760, height: 720))
+        window.setContentSize(NSSize(width: 860, height: 720))
         window.minSize = NSSize(width: 700, height: 660)
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1)
         window.titlebarAppearsTransparent = false
+        window.toolbarStyle = .unifiedCompact
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.delegate = self
@@ -458,6 +524,66 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         window = nil
+        model = nil
+        isClosingAfterDecision = false
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !isClosingAfterDecision else { return true }
+        guard let model else { return true }
+
+        switch SettingsCloseDecision.resolve(hasUnsavedChanges: model.hasUnsavedChanges) {
+        case .close:
+            return true
+        case .applyAndClose, .revertAndClose, .keepOpen:
+            presentCloseConfirmation(for: sender, model: model)
+            return false
+        }
+    }
+
+    private func presentCloseConfirmation(for window: NSWindow, model: JarvisLineModel) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Apply changes before closing?"
+        alert.informativeText = "Your unapplied Jarvis Line settings will otherwise be discarded."
+        let applyButton = alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        applyButton.isEnabled = model.validationIssues.isEmpty && !model.isBusy
+
+        alert.beginSheetModal(for: window) { [weak self, weak window] response in
+            guard let self, let window else { return }
+            let choice: SettingsCloseChoice
+            switch response {
+            case .alertFirstButtonReturn: choice = .apply
+            case .alertSecondButtonReturn: choice = .discard
+            default: choice = .cancel
+            }
+
+            switch SettingsCloseDecision.resolve(
+                hasUnsavedChanges: model.hasUnsavedChanges,
+                choice: choice
+            ) {
+            case .close:
+                self.close(window)
+            case .applyAndClose:
+                Task {
+                    if await model.applyConfig() {
+                        self.close(window)
+                    }
+                }
+            case .revertAndClose:
+                model.revertConfig()
+                self.close(window)
+            case .keepOpen:
+                break
+            }
+        }
+    }
+
+    private func close(_ window: NSWindow) {
+        isClosingAfterDecision = true
+        window.close()
     }
 }
 
@@ -481,16 +607,9 @@ final class DraggableHeaderView: NSView {
 
 struct JarvisLinePanel: View {
     @ObservedObject var model: JarvisLineModel
-    let mode: PanelMode
 
     var body: some View {
-        Group {
-            if mode == .quick {
-                quickBody
-            } else {
-                settingsWindowBody
-            }
-        }
+        quickBody
         .preferredColorScheme(.dark)
         .tint(JarvisTheme.cyan)
         .background(panelBackground)
@@ -502,17 +621,7 @@ struct JarvisLinePanel: View {
             Divider()
             quickView
             Divider()
-            footer
-        }
-    }
-
-    private var settingsWindowBody: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            settingsView
-            Divider()
-            footer
+            quickFooter
         }
     }
 
@@ -577,16 +686,6 @@ struct JarvisLinePanel: View {
                     )
                 )
                 .frame(height: 1)
-        }
-        .overlay {
-            if mode == .settingsWindow {
-                HStack(spacing: 0) {
-                    WindowDragRegion()
-                    Color.clear
-                        .frame(width: 58)
-                        .allowsHitTesting(false)
-                }
-            }
         }
     }
 
@@ -760,392 +859,6 @@ struct JarvisLinePanel: View {
         }
     }
 
-    private var settingsView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                PanelSection(title: "Runtime", icon: "slider.horizontal.3") {
-                    runtimeSettings
-                }
-                PanelSection(title: "Voice", icon: "speaker.wave.2") {
-                    ttsSettings
-                }
-                PanelSection(title: "Updates", icon: "arrow.down.circle") {
-                    updateSettings
-                }
-                validationSummary
-                diagnosticsPanel
-            }
-            .padding(16)
-        }
-        .frame(height: mode == .settingsWindow ? 540 : 488)
-    }
-
-    private var runtimeSettings: some View {
-        Form {
-            Button {
-                AppDelegate.showSetupWindow?()
-            } label: {
-                Label("Run Setup Assistant...", systemImage: "checklist")
-            }
-            Toggle("Show in Dock", isOn: Binding(
-                get: { model.showDockIcon },
-                set: { model.setDockIconVisible($0) }
-            ))
-            Toggle("Speech enabled", isOn: $model.config.speechEnabled)
-            Toggle("Attention alerts", isOn: $model.config.attentionEnabled)
-                .disabled(!model.config.speechEnabled || model.config.speakMode == "off")
-            Toggle("Speak without prefix", isOn: $model.config.speakWithoutPrefix)
-
-            Text("With the Codex hook installed, permission prompts and Plan-mode questions are detected automatically; other agents require attention protocol events.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Picker("Speak mode", selection: $model.config.speakMode) {
-                ForEach(model.configContract.stringOptions("speak_mode", fallback: JarvisConfigDraft.speakModeOptions), id: \.self) { value in
-                    Text(speakModeLabel(value)).tag(value)
-                }
-            }
-
-            Picker("Line language", selection: $model.config.lineLanguage) {
-                ForEach(model.configContract.stringOptions("line_language", fallback: JarvisConfigDraft.lineLanguageOptions), id: \.self) { value in
-                    Text(value).tag(value)
-                }
-            }
-
-            LabeledContent("Assistant") {
-                Text("Jarvis")
-                    .foregroundStyle(.secondary)
-            }
-
-            Picker("Spoken length", selection: $model.config.maxSpokenChars) {
-                ForEach(model.configContract.intOptions("max_spoken_chars", fallback: JarvisConfigDraft.maxSpokenCharsOptions), id: \.self) { value in
-                    Text(spokenLengthLabel(value)).tag(value)
-                }
-            }
-
-            Picker("Queue size", selection: $model.config.maxQueueSize) {
-                ForEach(model.configContract.intOptions("max_queue_size", fallback: JarvisConfigDraft.maxQueueSizeOptions), id: \.self) { value in
-                    Text("\(value) lines").tag(value)
-                }
-            }
-
-            Picker("Quiet hours", selection: $model.config.quietHours) {
-                ForEach([""] + model.configContract.stringOptions("quiet_hours", fallback: JarvisConfigDraft.quietHourOptions.filter { !$0.isEmpty }), id: \.self) { value in
-                    Text(quietHoursLabel(value)).tag(value)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-    }
-
-    private var ttsSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Form {
-                Picker("Backend", selection: $model.config.tts) {
-                    ForEach(model.configContract.stringOptions("tts", fallback: JarvisConfigDraft.ttsOptions), id: \.self) { value in
-                        Text(ttsLabel(value)).tag(value)
-                    }
-                }
-
-                Picker("Fallback", selection: $model.config.fallbackTTS) {
-                    ForEach(fallbackOptions, id: \.self) { value in
-                        Text(fallbackLabel(value)).tag(value)
-                    }
-                }
-
-                Toggle("Warm TTS", isOn: $model.config.warmTTS)
-
-                Picker("Warm-up text", selection: $model.config.warmTTSText) {
-                    ForEach(options(model.configContract.stringOptions("warm_tts_text", fallback: JarvisConfigDraft.warmTextOptions), preserving: model.config.warmTTSText), id: \.self) { value in
-                        Text(value).tag(value)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-
-            HStack(spacing: 10) {
-                Image(systemName: "speaker.wave.1")
-                    .foregroundStyle(JarvisTheme.goldSoft)
-                Slider(value: $model.config.volume, in: 0...1)
-                Text(String(format: "%.2f", model.config.volume))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .frame(width: 34, alignment: .trailing)
-                    .foregroundStyle(JarvisTheme.mutedText)
-            }
-            .padding(10)
-            .background(JarvisTheme.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(sectionStroke)
-
-            backendOptions
-        }
-    }
-
-    @ViewBuilder
-    private var backendOptions: some View {
-        PanelSection(title: "Backend options", icon: "dial.low") {
-            Form {
-                if model.config.tts == "kokoro" {
-                    Picker("Kokoro voice", selection: $model.config.voice) {
-                        ForEach(model.configContract.stringOptions("voice", fallback: JarvisConfigDraft.kokoroVoiceOptions), id: \.self) { value in
-                            Text(kokoroVoiceLabel(value)).tag(value)
-                        }
-                    }
-                    Picker("Kokoro language", selection: $model.config.lang) {
-                        ForEach(model.configContract.stringOptions("lang", fallback: JarvisConfigDraft.kokoroLangOptions), id: \.self) { value in
-                            Text(kokoroLangLabel(value)).tag(value)
-                        }
-                    }
-                    Picker("Speed", selection: $model.config.speed) {
-                        ForEach(model.configContract.doubleOptions("speed", fallback: JarvisConfigDraft.speedOptions), id: \.self) { value in
-                            Text(speedLabel(value)).tag(value)
-                        }
-                    }
-                }
-
-                if model.config.tts == "system" || model.config.tts == "macos" {
-                    Picker(
-                        model.config.tts == "macos" ? "macOS voice" : "System voice",
-                        selection: $model.config.systemVoice
-                    ) {
-                        ForEach(model.systemVoices, id: \.self) { value in
-                            Text(value.isEmpty ? "System default" : value).tag(value)
-                        }
-                    }
-                    Picker(
-                        model.config.tts == "macos" ? "macOS rate" : "System rate",
-                        selection: $model.config.systemRate
-                    ) {
-                        ForEach(
-                            model.configContract.intOptions(
-                                "system_rate",
-                                fallback: JarvisConfigDraft.systemRateOptions
-                            ),
-                            id: \.self
-                        ) { value in
-                            Text("\(value)").tag(value)
-                        }
-                    }
-                }
-
-                if model.config.tts == "command" {
-                    if model.config.command.isEmpty {
-                        Label("Configure a custom command in the config file first.", systemImage: "lock.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        LabeledContent("Command") {
-                            Text(shortCommand(model.config.command))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-        }
-    }
-
-    private var updateSettings: some View {
-        Form {
-            Toggle("Check for updates", isOn: $model.config.updateCheckEnabled)
-            Picker("Interval", selection: $model.config.updateCheckIntervalHours) {
-                ForEach(model.configContract.intOptions("update_check_interval_hours", fallback: JarvisConfigDraft.updateIntervalOptions), id: \.self) { value in
-                    Text(value == 168 ? "Weekly" : "\(value) hours").tag(value)
-                }
-            }
-            LabeledContent("Source") {
-                Text("Official GitHub")
-                    .foregroundStyle(JarvisTheme.mutedText)
-            }
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-    }
-
-    @ViewBuilder
-    private var validationSummary: some View {
-        let issues = model.validationIssues
-        let guidance = model.config.guidance
-        if !issues.isEmpty || !guidance.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(issues, id: \.self) { issue in
-                    Label(issue, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                }
-                ForEach(guidance, id: \.self) { note in
-                    Label(note, systemImage: "info.circle")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .font(.system(size: 12))
-            .padding(11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(issues.isEmpty ? JarvisTheme.cyan.opacity(0.08) : JarvisTheme.error.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(issues.isEmpty ? JarvisTheme.cyan.opacity(0.22) : JarvisTheme.error.opacity(0.34), lineWidth: 1)
-            )
-        }
-    }
-
-    private var fallbackOptions: [String] {
-        var values = ["none"] + model.configContract.stringOptions(
-            "fallback_tts",
-            fallback: JarvisConfigDraft.fallbackOptions.filter { $0 != "none" }
-        )
-        if model.config.command.isEmpty {
-            values.removeAll { $0 == "command" }
-        }
-        return Array(NSOrderedSet(array: values)) as? [String] ?? values
-    }
-
-    private func speakModeLabel(_ value: String) -> String {
-        switch value {
-        case "final_only": return "Final only"
-        case "commentary_and_final": return "Commentary + final"
-        case "off": return "Off"
-        default: return value
-        }
-    }
-
-    private func spokenLengthLabel(_ value: Int) -> String {
-        switch value {
-        case 120: return "Short · 120"
-        case 180: return "Balanced · 180"
-        case 240: return "Detailed · 240"
-        case 300: return "Verbose · 300"
-        default: return "\(value) characters"
-        }
-    }
-
-    private func quietHoursLabel(_ value: String) -> String {
-        switch value {
-        case "": return "Off"
-        case "22:00-08:00": return "Night · 22:00-08:00"
-        case "20:00-08:00": return "Evening · 20:00-08:00"
-        case "18:00-09:00": return "After work · 18:00-09:00"
-        default: return value
-        }
-    }
-
-    private func ttsLabel(_ value: String) -> String {
-        switch value {
-        case "kokoro": return "Kokoro · recommended local"
-        case "system": return "System voice"
-        case "macos": return "macOS say"
-        case "command": return "Custom command"
-        default: return value
-        }
-    }
-
-    private func fallbackLabel(_ value: String) -> String {
-        switch value {
-        case "none": return "None"
-        case "system": return "System"
-        case "macos": return "macOS"
-        case "command": return "Command"
-        default: return value
-        }
-    }
-
-    private func kokoroVoiceLabel(_ value: String) -> String {
-        switch value {
-        case "bm_george:70,bm_lewis:30": return "George + Lewis blend"
-        case "bm_george": return "George"
-        case "bm_lewis": return "Lewis"
-        default: return value
-        }
-    }
-
-    private func speedLabel(_ value: Double) -> String {
-        if abs(value - 0.9) < 0.001 { return "Calm · 0.90" }
-        if abs(value - 1.0) < 0.001 { return "Normal · 1.00" }
-        if abs(value - 1.08) < 0.001 { return "Jarvis default · 1.08" }
-        if abs(value - 1.2) < 0.001 { return "Fast · 1.20" }
-        return String(format: "%.2f", value)
-    }
-
-    private func options(_ base: [String], preserving current: String) -> [String] {
-        let value = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, !base.contains(value) else {
-            return base
-        }
-        return base + [value]
-    }
-
-    private func kokoroLangLabel(_ value: String) -> String {
-        switch value {
-        case "en-gb": return "English GB"
-        case "en-us": return "English US"
-        case "fr-fr": return "French"
-        case "it": return "Italian"
-        case "ja": return "Japanese"
-        case "cmn": return "Mandarin"
-        default: return value
-        }
-    }
-
-    private func shortCommand(_ value: String) -> String {
-        value.count > 42 ? String(value.prefix(42)) + "..." : value
-    }
-
-    private var settingsActionBar: some View {
-        HStack(spacing: 8) {
-            Button {
-                Task { await model.loadConfig() }
-            } label: {
-                Label("Reload", systemImage: "arrow.clockwise")
-            }
-            .disabled(model.isBusy)
-
-            Spacer()
-
-            Button {
-                Task { await model.saveConfig(restart: false) }
-            } label: {
-                Label("Save", systemImage: "square.and.arrow.down")
-            }
-            .disabled(model.isBusy || !model.validationIssues.isEmpty)
-
-            Button {
-                Task { await model.saveConfig(restart: true) }
-            } label: {
-                Label("Save + Restart", systemImage: "arrow.triangle.2.circlepath")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(model.isBusy || !model.validationIssues.isEmpty)
-        }
-        .buttonStyle(.bordered)
-        .tint(JarvisTheme.cyan)
-    }
-
-    @ViewBuilder
-    private var diagnosticsPanel: some View {
-        PanelSection(title: "Runtime diagnostics", icon: "stethoscope") {
-            RuntimeDiagnosticsView(
-                events: model.traceEvents,
-                doctorText: model.doctorText,
-                errorMessage: model.errorMessage
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var footer: some View {
-        if mode == .quick {
-            quickFooter
-        } else {
-            settingsFooter
-        }
-    }
-
     private var quickFooter: some View {
         HStack {
             Text("Jarvis Line Manager")
@@ -1168,15 +881,6 @@ struct JarvisLinePanel: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(JarvisTheme.panelBase.opacity(0.92))
-    }
-
-    private var settingsFooter: some View {
-        VStack(spacing: 0) {
-            settingsActionBar
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-        }
-        .background(JarvisTheme.panelBase.opacity(0.96))
     }
 
     private var panelBackground: some View {
@@ -1223,11 +927,6 @@ struct JarvisLinePanel: View {
     }
 }
 
-enum PanelMode {
-    case quick
-    case settingsWindow
-}
-
 enum JarvisTheme {
     static let panelTop = Color(red: 0.07, green: 0.09, blue: 0.12)
     static let panelBase = Color(red: 0.05, green: 0.06, blue: 0.08)
@@ -1239,6 +938,7 @@ enum JarvisTheme {
     static let cyanDeep = Color(red: 0.06, green: 0.39, blue: 0.66)
     static let gold = Color(red: 0.71, green: 0.61, blue: 0.49)
     static let goldSoft = Color(red: 0.90, green: 0.86, blue: 0.77)
+    static let healthy = Color(red: 0.35, green: 0.78, blue: 0.58)
     static let primaryText = Color(red: 0.94, green: 0.96, blue: 0.98)
     static let mutedText = Color(red: 0.68, green: 0.73, blue: 0.79)
     static let subtleText = Color(red: 0.48, green: 0.54, blue: 0.61)
@@ -1654,38 +1354,49 @@ struct JarvisLineCLI: JarvisLineCommandRunning {
         return "/opt/homebrew/bin/jarvis-line"
     }
 
-    static func systemVoices(preserving current: String) -> [String] {
-        var voices = [""]
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        process.arguments = ["-v", "?"]
-        process.standardOutput = pipe
+    static func systemVoices(preserving current: String) async -> [String] {
+        await Task.detached(priority: .utility) {
+            var voices = [""]
+            let process = Process()
+            let pipe = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+            process.arguments = ["-v", "?"]
+            process.standardOutput = pipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            for line in output.split(separator: "\n") {
-                let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-                guard let localeIndex = parts.firstIndex(where: { $0.contains("_") }), localeIndex > 0 else {
-                    continue
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8) ?? ""
+                for line in output.split(separator: "\n") {
+                    let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+                    guard let localeIndex = parts.firstIndex(where: { $0.contains("_") }), localeIndex > 0 else {
+                        continue
+                    }
+                    let name = parts[..<localeIndex].joined(separator: " ")
+                    if !voices.contains(name) {
+                        voices.append(name)
+                    }
                 }
-                let name = parts[..<localeIndex].joined(separator: " ")
-                if !voices.contains(name) {
-                    voices.append(name)
-                }
+            } catch {
+                return voiceOptions(voices, preserving: current)
             }
-        } catch {
-            return voices
+
+            return voiceOptions(voices, preserving: current)
+        }.value
+    }
+
+    static func voiceOptions(_ voices: [String], preserving current: String) -> [String] {
+        var options = voices
+        if options.first != "" {
+            options.insert("", at: 0)
         }
 
         let value = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !value.isEmpty && !voices.contains(value) {
-            voices.append(value)
+        if !value.isEmpty && !options.contains(value) {
+            options.append(value)
         }
-        return voices
+        return options
     }
 }
 

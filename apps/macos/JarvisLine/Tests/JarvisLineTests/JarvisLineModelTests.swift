@@ -29,6 +29,7 @@ struct JarvisLineModelTests {
 
         #expect(succeeded)
         #expect(!model.hasUnsavedChanges)
+        #expect(model.settingsConfirmation == "Settings applied")
         let calls = await runner.calls
         #expect(calls == [["doctor"]])
     }
@@ -44,6 +45,7 @@ struct JarvisLineModelTests {
 
         #expect(succeeded)
         #expect(!model.hasUnsavedChanges)
+        #expect(model.settingsConfirmation == "Settings applied and runtime restarted")
         let calls = await runner.calls
         #expect(calls == [["restart"], ["doctor"]])
     }
@@ -88,6 +90,58 @@ struct JarvisLineModelTests {
         #expect(model.config.attentionEnabled)
         #expect(model.errorMessage == "Disable Request Speech failed: config write failed")
     }
+
+    @Test func invalidDraftCannotBeAppliedFromTheClosePrompt() async {
+        let runner = ModelFakeRunner()
+        let model = JarvisLineModel(cli: runner)
+        model.config.tts = "command"
+        model.config.command = ""
+
+        let succeeded = await model.applyConfig()
+
+        #expect(!succeeded)
+        #expect(model.hasUnsavedChanges)
+        #expect(model.errorMessage?.contains("Command backend requires a command") == true)
+        #expect(await runner.calls.isEmpty)
+    }
+
+    @Test func updateCheckTreatsTheAvailableExitCodeAsAResult() async {
+        let runner = UpdateAvailableRunner()
+        let model = JarvisLineModel(cli: runner)
+
+        await model.checkForUpdates()
+
+        #expect(model.errorMessage == nil)
+        #expect(model.updateStatusText == "Latest 0.6.0")
+        #expect(await runner.calls == [["update", "check"]])
+    }
+
+    @Test func clearQueueRunsTheDedicatedCommandBeforeRefreshing() async {
+        let runner = ModelFakeRunner()
+        let model = JarvisLineModel(cli: runner)
+
+        await model.clearQueue()
+
+        let calls = await runner.calls
+        #expect(calls.first == ["queue", "clear"])
+        #expect(calls.contains(["status"]))
+        #expect(calls.contains(["doctor"]))
+    }
+
+    @Test func voiceOptionsPreserveAConfiguredVoiceWithoutDuplicates() {
+        #expect(
+            JarvisLineCLI.voiceOptions(
+                ["", "Samantha"],
+                preserving: "Siri Voice 2"
+            ) == ["", "Samantha", "Siri Voice 2"]
+        )
+        #expect(
+            JarvisLineCLI.voiceOptions(
+                ["", "Samantha"],
+                preserving: "Samantha"
+            ) == ["", "Samantha"]
+        )
+    }
 }
 
 private func temporaryConfigStore() -> (JarvisConfigStore, URL) {
@@ -112,5 +166,17 @@ private actor ModelFakeRunner: JarvisLineCommandRunning {
             throw CLIError(failureMessage)
         }
         return output
+    }
+}
+
+private actor UpdateAvailableRunner: JarvisLineCommandRunning {
+    private(set) var calls: [[String]] = []
+
+    func run(_ args: [String], stdin: Data?) async throws -> String {
+        calls.append(args)
+        throw CLIError(
+            stdout: "Current version: 0.5.0\nLatest version: 0.6.0\nUpdate available.",
+            stderr: ""
+        )
     }
 }
