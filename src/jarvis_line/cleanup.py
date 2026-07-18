@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import stat
 import time
@@ -12,7 +13,9 @@ MANUAL_AUDIO_AGE_SECONDS = 10 * 60
 TEMP_AGE_SECONDS = 60 * 60
 ROTATED_LOG_AGE_SECONDS = 7 * 24 * 60 * 60
 MAX_ERROR_DETAILS = 50
+MAX_LOCK_OWNER_BYTES = 4096
 GENERATED_PREFIXES = ("kokoro_", "jarvis_line_")
+LOCK_OWNER_NAME = "owner.json"
 ROTATED_LOG_NAMES = (
     "jarvis_line_watcher.log.1",
     "jarvis_line_audio_worker.log.1",
@@ -139,6 +142,16 @@ class _Candidate:
     is_directory: bool = False
 
 
+@dataclass(frozen=True)
+class _LockOwner:
+    pid: int
+    created_ts: int
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+
+
 def _record_error(report: CleanupReport, category: str, name: str) -> None:
     report.categories[category].error_count += 1
     if len(report.errors) < MAX_ERROR_DETAILS:
@@ -176,6 +189,139 @@ def _same_identity(candidate: _Candidate, info: os.stat_result) -> bool:
         and (candidate.is_directory or info.st_size == candidate.size)
         and info.st_mtime_ns == candidate.mtime_ns
     )
+
+
+def _same_directory_object(candidate: _Candidate, info: os.stat_result) -> bool:
+    return (
+        candidate.is_directory
+        and stat.S_ISDIR(info.st_mode)
+        and info.st_dev == candidate.device
+        and info.st_ino == candidate.inode
+    )
+
+
+def _same_owner_identity(owner: _LockOwner, info: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_dev == owner.device
+        and info.st_ino == owner.inode
+        and info.st_size == owner.size
+        and info.st_mtime_ns == owner.mtime_ns
+    )
+
+
+def _validated_scandir(
+    path: Path,
+    report: CleanupReport,
+    category: str,
+):
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        _record_error(report, category, path.name)
+        return None
+
+    if not stat.S_ISDIR(info.st_mode):
+        _record_error(report, category, path.name)
+        return None
+
+    root = _candidate_from_stat(path, category, info, is_directory=True)
+    try:
+        entries = os.scandir(path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        _record_error(report, category, path.name)
+        return None
+
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        entries.close()
+        return None
+    except OSError:
+        entries.close()
+        _record_error(report, category, path.name)
+        return None
+    if not _same_identity(root, current):
+        entries.close()
+        _record_error(report, category, path.name)
+        return None
+    return entries
+
+
+def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
+    current_directory = candidate.path.lstat()
+    if not _same_identity(candidate, current_directory):
+        return None
+
+    with os.scandir(candidate.path) as entries:
+        owner_entry = next(entries, None)
+        if (
+            owner_entry is None
+            or owner_entry.name != LOCK_OWNER_NAME
+            or next(entries, None) is not None
+        ):
+            return None
+        owner_info = owner_entry.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISREG(owner_info.st_mode)
+            or owner_info.st_size > MAX_LOCK_OWNER_BYTES
+        ):
+            return None
+
+    if not _same_identity(candidate, candidate.path.lstat()):
+        return None
+
+    owner_path = candidate.path / LOCK_OWNER_NAME
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(owner_path, flags)
+    try:
+        opened_info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened_info.st_mode)
+            or opened_info.st_dev != owner_info.st_dev
+            or opened_info.st_ino != owner_info.st_ino
+            or opened_info.st_size != owner_info.st_size
+            or opened_info.st_mtime_ns != owner_info.st_mtime_ns
+        ):
+            return None
+        payload = os.read(descriptor, MAX_LOCK_OWNER_BYTES + 1)
+    finally:
+        os.close(descriptor)
+
+    if len(payload) > MAX_LOCK_OWNER_BYTES:
+        return None
+    try:
+        record = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(record, dict) or set(record) != {"pid", "created_ts"}:
+        return None
+    pid = record["pid"]
+    created_ts = record["created_ts"]
+    if type(pid) is not int or pid <= 0 or type(created_ts) is not int:
+        return None
+    return _LockOwner(
+        pid=pid,
+        created_ts=created_ts,
+        device=opened_info.st_dev,
+        inode=opened_info.st_ino,
+        size=opened_info.st_size,
+        mtime_ns=opened_info.st_mtime_ns,
+    )
+
+
+def _pid_is_dead(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except (PermissionError, OSError):
+        return False
+    return False
 
 
 def _directory_is_empty(path: Path) -> bool:
@@ -230,6 +376,72 @@ def _process_candidate(
     category.removed_bytes += candidate.size
 
 
+def _process_lock_candidate(
+    candidate: _Candidate,
+    owner: _LockOwner,
+    report: CleanupReport,
+    *,
+    delete: bool,
+) -> None:
+    category = report.categories[candidate.category]
+    category.eligible_files += 1
+    if not delete:
+        return
+
+    try:
+        current_owner = _read_lock_owner(candidate)
+    except FileNotFoundError:
+        category.skipped_files += 1
+        return
+    except OSError:
+        _record_error(report, candidate.category, candidate.path.name)
+        return
+    if current_owner != owner or not _pid_is_dead(owner.pid):
+        category.skipped_files += 1
+        return
+
+    try:
+        final_owner = _read_lock_owner(candidate)
+        current_directory = candidate.path.lstat()
+        current_owner_info = (candidate.path / LOCK_OWNER_NAME).lstat()
+    except FileNotFoundError:
+        category.skipped_files += 1
+        return
+    except OSError:
+        _record_error(report, candidate.category, candidate.path.name)
+        return
+    if (
+        final_owner != owner
+        or not _same_identity(candidate, current_directory)
+        or not _same_owner_identity(owner, current_owner_info)
+    ):
+        category.skipped_files += 1
+        return
+
+    try:
+        (candidate.path / LOCK_OWNER_NAME).unlink()
+        current_directory = candidate.path.lstat()
+        if not _same_directory_object(candidate, current_directory):
+            category.skipped_files += 1
+            return
+        if not _directory_is_empty(candidate.path):
+            category.skipped_files += 1
+            return
+        current_directory = candidate.path.lstat()
+        if not _same_directory_object(candidate, current_directory):
+            category.skipped_files += 1
+            return
+        candidate.path.rmdir()
+    except FileNotFoundError:
+        category.skipped_files += 1
+        return
+    except OSError:
+        _record_error(report, candidate.category, candidate.path.name)
+        return
+
+    category.removed_files += 1
+
+
 def _scan_generated_audio(
     paths: CleanupPaths,
     report: CleanupReport,
@@ -239,12 +451,8 @@ def _scan_generated_audio(
     delete: bool,
 ) -> None:
     category_name = "generated_audio"
-    try:
-        entries = os.scandir(paths.generated_audio_dir)
-    except FileNotFoundError:
-        return
-    except OSError:
-        _record_error(report, category_name, paths.generated_audio_dir.name)
+    entries = _validated_scandir(paths.generated_audio_dir, report, category_name)
+    if entries is None:
         return
 
     with entries:
@@ -284,12 +492,8 @@ def _scan_hooks(
     now: float,
     delete: bool,
 ) -> None:
-    try:
-        entries = os.scandir(paths.hooks_dir)
-    except FileNotFoundError:
-        return
-    except OSError:
-        _record_error(report, "runtime_temp", paths.hooks_dir.name)
+    entries = _validated_scandir(paths.hooks_dir, report, "runtime_temp")
+    if entries is None:
         return
 
     cleanup_lock = os.path.abspath(paths.lock_dir)
@@ -335,8 +539,15 @@ def _scan_hooks(
 
             path = Path(entry.path)
             if expect_directory:
+                candidate = _candidate_from_stat(
+                    path,
+                    category_name,
+                    info,
+                    is_directory=True,
+                )
                 try:
-                    if not _directory_is_empty(path):
+                    owner = _read_lock_owner(candidate)
+                    if owner is None:
                         continue
                 except FileNotFoundError:
                     report.categories[category_name].skipped_files += 1
@@ -344,6 +555,17 @@ def _scan_hooks(
                 except OSError:
                     _record_error(report, category_name, entry.name)
                     continue
+                if now - owner.created_ts <= minimum_age or not _pid_is_dead(
+                    owner.pid
+                ):
+                    continue
+                _process_lock_candidate(
+                    candidate,
+                    owner,
+                    report,
+                    delete=delete,
+                )
+                continue
 
             _process_candidate(
                 _candidate_from_stat(

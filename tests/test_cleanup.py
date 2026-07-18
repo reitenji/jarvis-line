@@ -1,5 +1,8 @@
+import json
 import os
 from pathlib import Path
+
+import pytest
 
 from jarvis_line import cleanup
 
@@ -21,6 +24,17 @@ def paths_for(root: Path) -> cleanup.CleanupPaths:
 
 def age(path: Path, seconds: int, now: float = 1_000_000) -> None:
     os.utime(path, (now - seconds, now - seconds))
+
+
+def write_lock_owner(
+    directory: Path,
+    *,
+    pid: int = 42,
+    created_ts: int = 1_000_000 - cleanup.TEMP_AGE_SECONDS - 1,
+) -> Path:
+    owner = directory / "owner.json"
+    owner.write_text(json.dumps({"pid": pid, "created_ts": created_ts}))
+    return owner
 
 
 def test_manual_run_removes_old_generated_audio_but_keeps_recent_and_unknown(tmp_path):
@@ -56,6 +70,42 @@ def test_cleanup_never_follows_generated_audio_symlink(tmp_path):
     assert outside.read_bytes() == b"private"
     assert link.is_symlink()
     assert report.skipped_files == 1
+
+
+def test_cleanup_never_scans_a_symlinked_generated_audio_root(tmp_path):
+    paths = paths_for(tmp_path)
+    outside = tmp_path / "private-generated"
+    outside.mkdir()
+    external_audio = outside / "kokoro_external.wav"
+    external_audio.write_bytes(b"private")
+    age(external_audio, cleanup.MANUAL_AUDIO_AGE_SECONDS + 1)
+    paths.generated_audio_dir.rmdir()
+    paths.generated_audio_dir.symlink_to(outside, target_is_directory=True)
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert external_audio.read_bytes() == b"private"
+    assert report.categories["generated_audio"].eligible_files == 0
+    assert report.categories["generated_audio"].removed_files == 0
+    assert str(outside) not in str(report.to_dict())
+
+
+def test_cleanup_never_scans_a_symlinked_hooks_root(tmp_path):
+    paths = paths_for(tmp_path)
+    outside = tmp_path / "private-hooks"
+    outside.mkdir()
+    external_temp = outside / ".jarvis_line_config.json.old.tmp"
+    external_temp.write_bytes(b"private")
+    age(external_temp, cleanup.TEMP_AGE_SECONDS + 1)
+    paths.hooks_dir.rmdir()
+    paths.hooks_dir.symlink_to(outside, target_is_directory=True)
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert external_temp.read_bytes() == b"private"
+    assert report.categories["runtime_temp"].eligible_files == 0
+    assert report.categories["runtime_temp"].removed_files == 0
+    assert str(outside) not in str(report.to_dict())
 
 
 def test_automatic_run_uses_24_hour_audio_age(tmp_path):
@@ -182,7 +232,9 @@ def test_cleanup_keeps_candidates_at_the_exact_age_threshold(tmp_path):
     assert automatic_audio.exists()
 
 
-def test_run_removes_only_old_empty_known_lock_directories(tmp_path):
+def test_run_removes_only_old_known_lock_with_a_dead_recorded_owner(
+    tmp_path, monkeypatch
+):
     paths = paths_for(tmp_path)
     stale = paths.hooks_dir / ".jarvis_line.lock.d"
     recent = paths.hooks_dir / ".jarvis_line_audio.lock.d"
@@ -191,12 +243,18 @@ def test_run_removes_only_old_empty_known_lock_directories(tmp_path):
     unknown = paths.hooks_dir / ".unknown.lock.d"
     for directory in (stale, recent, nonempty, cleanup_lock, unknown):
         directory.mkdir()
-    (nonempty / "owner").write_text("busy")
+        write_lock_owner(directory)
+    (nonempty / "unexpected").write_text("busy")
     age(stale, cleanup.TEMP_AGE_SECONDS + 1)
     age(recent, cleanup.TEMP_AGE_SECONDS - 1)
     age(nonempty, cleanup.TEMP_AGE_SECONDS + 1)
     age(cleanup_lock, cleanup.TEMP_AGE_SECONDS + 1)
     age(unknown, cleanup.TEMP_AGE_SECONDS + 1)
+    monkeypatch.setattr(
+        cleanup.os,
+        "kill",
+        lambda _pid, _signal: (_ for _ in ()).throw(ProcessLookupError()),
+    )
 
     report = cleanup.run(paths, now=1_000_000)
 
@@ -206,6 +264,155 @@ def test_run_removes_only_old_empty_known_lock_directories(tmp_path):
     assert cleanup_lock.exists()
     assert unknown.exists()
     assert report.categories["stale_locks"].removed_files == 1
+
+
+def test_cleanup_keeps_old_known_lock_with_live_owner(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    lock = paths.hooks_dir / ".jarvis_line.lock.d"
+    lock.mkdir()
+    write_lock_owner(lock, pid=123)
+    age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+    checked = []
+    monkeypatch.setattr(
+        cleanup.os, "kill", lambda pid, signal: checked.append((pid, signal))
+    )
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert lock.exists()
+    assert checked == [(123, 0)]
+    assert report.categories["stale_locks"].eligible_files == 0
+
+
+def test_cleanup_keeps_old_ownerless_known_lock(tmp_path):
+    paths = paths_for(tmp_path)
+    lock = paths.hooks_dir / ".jarvis_line.lock.d"
+    lock.mkdir()
+    age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert lock.exists()
+    assert report.categories["stale_locks"].eligible_files == 0
+
+
+def test_cleanup_keeps_old_known_lock_with_malformed_owner(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    lock = paths.hooks_dir / ".jarvis_line.lock.d"
+    lock.mkdir()
+    (lock / "owner.json").write_text(
+        json.dumps({"pid": "123", "created_ts": 1_000_000})
+    )
+    age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+    monkeypatch.setattr(
+        cleanup.os,
+        "kill",
+        lambda _pid, _signal: pytest.fail("malformed owner PID must not be checked"),
+    )
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert lock.exists()
+    assert report.categories["stale_locks"].eligible_files == 0
+
+
+@pytest.mark.parametrize("pid_check_error", [PermissionError, OSError])
+def test_cleanup_conservatively_keeps_lock_when_pid_status_is_not_provably_dead(
+    tmp_path, monkeypatch, pid_check_error
+):
+    paths = paths_for(tmp_path)
+    lock = paths.hooks_dir / ".jarvis_line.lock.d"
+    lock.mkdir()
+    write_lock_owner(lock, pid=123)
+    age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+    monkeypatch.setattr(
+        cleanup.os,
+        "kill",
+        lambda _pid, _signal: (_ for _ in ()).throw(pid_check_error()),
+    )
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert lock.exists()
+    assert report.categories["stale_locks"].eligible_files == 0
+
+
+def test_cleanup_keeps_lock_with_recent_owner_record(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    lock = paths.hooks_dir / ".jarvis_line.lock.d"
+    lock.mkdir()
+    write_lock_owner(lock, created_ts=1_000_000 - cleanup.TEMP_AGE_SECONDS + 1)
+    age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+    monkeypatch.setattr(
+        cleanup.os,
+        "kill",
+        lambda _pid, _signal: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert lock.exists()
+    assert report.categories["stale_locks"].eligible_files == 0
+
+
+def test_lock_owner_record_is_rechecked_before_deletion(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    lock = paths.hooks_dir / ".jarvis_line.lock.d"
+    lock.mkdir()
+    owner = write_lock_owner(lock, pid=123)
+    age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+    checks = 0
+
+    def pid_is_dead(_pid, _signal):
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            owner.write_text(
+                json.dumps(
+                    {
+                        "pid": 456,
+                        "created_ts": 1_000_000 - cleanup.TEMP_AGE_SECONDS - 1,
+                    }
+                )
+            )
+        raise ProcessLookupError
+
+    monkeypatch.setattr(cleanup.os, "kill", pid_is_dead)
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert lock.exists()
+    assert json.loads(owner.read_text())["pid"] == 456
+    assert report.categories["stale_locks"].removed_files == 0
+
+
+def test_lock_directory_identity_is_rechecked_before_deletion(tmp_path, monkeypatch):
+    paths = paths_for(tmp_path)
+    lock = paths.hooks_dir / ".jarvis_line.lock.d"
+    displaced = paths.hooks_dir / ".displaced-lock"
+    lock.mkdir()
+    write_lock_owner(lock, pid=123)
+    age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+    swapped = False
+
+    def swap_lock_then_report_dead(_pid, _signal):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            lock.rename(displaced)
+            lock.mkdir()
+            write_lock_owner(lock, pid=456)
+            age(lock, cleanup.TEMP_AGE_SECONDS + 1)
+        raise ProcessLookupError
+
+    monkeypatch.setattr(cleanup.os, "kill", swap_lock_then_report_dead)
+
+    report = cleanup.run(paths, now=1_000_000)
+
+    assert swapped is True
+    assert displaced.exists()
+    assert json.loads((lock / "owner.json").read_text())["pid"] == 456
+    assert report.categories["stale_locks"].removed_files == 0
 
 
 def test_cleanup_keeps_allowlisted_symlinks_and_nested_candidates(tmp_path):
