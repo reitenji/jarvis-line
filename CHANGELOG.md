@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-07-18
+
+- Add bounded cleanup for generated audio, recognized temporary artifacts, rotated logs, and stale locks whose owners are proven dead.
+- Schedule cleanup from the existing watcher without adding a daemon, timer, thread, or persistent worker.
+- Add `jarvis-line cleanup status` and `jarvis-line cleanup run` with human-readable and JSON reports.
+- Add macOS Diagnostics controls for automatic cleanup, daily or weekly frequency, storage status, and Clean Now.
+- Harden cleanup across macOS, Windows, and Linux against symlinks, path replacement, concurrent mutation, lock races, and inherited Windows handles.
+- Preserve configuration, models, voices, active runtime files, custom paths, and unknown user content by default.
+
 ## 0.6.0 - 2026-07-18
 
 - Add opt-in, content-aware attention alerts for Codex permission requests and Plan-mode questions.
