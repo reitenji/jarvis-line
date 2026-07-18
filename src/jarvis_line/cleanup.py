@@ -226,6 +226,15 @@ def _same_directory_object(candidate: _Candidate, info: os.stat_result) -> bool:
     )
 
 
+def _same_regular_file_object(candidate: _Candidate, info: os.stat_result) -> bool:
+    return (
+        not candidate.is_directory
+        and stat.S_ISREG(info.st_mode)
+        and info.st_dev == candidate.device
+        and info.st_ino == candidate.inode
+    )
+
+
 def _same_owner_identity(owner: _LockOwner, info: os.stat_result) -> bool:
     return (
         stat.S_ISREG(info.st_mode)
@@ -1158,6 +1167,17 @@ def _acquire_cleanup_lock(paths: CleanupPaths, *, now: float) -> _AcquiredCleanu
                             )
                     finally:
                         os.close(descriptor)
+            owner_info = owner_path.lstat()
+            if created_owner is None or not _same_regular_file_object(
+                created_owner,
+                owner_info,
+            ):
+                raise OSError("changed cleanup lock owner")
+            created_owner = _candidate_from_stat(
+                owner_path,
+                "cleanup",
+                owner_info,
+            )
             if not _same_directory_object(
                 created_directory,
                 paths.lock_dir.lstat(),

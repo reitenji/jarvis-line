@@ -1495,7 +1495,7 @@ def test_parent_directory_fsync_uses_safe_directory_flags(tmp_path, monkeypatch)
         assert flags & os.O_DIRECTORY
     if hasattr(os, "O_NOFOLLOW"):
         assert flags & os.O_NOFOLLOW
-    assert len(fsynced) == 1
+    assert len(fsynced) == (0 if os.name == "nt" else 1)
 
 
 def test_parent_directory_fsync_tolerates_unsupported_platform_error(
