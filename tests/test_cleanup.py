@@ -267,6 +267,39 @@ def test_cleanup_keeps_candidates_at_the_exact_age_threshold(tmp_path):
     assert automatic_audio.exists()
 
 
+def test_lock_owner_read_tolerates_handle_timestamp_differences(
+    tmp_path, monkeypatch
+):
+    paths = paths_for(tmp_path)
+    paths.lock_dir.mkdir()
+    write_lock_owner(paths.lock_dir, pid=123, created_ts=456)
+    directory = cleanup._cleanup_lock_candidate(paths.lock_dir)
+    assert directory is not None
+    real_fstat = cleanup.os.fstat
+
+    def windows_style_fstat(descriptor):
+        info = real_fstat(descriptor)
+        return type(
+            "WindowsStyleStat",
+            (),
+            {
+                "st_mode": info.st_mode,
+                "st_dev": info.st_dev,
+                "st_ino": info.st_ino,
+                "st_size": info.st_size,
+                "st_mtime_ns": info.st_mtime_ns + 1,
+            },
+        )()
+
+    monkeypatch.setattr(cleanup.os, "fstat", windows_style_fstat)
+
+    owner = cleanup._read_lock_owner(directory)
+
+    assert owner is not None
+    assert owner.pid == 123
+    assert owner.created_ts == 456
+
+
 def test_run_removes_only_old_known_lock_with_a_dead_recorded_owner(
     tmp_path, monkeypatch
 ):

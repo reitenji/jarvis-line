@@ -317,22 +317,31 @@ def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
         return None
 
     owner_path = candidate.path / LOCK_OWNER_NAME
+    owner_candidate = _candidate_from_stat(owner_path, "cleanup", owner_info)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(owner_path, flags)
     try:
         opened_info = os.fstat(descriptor)
         if (
-            not stat.S_ISREG(opened_info.st_mode)
-            or opened_info.st_dev != owner_info.st_dev
-            or opened_info.st_ino != owner_info.st_ino
+            not _same_regular_file_object(owner_candidate, opened_info)
             or opened_info.st_size != owner_info.st_size
-            or opened_info.st_mtime_ns != owner_info.st_mtime_ns
         ):
             return None
+        opened_candidate = _candidate_from_stat(
+            owner_path,
+            "cleanup",
+            opened_info,
+        )
         payload = os.read(descriptor, MAX_LOCK_OWNER_BYTES + 1)
     finally:
         os.close(descriptor)
 
+    final_info = owner_path.lstat()
+    if not _same_identity(owner_candidate, final_info) or not _same_regular_file_object(
+        opened_candidate,
+        final_info,
+    ):
+        return None
     if len(payload) > MAX_LOCK_OWNER_BYTES:
         return None
     try:
@@ -348,10 +357,10 @@ def _read_lock_owner(candidate: _Candidate) -> _LockOwner | None:
     return _LockOwner(
         pid=pid,
         created_ts=created_ts,
-        device=opened_info.st_dev,
-        inode=opened_info.st_ino,
-        size=opened_info.st_size,
-        mtime_ns=opened_info.st_mtime_ns,
+        device=final_info.st_dev,
+        inode=final_info.st_ino,
+        size=final_info.st_size,
+        mtime_ns=final_info.st_mtime_ns,
     )
 
 
