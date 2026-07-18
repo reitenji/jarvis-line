@@ -16,6 +16,7 @@ MAX_ERROR_DETAILS = 50
 MAX_LOCK_OWNER_BYTES = 4096
 GENERATED_PREFIXES = ("kokoro_", "jarvis_line_")
 LOCK_OWNER_NAME = "owner.json"
+LOCK_QUARANTINE_SUFFIX = ".cleanup-quarantine"
 ROTATED_LOG_NAMES = (
     "jarvis_line_watcher.log.1",
     "jarvis_line_audio_worker.log.1",
@@ -91,6 +92,7 @@ class CleanupReport:
         default_factory=lambda: {name: CategoryReport() for name in CATEGORY_NAMES}
     )
     errors: list[dict[str, str]] = field(default_factory=list)
+    operation_error_count: int = 0
 
     @property
     def eligible_files(self) -> int:
@@ -114,7 +116,9 @@ class CleanupReport:
 
     @property
     def error_count(self) -> int:
-        return sum(category.error_count for category in self.categories.values())
+        return self.operation_error_count + sum(
+            category.error_count for category in self.categories.values()
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -156,6 +160,12 @@ def _record_error(report: CleanupReport, category: str, name: str) -> None:
     report.categories[category].error_count += 1
     if len(report.errors) < MAX_ERROR_DETAILS:
         report.errors.append({"category": category, "name": Path(name).name})
+
+
+def _refused_report() -> CleanupReport:
+    report = CleanupReport(operation_error_count=1)
+    report.errors.append({"category": "cleanup", "name": "unmanaged_paths"})
+    return report
 
 
 def _candidate_from_stat(
@@ -213,27 +223,33 @@ def _same_owner_identity(owner: _LockOwner, info: os.stat_result) -> bool:
 def _validated_scandir(
     path: Path,
     report: CleanupReport,
-    category: str,
+    categories: str | tuple[str, ...],
 ):
+    category_names = (categories,) if isinstance(categories, str) else categories
+
+    def record_root_error() -> None:
+        for category_name in category_names:
+            _record_error(report, category_name, path.name)
+
     try:
         info = path.lstat()
     except FileNotFoundError:
         return None
     except OSError:
-        _record_error(report, category, path.name)
+        record_root_error()
         return None
 
     if not stat.S_ISDIR(info.st_mode):
-        _record_error(report, category, path.name)
+        record_root_error()
         return None
 
-    root = _candidate_from_stat(path, category, info, is_directory=True)
+    root = _candidate_from_stat(path, category_names[0], info, is_directory=True)
     try:
         entries = os.scandir(path)
     except FileNotFoundError:
         return None
     except OSError:
-        _record_error(report, category, path.name)
+        record_root_error()
         return None
 
     try:
@@ -243,11 +259,11 @@ def _validated_scandir(
         return None
     except OSError:
         entries.close()
-        _record_error(report, category, path.name)
+        record_root_error()
         return None
     if not _same_identity(root, current):
         entries.close()
-        _record_error(report, category, path.name)
+        record_root_error()
         return None
     return entries
 
@@ -329,6 +345,85 @@ def _directory_is_empty(path: Path) -> bool:
         return next(entries, None) is None
 
 
+def _lock_quarantine_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}{LOCK_QUARANTINE_SUFFIX}")
+
+
+def _candidate_at_path(candidate: _Candidate, path: Path) -> _Candidate:
+    return _Candidate(
+        path=path,
+        category=candidate.category,
+        device=candidate.device,
+        inode=candidate.inode,
+        size=candidate.size,
+        mtime_ns=candidate.mtime_ns,
+        is_directory=candidate.is_directory,
+    )
+
+
+def _restore_claim(claimed: _Candidate, original_path: Path) -> bool:
+    try:
+        current_claim = claimed.path.lstat()
+    except OSError:
+        return False
+    if not _same_directory_object(claimed, current_claim):
+        return False
+
+    try:
+        original_path.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    else:
+        return False
+
+    try:
+        claimed.path.rename(original_path)
+    except OSError:
+        return False
+    return True
+
+
+def _restore_lock_owner(path: Path, owner: _LockOwner) -> bool:
+    payload = json.dumps(
+        {"pid": owner.pid, "created_ts": owner.created_ts},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path / LOCK_OWNER_NAME, flags, 0o600)
+    except OSError:
+        return False
+    try:
+        written = 0
+        while written < len(payload):
+            written += os.write(descriptor, payload[written:])
+    except OSError:
+        return False
+    finally:
+        os.close(descriptor)
+    return True
+
+
+def _rollback_lock_claim(
+    claimed: _Candidate,
+    original_path: Path,
+    owner: _LockOwner,
+    *,
+    owner_removed: bool,
+) -> bool:
+    try:
+        current_claim = claimed.path.lstat()
+    except OSError:
+        return False
+    if not _same_directory_object(claimed, current_claim):
+        return False
+    if owner_removed and not _restore_lock_owner(claimed.path, owner):
+        return False
+    return _restore_claim(claimed, original_path)
+
+
 def _process_candidate(
     candidate: _Candidate,
     report: CleanupReport,
@@ -400,6 +495,18 @@ def _process_lock_candidate(
         category.skipped_files += 1
         return
 
+    quarantine_path = _lock_quarantine_path(candidate.path)
+    try:
+        quarantine_path.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        _record_error(report, candidate.category, candidate.path.name)
+        return
+    else:
+        category.skipped_files += 1
+        return
+
     try:
         final_owner = _read_lock_owner(candidate)
         current_directory = candidate.path.lstat()
@@ -419,23 +526,62 @@ def _process_lock_candidate(
         return
 
     try:
-        (candidate.path / LOCK_OWNER_NAME).unlink()
-        current_directory = candidate.path.lstat()
-        if not _same_directory_object(candidate, current_directory):
-            category.skipped_files += 1
-            return
-        if not _directory_is_empty(candidate.path):
-            category.skipped_files += 1
-            return
-        current_directory = candidate.path.lstat()
-        if not _same_directory_object(candidate, current_directory):
-            category.skipped_files += 1
-            return
-        candidate.path.rmdir()
+        candidate.path.rename(quarantine_path)
     except FileNotFoundError:
         category.skipped_files += 1
         return
     except OSError:
+        _record_error(report, candidate.category, candidate.path.name)
+        return
+
+    claimed = _candidate_at_path(candidate, quarantine_path)
+    try:
+        claimed_owner = _read_lock_owner(claimed)
+    except (FileNotFoundError, OSError):
+        _restore_claim(claimed, candidate.path)
+        category.skipped_files += 1
+        return
+    if claimed_owner != owner or not _pid_is_dead(owner.pid):
+        _restore_claim(claimed, candidate.path)
+        category.skipped_files += 1
+        return
+
+    owner_removed = False
+    try:
+        (claimed.path / LOCK_OWNER_NAME).unlink()
+        owner_removed = True
+        current_directory = claimed.path.lstat()
+        if not _same_directory_object(claimed, current_directory):
+            raise FileNotFoundError
+        if not _directory_is_empty(claimed.path):
+            _rollback_lock_claim(
+                claimed,
+                candidate.path,
+                owner,
+                owner_removed=True,
+            )
+            category.skipped_files += 1
+            return
+        current_directory = claimed.path.lstat()
+        if not _same_directory_object(claimed, current_directory):
+            raise FileNotFoundError
+        claimed.path.rmdir()
+    except FileNotFoundError:
+        _rollback_lock_claim(
+            claimed,
+            candidate.path,
+            owner,
+            owner_removed=owner_removed,
+        )
+        category.skipped_files += 1
+        return
+    except OSError:
+        _rollback_lock_claim(
+            claimed,
+            candidate.path,
+            owner,
+            owner_removed=owner_removed,
+        )
         _record_error(report, candidate.category, candidate.path.name)
         return
 
@@ -492,7 +638,11 @@ def _scan_hooks(
     now: float,
     delete: bool,
 ) -> None:
-    entries = _validated_scandir(paths.hooks_dir, report, "runtime_temp")
+    entries = _validated_scandir(
+        paths.hooks_dir,
+        report,
+        ("rotated_logs", "runtime_temp", "stale_locks"),
+    )
     if entries is None:
         return
 
@@ -602,7 +752,10 @@ def inspect(
     paths: CleanupPaths | None = None,
     now: float | None = None,
 ) -> CleanupReport:
-    selected_paths = paths or CleanupPaths.default()
+    managed_paths = CleanupPaths.default()
+    if paths is not None and paths != managed_paths:
+        return _refused_report()
+    selected_paths = managed_paths
     selected_now = time.time() if now is None else now
     return _execute(
         selected_paths,
@@ -617,7 +770,10 @@ def run(
     now: float | None = None,
     automatic: bool = False,
 ) -> CleanupReport:
-    selected_paths = paths or CleanupPaths.default()
+    managed_paths = CleanupPaths.default()
+    if paths is not None and paths != managed_paths:
+        return _refused_report()
+    selected_paths = managed_paths
     selected_now = time.time() if now is None else now
     audio_age = AUTO_AUDIO_AGE_SECONDS if automatic else MANUAL_AUDIO_AGE_SECONDS
     return _execute(
