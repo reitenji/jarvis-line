@@ -170,6 +170,7 @@ struct JarvisLineApp: App {
 final class JarvisLineModel: ObservableObject {
     @Published var status = RuntimeStatus.empty
     @Published var config = JarvisConfigDraft.defaults
+    @Published private(set) var savedConfig = JarvisConfigDraft.defaults
     @Published var configContract = JarvisConfigContract.empty
     @Published var traceEvents: [RuntimeTraceEvent] = []
     @Published var cliVersion = "jarvis-line unknown"
@@ -214,11 +215,24 @@ final class JarvisLineModel: ObservableObject {
         config.blockingIssues(using: configContract)
     }
 
+    var hasUnsavedChanges: Bool {
+        config != savedConfig
+    }
+
+    var pendingApplyImpact: SettingsApplyImpact {
+        SettingsApplyImpact.between(savedConfig, config)
+    }
+
     func refresh() async {
         await run(label: "Refresh") {
+            let preserveDraft = hasUnsavedChanges
             cliVersion = (try? await cli.run(["--version"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "jarvis-line unavailable"
             await refreshConfigContract()
-            config = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
+            let loadedConfig = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
+            if !preserveDraft {
+                config = loadedConfig
+                savedConfig = loadedConfig
+            }
             systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
             let statusOutput = try await cli.run(["status"])
             let doctorOutput = try await cli.run(["doctor"])
@@ -279,15 +293,44 @@ final class JarvisLineModel: ObservableObject {
         }
         if !succeeded {
             config.attentionEnabled = previousValue
+        } else {
+            savedConfig.attentionEnabled = isEnabled
         }
     }
 
     func loadConfig() async {
         await run(label: "Load Config") {
             await refreshConfigContract()
-            config = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
+            let loadedConfig = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
+            config = loadedConfig
+            savedConfig = loadedConfig
             systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
             lastOutput = "Loaded config from \(configStore.displayPath)"
+        }
+    }
+
+    func revertConfig() {
+        config = savedConfig
+        systemVoices = JarvisLineCLI.systemVoices(preserving: config.systemVoice)
+        errorMessage = nil
+    }
+
+    @discardableResult
+    func applyConfig() async -> Bool {
+        let draft = config
+        let impact = pendingApplyImpact
+        guard impact != .none else { return true }
+
+        return await run(label: "Apply Settings") {
+            try configStore.save(draft, contract: configContract)
+            lastOutput = "Saved config to \(configStore.displayPath)"
+            if impact == .restartRuntime {
+                lastOutput += "\n" + (try await cli.run(["restart"]))
+            }
+            let doctorOutput = try await cli.run(["doctor"])
+            doctorText = doctorOutput
+            codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
+            savedConfig = draft
         }
     }
 
