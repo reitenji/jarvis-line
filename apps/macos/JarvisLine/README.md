@@ -11,7 +11,7 @@ The native Setup Assistant uses the same versioned setup engine as the CLI. On
 first launch it is offered once only when Jarvis Line has no config. Existing
 configured users are not interrupted.
 
-Open it any time from **Settings > Runtime > Run Setup Assistant...**. If setup
+Open it any time from **Settings > General > Open Setup Assistant**. If setup
 is still required, the menu bar quick panel also shows **Complete Setup**.
 
 The assistant guides you through:
@@ -59,8 +59,9 @@ cd apps/macos/JarvisLine
 open "dist/Jarvis Line.app"
 ```
 
-The app starts as a regular macOS app with a Dock icon and a status icon in the
-macOS menu bar. Look for the waveform icon in the menu bar for the quick panel.
+The app starts with a Dock icon and a status icon in the macOS menu bar. Disable
+**Show in Dock** under **Settings > General** for a menu-bar-only workflow; the
+change takes effect immediately. Look for the waveform icon in the menu bar for the quick panel.
 The quick panel stays focused on runtime status and frequent actions; use the
 Settings button, the app menu, or Command+, to open the full configuration
 window. The app menu is intentionally minimal so Jarvis Line does not expose
@@ -91,8 +92,10 @@ will close older running copies from build or DMG staging folders.
 - Visible app and CLI version in the header
 - Controls: start, stop, restart, repair, test voice
 - Regular Dock and minimal app-menu behavior while keeping the menu bar status icon
-- Separate Settings window: controlled presets for speech, attention alerts, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and a simple GitHub update check interval
-- Settings actions stay in a bottom action bar instead of being mixed into the settings form
+- Two-pane Settings window with General, Speech, Voice, Updates, Diagnostics, and Advanced destinations
+- Controlled presets for speech, attention alerts, speak mode, TTS backend, voice/rate/speed, volume, queue, quiet hours, and GitHub update checks
+- Apply and Revert appear in the window toolbar only while the draft differs from the saved config; runtime-impacting changes are marked and restart automatically when applied
+- Closing a modified Settings window asks whether to Apply, Discard, or Cancel without losing the draft on command failure
 - Quick access: config file, watcher log, audio worker log
 - Hook install appears only when the Codex hook is not already installed
 - Custom dark Jarvis Line theme derived from the app icon palette
