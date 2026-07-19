@@ -1,3 +1,5 @@
+import threading
+import time
 from pathlib import Path
 
 from jarvis_line import audio_worker
@@ -111,6 +113,86 @@ def test_try_file_lock_reports_busy_windows_kernel_lock(tmp_path, monkeypatch):
         assert acquired is False
 
     assert not lock_path.with_name("runtime.lock.d").exists()
+
+
+def test_windows_file_lock_serializes_threads_before_kernel_polling(
+    tmp_path, monkeypatch
+):
+    class ContendedMSVCRT:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self):
+            self.guard = threading.Lock()
+            self.held = False
+            self.active_calls = 0
+            self.max_active_calls = 0
+
+        def locking(self, _descriptor, mode, _size):
+            if mode == self.LK_UNLCK:
+                with self.guard:
+                    self.held = False
+                return
+
+            with self.guard:
+                self.active_calls += 1
+                self.max_active_calls = max(
+                    self.max_active_calls,
+                    self.active_calls,
+                )
+            time.sleep(0.01)
+            with self.guard:
+                busy = self.held
+                if not busy:
+                    self.held = True
+                self.active_calls -= 1
+            if busy:
+                raise OSError("busy")
+
+    lock_path = tmp_path / "runtime.lock"
+    windows_lock = ContendedMSVCRT()
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", windows_lock)
+    start = threading.Barrier(5)
+    threads = []
+
+    def worker():
+        start.wait()
+        with audio_worker.file_lock(lock_path):
+            time.sleep(0.005)
+
+    for _ in range(4):
+        thread = threading.Thread(target=worker)
+        threads.append(thread)
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert windows_lock.max_active_calls == 1
+
+
+def test_try_file_lock_reports_same_process_contention_before_kernel(
+    tmp_path, monkeypatch
+):
+    lock_path = tmp_path / "runtime.lock"
+    kernel_attempts = []
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", object())
+    monkeypatch.setattr(
+        audio_worker,
+        "_try_windows_file_lock",
+        lambda _file: kernel_attempts.append(True) or True,
+    )
+    monkeypatch.setattr(audio_worker, "_release_windows_file_lock", lambda _file: None)
+
+    with audio_worker.file_lock(lock_path):
+        kernel_attempts.clear()
+        with audio_worker.try_file_lock(lock_path) as acquired:
+            assert acquired is False
+
+    assert kernel_attempts == []
 
 
 def test_dequeue_drops_stale_jobs(tmp_path, monkeypatch):
