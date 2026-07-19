@@ -43,6 +43,28 @@ def test_save_json_unlocked_uses_recognizable_temporary_name(tmp_path, monkeypat
     ]
 
 
+def test_try_file_lock_acquires_and_releases_fallback_lock(tmp_path, monkeypatch):
+    lock_path = tmp_path / "runtime.lock"
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+
+    with audio_worker.try_file_lock(lock_path) as acquired:
+        assert acquired is True
+        assert lock_path.with_name("runtime.lock.d").is_dir()
+
+    assert not lock_path.with_name("runtime.lock.d").exists()
+
+
+def test_try_file_lock_returns_immediately_when_fallback_lock_is_owned(tmp_path, monkeypatch):
+    lock_path = tmp_path / "runtime.lock"
+    lock_path.with_name("runtime.lock.d").mkdir()
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+
+    with audio_worker.try_file_lock(lock_path) as acquired:
+        assert acquired is False
+
+    assert lock_path.with_name("runtime.lock.d").is_dir()
+
+
 def test_dequeue_drops_stale_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_worker, "QUEUE_PATH", tmp_path / "queue.json")
     monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "lock")

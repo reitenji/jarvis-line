@@ -96,6 +96,38 @@ def file_lock(path: Path):
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def try_file_lock(path: Path):
+    """Acquire a runtime lock once and report contention without waiting."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is None:
+        lock_dir = path.with_name(path.name + ".d")
+        try:
+            lock_dir.mkdir()
+        except FileExistsError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            try:
+                lock_dir.rmdir()
+            except OSError:
+                pass
+        return
+
+    with path.open("a+", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def load_json(path: Path, default):
     try:
         return json.loads(path.read_text(encoding="utf-8"))

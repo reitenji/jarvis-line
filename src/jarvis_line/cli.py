@@ -19,11 +19,13 @@ from typing import Any, Mapping
 
 from jarvis_line import (
     __version__,
+    audio_worker,
     cleanup,
     config_contract,
     diagnostics,
     events,
     kokoro_assets,
+    reliability,
     setup_flow,
 )
 from jarvis_line.config_contract import (
@@ -52,6 +54,7 @@ QUEUE_PATH = HOOKS_DIR / "jarvis_line_audio_queue.json"
 LATEST_PATH = HOOKS_DIR / "jarvis_line_latest_messages.json"
 WATCHER_LOG_PATH = HOOKS_DIR / "jarvis_line_watcher.log"
 AUDIO_WORKER_LOG_PATH = HOOKS_DIR / "jarvis_line_audio_worker.log"
+RUNTIME_LOCK_PATH = HOOKS_DIR / ".jarvis_line.lock"
 TTS_HOME = JARVIS_HOME / "tts"
 KOKORO_VENV = TTS_HOME / "kokoro-venv"
 KOKORO_PY = KOKORO_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -1637,6 +1640,164 @@ def trace_command(args) -> int:
     return 0
 
 
+def _reliability_tts_status(cfg: dict[str, Any]) -> dict[str, Any]:
+    backend = selected_backend(cfg)
+    if backend == "kokoro":
+        ready, _detail = kokoro_ready()
+        reason = "ready" if ready else "not_ready"
+    elif backend == "system":
+        ready, _detail = system_tts_ready()
+        reason = "ready" if ready else "not_ready"
+    elif backend == "macos":
+        ready = platform.system() == "Darwin" and bool(shutil.which("say"))
+        reason = "ready" if ready else "not_available"
+    elif backend == "command":
+        ready = bool(cfg.get("command"))
+        reason = "ready" if ready else "not_configured"
+    else:
+        ready = False
+        reason = "unsupported_backend"
+    return {"backend": backend, "ready": ready, "reason": reason}
+
+
+def reliability_snapshot() -> dict[str, Any]:
+    cfg = load_effective_config({})
+    state = load_json(STATE_PATH, {})
+    queue = load_json(QUEUE_PATH, {"jobs": []})
+    return reliability.build_snapshot(
+        config=cfg,
+        state=state if isinstance(state, dict) else {},
+        queue=queue if isinstance(queue, dict) else {"jobs": []},
+        trace_events=diagnostics.read_events(100),
+        now_ms=int(time.time() * 1000),
+        pid_alive=pid_alive,
+        process_rss_mb=process_rss_mb,
+        tts_status=_reliability_tts_status(cfg),
+    )
+
+
+def diagnostics_snapshot_command(args) -> int:
+    try:
+        snapshot = reliability_snapshot()
+    except Exception:
+        if getattr(args, "json_output", False):
+            print(json.dumps({
+                "version": reliability.SNAPSHOT_VERSION,
+                "ok": False,
+                "error": "snapshot_failed",
+            }, ensure_ascii=False, indent=2))
+        else:
+            print("Jarvis Line diagnostics could not read the runtime snapshot.")
+        return 1
+
+    if getattr(args, "json_output", False):
+        print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+        return 0
+
+    runtime = snapshot["runtime"]
+    queue = snapshot["queue"]
+    print("Jarvis Line diagnostics")
+    print("health:", snapshot["health"])
+    print("watcher:", runtime["watcher"]["state"])
+    print("audio_worker:", runtime["worker"]["state"])
+    print("queue_active:", queue["active"])
+    print("queue_rejected:", queue["expired"] + queue["stale"])
+    print("tts:", snapshot["tts"]["backend"], "ready" if snapshot["tts"]["ready"] else "not ready")
+    return 0
+
+
+def _recovery_result(
+    *,
+    action: str,
+    ok: bool,
+    changed: bool,
+    summary: str,
+) -> dict[str, Any]:
+    return {
+        "version": reliability.SNAPSHOT_VERSION,
+        "ok": ok,
+        "action": action,
+        "changed": changed,
+        "summary": summary,
+        "snapshot": reliability_snapshot(),
+    }
+
+
+def _prune_expired_queue() -> tuple[bool, bool, str]:
+    with audio_worker.try_file_lock(RUNTIME_LOCK_PATH) as acquired:
+        if not acquired:
+            return False, False, "The runtime queue is busy; try again."
+        queue = load_json(QUEUE_PATH, {"jobs": []})
+        if not isinstance(queue, dict):
+            queue = {"jobs": []}
+        raw_jobs = queue.get("jobs")
+        jobs = raw_jobs if isinstance(raw_jobs, list) else []
+        now_ms = int(time.time() * 1000)
+        active, removed = reliability.prune_expired_jobs(
+            jobs,
+            now_ms=now_ms,
+            stale_after_ms=reliability.DEFAULT_STALE_AFTER_MS,
+        )
+        if removed:
+            queue["jobs"] = active
+            queue["updated_ts_ms"] = now_ms
+            save_json(QUEUE_PATH, queue)
+    if not removed:
+        return True, False, "No expired or stale queue entries were found."
+    noun = "entry" if removed == 1 else "entries"
+    return True, True, f"Removed {removed} expired or stale queue {noun}."
+
+
+def diagnostics_recover_command(args) -> int:
+    action = str(getattr(args, "action", "") or "")
+    ok = False
+    changed = False
+    summary = "Unsupported recovery action."
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            if action == "restart-runtime":
+                ok = runtime_restart(argparse.Namespace(test=False)) == 0
+                changed = ok
+                summary = "Restarted the voice runtime." if ok else "The voice runtime restart failed."
+            elif action == "prune-expired":
+                ok, changed, summary = _prune_expired_queue()
+            elif action == "test-tts":
+                ok = tts_test(
+                    argparse.Namespace(text="Jarvis line test is ready."),
+                    quiet=True,
+                ) == 0
+                summary = "Played the fixed voice test." if ok else "The selected voice test failed."
+            else:
+                ok = False
+    except Exception:
+        ok = False
+        changed = False
+        summary = "Recovery failed without changing unrelated state."
+
+    try:
+        result = _recovery_result(
+            action=action,
+            ok=ok,
+            changed=changed,
+            summary=summary,
+        )
+    except Exception:
+        result = {
+            "version": reliability.SNAPSHOT_VERSION,
+            "ok": False,
+            "action": action,
+            "changed": changed,
+            "summary": "Recovery finished, but the runtime snapshot could not be refreshed.",
+        }
+        ok = False
+
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(result["summary"])
+    return 0 if ok else 1
+
+
 def emit_command(args) -> int:
     try:
         if getattr(args, "stdin", False):
@@ -2422,6 +2583,39 @@ def build_parser() -> argparse.ArgumentParser:
     trace.add_argument("--json", action="store_true", dest="json_output")
     trace.add_argument("--clear", action="store_true")
     trace.set_defaults(func=trace_command)
+
+    diagnostics_parser = sub.add_parser(
+        "diagnostics",
+        help="Inspect reliability and run bounded recovery actions.",
+    )
+    diagnostics_sub = diagnostics_parser.add_subparsers(
+        dest="diagnostics_command",
+        required=True,
+    )
+    diagnostics_snapshot_parser = diagnostics_sub.add_parser(
+        "snapshot",
+        help="Print a privacy-safe runtime snapshot.",
+    )
+    diagnostics_snapshot_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+    )
+    diagnostics_snapshot_parser.set_defaults(func=diagnostics_snapshot_command)
+    diagnostics_recover_parser = diagnostics_sub.add_parser(
+        "recover",
+        help="Run one explicit bounded recovery action.",
+    )
+    diagnostics_recover_parser.add_argument(
+        "action",
+        choices=("restart-runtime", "prune-expired", "test-tts"),
+    )
+    diagnostics_recover_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+    )
+    diagnostics_recover_parser.set_defaults(func=diagnostics_recover_command)
 
     emit = sub.add_parser("emit", help="Submit a normalized event from any agent.")
     emit.add_argument("--stdin", action="store_true", help="Read one versioned JSON event from stdin.")

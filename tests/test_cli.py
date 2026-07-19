@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import hashlib
 import json
 import types
@@ -6,6 +7,19 @@ import types
 import pytest
 
 from jarvis_line import cleanup, cli
+
+
+def reliability_result_snapshot():
+    return {
+        "version": 1,
+        "generated_at_ms": 200_000,
+        "health": "healthy",
+        "runtime": {},
+        "queue": {},
+        "tts": {},
+        "deliveries": [],
+        "recommendations": [],
+    }
 
 
 def test_validate_rejects_macos_kokoro_fields():
@@ -469,6 +483,162 @@ def test_runtime_stop_marks_runtime_stopped(tmp_path, monkeypatch, capsys):
     assert state["__runtime__"]["stopped"] is True
     assert sorted(killed) == [201, 202]
     assert "Stopped Jarvis Line runtime." in capsys.readouterr().out
+
+
+def test_diagnostics_snapshot_command_outputs_versioned_json(monkeypatch, capsys):
+    snapshot = reliability_result_snapshot()
+    monkeypatch.setattr(cli, "reliability_snapshot", lambda: snapshot)
+
+    rc = cli.diagnostics_snapshot_command(argparse.Namespace(json_output=True))
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == snapshot
+
+
+def test_prune_expired_recovery_preserves_active_jobs(tmp_path, monkeypatch, capsys):
+    now_ms = 1_000_000
+    queue_path = tmp_path / "queue.json"
+    monkeypatch.setattr(cli, "QUEUE_PATH", queue_path)
+    monkeypatch.setattr(cli, "RUNTIME_LOCK_PATH", tmp_path / "runtime.lock")
+    monkeypatch.setattr(cli.time, "time", lambda: now_ms / 1000)
+    monkeypatch.setattr(cli, "reliability_snapshot", reliability_result_snapshot)
+    cli.save_json(
+        queue_path,
+        {
+            "last_session_key": "session-b",
+            "jobs": [
+                {
+                    "message_id": "expired",
+                    "enqueued_ts_ms": now_ms - 1,
+                    "expires_ts_ms": now_ms,
+                },
+                {
+                    "message_id": "active",
+                    "enqueued_ts_ms": now_ms,
+                    "expires_ts_ms": now_ms + 10_000,
+                },
+            ],
+        },
+    )
+
+    rc = cli.diagnostics_recover_command(
+        argparse.Namespace(action="prune-expired", json_output=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    queue = cli.load_json(queue_path, {})
+    assert rc == 0
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert payload["summary"] == "Removed 1 expired or stale queue entry."
+    assert [job["message_id"] for job in queue["jobs"]] == ["active"]
+    assert queue["last_session_key"] == "session-b"
+
+
+def test_prune_expired_recovery_reports_busy_without_mutation(tmp_path, monkeypatch, capsys):
+    queue_path = tmp_path / "queue.json"
+    cli.save_json(queue_path, {"jobs": [{"message_id": "active", "enqueued_ts_ms": 10}]})
+    monkeypatch.setattr(cli, "QUEUE_PATH", queue_path)
+    monkeypatch.setattr(cli, "reliability_snapshot", reliability_result_snapshot)
+
+    @contextlib.contextmanager
+    def busy_lock(_path):
+        yield False
+
+    monkeypatch.setattr(cli.audio_worker, "try_file_lock", busy_lock)
+
+    rc = cli.diagnostics_recover_command(
+        argparse.Namespace(action="prune-expired", json_output=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["ok"] is False
+    assert payload["changed"] is False
+    assert payload["summary"] == "The runtime queue is busy; try again."
+    assert cli.load_json(queue_path, {})["jobs"][0]["message_id"] == "active"
+
+
+def test_restart_recovery_delegates_to_existing_runtime_path(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "runtime_restart",
+        lambda args: calls.append(args.test) or 0,
+    )
+    monkeypatch.setattr(cli, "reliability_snapshot", reliability_result_snapshot)
+
+    rc = cli.diagnostics_recover_command(
+        argparse.Namespace(action="restart-runtime", json_output=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert calls == [False]
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert payload["summary"] == "Restarted the voice runtime."
+
+
+def test_tts_recovery_uses_fixed_private_test_sentence(monkeypatch, capsys):
+    calls = []
+
+    def fake_tts_test(args, quiet=False):
+        calls.append((args.text, quiet))
+        return 0
+
+    monkeypatch.setattr(cli, "tts_test", fake_tts_test)
+    monkeypatch.setattr(cli, "reliability_snapshot", reliability_result_snapshot)
+
+    rc = cli.diagnostics_recover_command(
+        argparse.Namespace(action="test-tts", json_output=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert calls == [("Jarvis line test is ready.", True)]
+    assert payload["ok"] is True
+    assert payload["changed"] is False
+    assert payload["summary"] == "Played the fixed voice test."
+
+
+def test_failed_tts_recovery_returns_json_failure(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "tts_test", lambda _args, quiet=False: 1)
+    monkeypatch.setattr(cli, "reliability_snapshot", reliability_result_snapshot)
+
+    rc = cli.diagnostics_recover_command(
+        argparse.Namespace(action="test-tts", json_output=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["ok"] is False
+    assert payload["changed"] is False
+    assert payload["summary"] == "The selected voice test failed."
+
+
+def test_diagnostics_parser_routes_snapshot_and_recovery():
+    parser = cli.build_parser()
+
+    snapshot = parser.parse_args(["diagnostics", "snapshot", "--json"])
+    recovery = parser.parse_args(
+        ["diagnostics", "recover", "prune-expired", "--json"]
+    )
+
+    assert snapshot.func is cli.diagnostics_snapshot_command
+    assert snapshot.json_output is True
+    assert recovery.func is cli.diagnostics_recover_command
+    assert recovery.action == "prune-expired"
+    assert recovery.json_output is True
+
+
+def test_diagnostics_parser_rejects_unknown_recovery_action():
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["diagnostics", "recover", "clear-everything"])
+
+    assert exc.value.code == 2
 
 
 def test_profiles_and_prefix_helpers(tmp_path, monkeypatch, capsys):
