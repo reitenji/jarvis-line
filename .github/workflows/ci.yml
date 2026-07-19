@@ -32,6 +32,9 @@ jobs:
         run: |
           python -m pip install -e ".[test]"
           python -m pytest -q
+      - name: Quick runtime soak
+        if: matrix.python-version == '3.12'
+        run: python scripts/soak_runtime.py --mode quick --seed 1 --json
       - name: Build wheel for isolated install check
         if: matrix.python-version == '3.12'
         run: |
