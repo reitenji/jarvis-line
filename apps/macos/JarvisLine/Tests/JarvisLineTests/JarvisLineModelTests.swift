@@ -116,18 +116,6 @@ struct JarvisLineModelTests {
         #expect(await runner.calls == [["update", "check"]])
     }
 
-    @Test func clearQueueRunsTheDedicatedCommandBeforeRefreshing() async {
-        let runner = ModelFakeRunner()
-        let model = JarvisLineModel(cli: runner)
-
-        await model.clearQueue()
-
-        let calls = await runner.calls
-        #expect(calls.first == ["queue", "clear"])
-        #expect(calls.contains(["status"]))
-        #expect(calls.contains(["doctor"]))
-    }
-
     @Test func reliabilityRefreshUsesVersionedSnapshotCommand() async {
         let runner = ReliabilityModelRunner()
         let model = JarvisLineModel(cli: runner)

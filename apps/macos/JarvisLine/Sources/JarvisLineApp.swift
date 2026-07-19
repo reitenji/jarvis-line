@@ -182,7 +182,6 @@ final class JarvisLineModel: ObservableObject {
     @Published var config = JarvisConfigDraft.defaults
     @Published private(set) var savedConfig = JarvisConfigDraft.defaults
     @Published var configContract = JarvisConfigContract.empty
-    @Published var traceEvents: [RuntimeTraceEvent] = []
     @Published var cliVersion = "jarvis-line unknown"
     @Published var systemVoices: [String] = [""]
     @Published var doctorText = ""
@@ -259,7 +258,6 @@ final class JarvisLineModel: ObservableObject {
             doctorText = doctorOutput
             codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             lastOutput = statusOutput
-            await refreshTrace()
             await refreshSetupRequirementIfNeeded()
         }
     }
@@ -286,11 +284,6 @@ final class JarvisLineModel: ObservableObject {
 
     func repair() async {
         await command("Repair", ["doctor", "--fix"])
-        await refresh()
-    }
-
-    func clearQueue() async {
-        await command("Clear Queue", ["queue", "clear"])
         await refresh()
     }
 
@@ -476,15 +469,6 @@ final class JarvisLineModel: ObservableObject {
             return
         }
         configContract = contract
-    }
-
-    private func refreshTrace() async {
-        guard let output = try? await cli.run(["trace", "--limit", "12", "--json"]),
-              let data = output.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([RuntimeTraceEvent].self, from: data) else {
-            return
-        }
-        traceEvents = decoded
     }
 
     private func loadCleanupStatus() async throws -> StorageCleanupStatus {

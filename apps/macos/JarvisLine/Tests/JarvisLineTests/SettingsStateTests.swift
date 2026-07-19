@@ -14,6 +14,8 @@ struct SettingsStateTests {
             "advanced",
         ])
         #expect(Set(destinations.map(\.systemImage)).count == destinations.count)
+        #expect(SettingsDestination.diagnostics.title == "Reliability")
+        #expect(SettingsDestination.diagnostics.subtitle == "Runtime health and safe recovery")
     }
 
     @Test func equalDraftsNeedNoApply() {

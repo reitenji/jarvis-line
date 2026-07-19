@@ -56,6 +56,7 @@ struct SettingsWindowView: View {
         .onChange(of: destination) { newDestination in
             guard newDestination == .diagnostics else { return }
             model.requestCleanupStatusRefresh()
+            Task { await model.refreshReliability() }
         }
     }
 
@@ -505,20 +506,16 @@ struct SettingsWindowView: View {
 
     private var diagnosticsSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
-            SettingsSection(title: "Runtime") {
-                SettingsValueRow(
-                    title: "Watcher",
-                    value: display(model.status.watcher),
-                    state: model.status.watcherState == "running" ? .healthy : .inactive
-                )
-                SettingsValueRow(
-                    title: "Audio worker",
-                    value: display(model.status.audioWorker),
-                    state: model.status.audioWorker.contains("running") ? .healthy : .inactive
-                )
-                SettingsValueRow(title: "Worker memory", value: display(model.status.audioWorkerRSS))
-                SettingsValueRow(title: "Queue", value: "\(model.status.queueJobs) lines")
-            }
+            ReliabilityCenterView(
+                snapshot: model.reliabilitySnapshot,
+                resultText: model.reliabilityResultText,
+                doctorText: model.doctorText,
+                isBusy: model.isBusy,
+                onRefresh: { Task { await model.refreshReliability() } },
+                onAction: { action in
+                    Task { await model.runReliabilityAction(action) }
+                }
+            )
 
             SettingsSection(title: "Storage & Cleanup") {
                 SettingsRow(title: "Automatic cleanup") {
@@ -577,41 +574,6 @@ struct SettingsWindowView: View {
                     }
                     .disabled(model.isBusy)
                 }
-            }
-
-            SettingsSection(title: "Runtime Controls") {
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack(spacing: 9) {
-                        SettingsCommandButton(title: "Start", icon: "play.fill") {
-                            Task { await model.start() }
-                        }
-                        SettingsCommandButton(title: "Stop", icon: "stop.fill") {
-                            Task { await model.stop() }
-                        }
-                        SettingsCommandButton(title: "Restart", icon: "arrow.clockwise") {
-                            Task { await model.restart() }
-                        }
-                    }
-                    HStack(spacing: 9) {
-                        SettingsCommandButton(title: "Repair", icon: "wrench.and.screwdriver") {
-                            Task { await model.repair() }
-                        }
-                        SettingsCommandButton(title: "Clear Queue", icon: "text.badge.minus") {
-                            Task { await model.clearQueue() }
-                        }
-                    }
-                }
-                .disabled(model.isBusy)
-                .padding(.vertical, 8)
-            }
-
-            SettingsSection(title: "Recent Activity") {
-                RuntimeDiagnosticsView(
-                    events: model.traceEvents,
-                    doctorText: model.doctorText,
-                    errorMessage: model.errorMessage
-                )
-                .padding(.vertical, 10)
             }
 
             SettingsSection(title: "Files") {
@@ -740,9 +702,6 @@ struct SettingsWindowView: View {
         return remaining == 0 ? issue : "\(issue) (+\(remaining) more)"
     }
 
-    private func display(_ value: String) -> String {
-        value.isEmpty ? "n/a" : value
-    }
 }
 
 private struct SettingsSidebar: View {
@@ -883,7 +842,7 @@ private struct SettingsNotice: View {
     }
 }
 
-private struct SettingsSection<Content: View>: View {
+struct SettingsSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
@@ -902,7 +861,7 @@ private struct SettingsSection<Content: View>: View {
     }
 }
 
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
     let title: String
     let detail: String?
     let restartRequired: Bool
@@ -955,7 +914,7 @@ private struct SettingsRow<Control: View>: View {
     }
 }
 
-private struct SettingsValueRow: View {
+struct SettingsValueRow: View {
     let title: String
     let value: String
     var state: SettingsStatusState?
@@ -982,7 +941,7 @@ private struct SettingsValueRow: View {
     }
 }
 
-private enum SettingsStatusState {
+enum SettingsStatusState {
     case healthy
     case warning
     case inactive
@@ -1004,7 +963,7 @@ private enum SettingsStatusState {
     }
 }
 
-private struct SettingsStatusLabel: View {
+struct SettingsStatusLabel: View {
     let text: String
     let state: SettingsStatusState
 
@@ -1032,19 +991,5 @@ private struct SettingsCompatibilityNote: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 2)
             .accessibilityLabel("Compatibility: \(text)")
-    }
-}
-
-private struct SettingsCommandButton: View {
-    let title: String
-    let icon: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
     }
 }
