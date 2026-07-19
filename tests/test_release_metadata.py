@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_repository_versions_are_consistent():
     versions = check_version_consistency.read_versions(ROOT)
 
-    assert versions.package == "0.7.0"
+    assert versions.package == "0.8.0"
     assert versions.module == versions.package
     assert versions.app == versions.package
     assert versions.bundle_build.isdigit()

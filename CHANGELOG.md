@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-07-19
+
 - Add a versioned privacy-safe reliability snapshot and three bounded recovery actions for runtime restart, expired-job pruning, and a fixed TTS test.
 - Replace broad macOS Diagnostics controls with a status-first Reliability Center showing runtime health, queue state, safe recent-delivery outcomes, and recommended recovery.
 - Add deterministic quick and extended fake-speech soak modes covering multi-session queue pressure, expiry, deduplication, cancellation, recovery, locks, trace rotation, and runtime resource limits.
