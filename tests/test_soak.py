@@ -157,7 +157,7 @@ def test_default_soak_root_is_removed_after_run():
 
     report = soak.run_soak(config)
 
-    assert report["ok"] is True
+    assert report["ok"] is True, report
     assert not root.exists()
 
 

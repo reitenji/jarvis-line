@@ -297,8 +297,8 @@ jarvis-line update check
 ```
 
 ```text
-Current version: 0.7.0
-Latest version: 0.7.0
+Current version: 0.8.0
+Latest version: 0.8.0
 Jarvis Line is up to date.
 ```
 
@@ -309,8 +309,8 @@ jarvis-line update check --source git --repo https://github.com/reitenji/jarvis-
 ```
 
 ```text
-Current version: 0.7.0
-Latest version: 0.7.0
+Current version: 0.8.0
+Latest version: 0.8.0
 Jarvis Line is up to date.
 ```
 
@@ -321,9 +321,9 @@ jarvis-line update apply
 ```
 
 ```text
-Current version: 0.6.0
-Latest version: 0.7.0
-Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.7.0
+Current version: 0.7.0
+Latest version: 0.8.0
+Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.8.0
 Next: run `jarvis-line --version` and `jarvis-line doctor`.
 ```
 
