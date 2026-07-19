@@ -402,6 +402,79 @@ Jarvis Line trace
 
 Use `--json` for the macOS app or other tools, and `--clear` to remove the trace file.
 
+## `diagnostics`
+
+Read the versioned Reliability Center snapshot without changing runtime state:
+
+```bash
+jarvis-line diagnostics snapshot --json
+```
+
+```json
+{
+  "version": 1,
+  "generated_at_ms": 1715520005200,
+  "health": "healthy",
+  "runtime": {
+    "speech_enabled": true,
+    "watcher": {"state": "running", "pid": 12345},
+    "worker": {"state": "idle", "pid": null, "rss_mb": null}
+  },
+  "queue": {
+    "total": 0,
+    "active": 0,
+    "expired": 0,
+    "stale": 0,
+    "oldest_age_ms": 0,
+    "phase_counts": {},
+    "max_size": 8
+  },
+  "tts": {"backend": "system", "ready": true, "reason": "ready"},
+  "deliveries": [],
+  "recommendations": []
+}
+```
+
+The snapshot contains process state, aggregate queue facts, TTS readiness, and
+bounded delivery metadata. Message identifiers are re-hashed and session
+identifiers remain short hashes. Spoken content, transcripts, session paths,
+custom commands, tool arguments, answers, environment values, and credentials
+are excluded.
+
+Run only the bounded recovery action recommended by the snapshot:
+
+```bash
+jarvis-line diagnostics recover prune-expired
+```
+
+```text
+Removed 2 expired or stale queue entries.
+```
+
+```bash
+jarvis-line diagnostics recover restart-runtime
+```
+
+```text
+Restarted the voice runtime.
+```
+
+```bash
+jarvis-line diagnostics recover test-tts
+```
+
+```text
+Played the fixed voice test.
+```
+
+`prune-expired` preserves active queue work and returns immediately when the
+runtime lock is busy. `restart-runtime` uses the existing tracked process path.
+`test-tts` always uses the fixed local sample `Jarvis line test is ready.` and
+does not accept arbitrary content. Add `--json` to any recovery command for a
+versioned result containing `ok`, `changed`, a safe summary, and a fresh
+snapshot. Full queue clearing remains the separate explicit `queue clear`
+command.
+
 ## `emit`
 
 Submit a spoken event from any agent adapter:

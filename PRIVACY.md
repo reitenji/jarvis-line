@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: July 10, 2026
+Last updated: July 19, 2026
 
 Jarvis Line is a local developer tool. It does not require an account and the
 core project does not include analytics, advertising, crash-reporting, or
@@ -74,6 +74,25 @@ It masks common secret patterns and shortens content, but automated redaction
 cannot guarantee that every private value is recognized. Always open and review
 the report before pasting any part of it into a public GitHub issue. Jarvis Line
 does not upload the report for you.
+
+## Reliability Diagnostics And Soak Tests
+
+`jarvis-line diagnostics snapshot --json` reads local runtime state on demand.
+It reports process health, aggregate queue state, TTS readiness, bounded timing,
+controlled failure reasons, re-hashed message identifiers, and hashed session
+identifiers. It excludes spoken content, transcripts, local session paths,
+custom commands, tool arguments, answers, environment values, and credentials.
+The macOS Reliability Center does not add background polling or another daemon.
+
+The three diagnostics recovery actions are explicit and allowlisted. Queue
+pruning removes only expired or stale jobs, runtime restart targets only tracked
+runtime processes, and the voice test uses a fixed local sample.
+
+Contributor soak tests run in a newly created temporary directory with fake
+speech. They do not inspect the active user home, queue, configuration,
+processes, audio device, or network. A requested `--output` report contains only
+aggregate counters and invariant results; temporary runtime files are removed
+when the run completes.
 
 ## Your Controls
 
