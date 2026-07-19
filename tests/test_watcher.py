@@ -838,6 +838,7 @@ def test_audio_worker_health_rejects_zombie_process(monkeypatch):
 
 def test_audio_queue_has_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
     watcher.save_json(tmp_path / "queue.json", {"jobs": [{"jarvis_line": "pending"}]})
 
     assert watcher.audio_queue_has_jobs() is True
