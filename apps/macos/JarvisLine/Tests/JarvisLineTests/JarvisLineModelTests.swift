@@ -128,6 +128,42 @@ struct JarvisLineModelTests {
         #expect(calls.contains(["doctor"]))
     }
 
+    @Test func reliabilityRefreshUsesVersionedSnapshotCommand() async {
+        let runner = ReliabilityModelRunner()
+        let model = JarvisLineModel(cli: runner)
+
+        await model.refreshReliability()
+
+        #expect(await runner.calls == [["diagnostics", "snapshot", "--json"]])
+        #expect(model.reliabilitySnapshot.version == 1)
+        #expect(model.reliabilitySnapshot.health == .degraded)
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test func reliabilityActionPublishesReturnedSnapshotAndSummary() async {
+        let runner = ReliabilityModelRunner()
+        let model = JarvisLineModel(cli: runner)
+
+        await model.runReliabilityAction(.pruneExpired)
+
+        #expect(await runner.calls == [
+            ["diagnostics", "recover", "prune-expired", "--json"],
+        ])
+        #expect(model.reliabilityResultText == "Removed 1 expired or stale queue entry.")
+        #expect(model.reliabilitySnapshot.queue.active == 1)
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test func malformedReliabilityResponseLeavesPriorStateAndShowsError() async {
+        let runner = ReliabilityModelRunner(snapshotOutput: #"{"version":1}"#)
+        let model = JarvisLineModel(cli: runner)
+
+        await model.refreshReliability()
+
+        #expect(model.reliabilitySnapshot == .empty)
+        #expect(model.errorMessage?.contains("Refresh Reliability failed") == true)
+    }
+
     @Test func cleanupStatusAndRunUseDedicatedJSONCommands() async {
         let runner = CleanupModelRunner(
             statusOutput: cleanupJSON(),
@@ -405,6 +441,62 @@ private actor UpdateAvailableRunner: JarvisLineCommandRunning {
             stderr: ""
         )
     }
+}
+
+private actor ReliabilityModelRunner: JarvisLineCommandRunning {
+    private let snapshotOutput: String
+    private(set) var calls: [[String]] = []
+
+    init(snapshotOutput: String = reliabilityModelSnapshotJSON()) {
+        self.snapshotOutput = snapshotOutput
+    }
+
+    func run(_ args: [String], stdin: Data?) async throws -> String {
+        calls.append(args)
+        if args == ["diagnostics", "snapshot", "--json"] {
+            return snapshotOutput
+        }
+        if args == ["diagnostics", "recover", "prune-expired", "--json"] {
+            return """
+            {
+              "version": 1,
+              "ok": true,
+              "action": "prune-expired",
+              "changed": true,
+              "summary": "Removed 1 expired or stale queue entry.",
+              "snapshot": \(snapshotOutput)
+            }
+            """
+        }
+        return snapshotOutput
+    }
+}
+
+private func reliabilityModelSnapshotJSON() -> String {
+    """
+    {
+      "version": 1,
+      "generated_at_ms": 200000,
+      "health": "degraded",
+      "runtime": {
+        "speech_enabled": true,
+        "watcher": {"state": "running", "pid": 11},
+        "worker": {"state": "idle", "pid": null, "rss_mb": null}
+      },
+      "queue": {
+        "total": 1,
+        "active": 1,
+        "expired": 0,
+        "stale": 0,
+        "oldest_age_ms": 100,
+        "phase_counts": {"final": 1},
+        "max_size": 8
+      },
+      "tts": {"backend": "system", "ready": true, "reason": "ready"},
+      "deliveries": [],
+      "recommendations": []
+    }
+    """
 }
 
 private actor CleanupModelRunner: JarvisLineCommandRunning {

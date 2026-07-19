@@ -190,6 +190,8 @@ final class JarvisLineModel: ObservableObject {
     @Published private(set) var updateStatusText = "Not checked in this app session"
     @Published private(set) var cleanupStatus = StorageCleanupStatus.empty
     @Published private(set) var cleanupResultText = "Not checked"
+    @Published private(set) var reliabilitySnapshot = ReliabilitySnapshot.empty
+    @Published private(set) var reliabilityResultText = "Not checked"
     @Published private(set) var settingsConfirmation: String?
     @Published var isBusy = false
     @Published var errorMessage: String?
@@ -290,6 +292,25 @@ final class JarvisLineModel: ObservableObject {
     func clearQueue() async {
         await command("Clear Queue", ["queue", "clear"])
         await refresh()
+    }
+
+    func refreshReliability() async {
+        await run(label: "Refresh Reliability") {
+            reliabilitySnapshot = try ReliabilitySnapshot.decode(
+                try await cli.run(["diagnostics", "snapshot", "--json"])
+            )
+        }
+    }
+
+    func runReliabilityAction(_ action: ReliabilityAction) async {
+        await run(label: action.label) {
+            let result = try await loadReliabilityRecovery(action)
+            reliabilitySnapshot = result.snapshot
+            reliabilityResultText = result.summary
+            guard result.ok else {
+                throw ReliabilityModelError.actionFailed(result.summary)
+            }
+        }
     }
 
     func checkForUpdates() async {
@@ -496,6 +517,25 @@ final class JarvisLineModel: ObservableObject {
         }
     }
 
+    private func loadReliabilityRecovery(
+        _ action: ReliabilityAction
+    ) async throws -> ReliabilityRecoveryResult {
+        do {
+            return try ReliabilityRecoveryResult.decode(
+                try await cli.run([
+                    "diagnostics", "recover", action.rawValue, "--json",
+                ])
+            )
+        } catch let error as CLIError {
+            guard let result = try? ReliabilityRecoveryResult.decode(error.stdout) else {
+                throw ReliabilityModelError.invalidResponse
+            }
+            return result
+        } catch is DecodingError {
+            throw ReliabilityModelError.invalidResponse
+        }
+    }
+
     private func cleanupResultSummary(_ result: StorageCleanupStatus) -> String {
         if result.alreadyRunning {
             return "Cleanup already running"
@@ -601,6 +641,18 @@ private enum StorageCleanupModelError: LocalizedError {
         switch self {
         case .invalidResponse: "Invalid cleanup response"
         case .commandFailed: "Cleanup command failed"
+        }
+    }
+}
+
+private enum ReliabilityModelError: LocalizedError {
+    case actionFailed(String)
+    case invalidResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .actionFailed(let summary): summary
+        case .invalidResponse: "Invalid reliability response"
         }
     }
 }
