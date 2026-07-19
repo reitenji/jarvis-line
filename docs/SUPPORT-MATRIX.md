@@ -16,12 +16,12 @@ regularly exercised from integrations that are available as Preview.
 
 | Platform surface | Status | Current evidence and limits |
 |---|---|---|
-| macOS CLI, watcher, queue, and Codex hooks | Validated beta | CI plus regular local Codex sessions on Apple silicon; opt-in attention hook latency is benchmarked locally before release |
+| macOS CLI, watcher, queue, and Codex hooks | Validated beta | CI plus regular local Codex sessions on Apple silicon; deterministic multi-session quick and extended soak runs use fake speech, and opt-in attention hook latency is benchmarked locally before release |
 | macOS system TTS and Kokoro playback | Validated beta | Tested locally; available voices and audio-device behavior still depend on the Mac |
 | macOS manager app | Preview | Swift tests and DMG smoke checks run in CI; the public DMG is ad-hoc signed and not notarized |
-| Windows CLI, watcher, and queue | Preview | Python 3.10/3.12 CI and clean-install checks; not yet validated in sustained real Windows sessions |
+| Windows CLI, watcher, and queue | Preview | Python 3.10/3.12 CI, clean-install checks, and deterministic fake-speech soak coverage; not yet validated in sustained real Windows sessions |
 | Windows system TTS | Preview | PowerShell integration is implemented, but playback is not exercised in CI and still needs real-device reports |
-| Linux CLI, watcher, and queue | Preview | Python 3.10/3.12 CI and clean-install checks; distribution-specific runtime coverage is limited |
+| Linux CLI, watcher, and queue | Preview | Python 3.10/3.12 CI, clean-install checks, and deterministic fake-speech soak coverage; distribution-specific runtime coverage is limited |
 | Linux system TTS | Preview | Supports `spd-say`, `espeak-ng`, or `espeak`; playback is not exercised in CI, and availability/voice quality depend on the host |
 
 ## Agent Integrations
@@ -49,6 +49,12 @@ The project is moving toward 1.0 without claiming that level of stability yet.
 The remaining evidence should include sustained clean installs and upgrades,
 more Windows/Linux real-device reports, a notarized macOS distribution path,
 and a period without high-impact queue or watcher regressions.
+
+Automated soak runs exercise queue bounds, multi-session fairness, expiry,
+deduplication, recovery, file locking, trace rotation, idle/RSS lifecycle state,
+and cleanup without using a real TTS backend or audio device. They do not prove
+voice quality, host audio configuration, platform speech APIs, or signed macOS
+distribution behavior.
 
 Please open a reviewed support report when you find a platform-specific rough
 edge. See [the issue guide](../README.md#help-and-community) and feel free to

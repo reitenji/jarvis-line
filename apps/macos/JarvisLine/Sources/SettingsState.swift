@@ -16,7 +16,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .speech: "Speech"
         case .voice: "Voice"
         case .updates: "Updates"
-        case .diagnostics: "Diagnostics"
+        case .diagnostics: "Reliability"
         case .advanced: "Advanced"
         }
     }
@@ -27,7 +27,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .speech: "text.bubble"
         case .voice: "waveform"
         case .updates: "arrow.triangle.2.circlepath"
-        case .diagnostics: "stethoscope"
+        case .diagnostics: "waveform.path.ecg"
         case .advanced: "slider.horizontal.3"
         }
     }
@@ -38,10 +38,12 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .speech: "Spoken event behavior"
         case .voice: "Text to speech voice settings"
         case .updates: "Update check settings"
-        case .diagnostics: "Runtime health and logs"
+        case .diagnostics: "Runtime health and safe recovery"
         case .advanced: "Expert configuration settings"
         }
     }
+
+    var subtitle: String { accessibilityDescription }
 }
 
 enum SettingsApplyImpact: Equatable {

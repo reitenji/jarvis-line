@@ -36,7 +36,21 @@ python3 -m pytest -q
 python3 scripts/check_version_consistency.py
 python3 -m build --wheel --outdir build/clean-dist
 python3 scripts/verify_clean_install.py build/clean-dist
+PYTHONPATH=src python3 scripts/soak_runtime.py --mode quick --seed 1 --json
 ```
+
+Quick soak is the pull-request gate for deterministic multi-session queue,
+expiry, recovery, locking, trace, privacy, and lifecycle invariants. Changes to
+the watcher, queue, worker, diagnostics, or recovery paths should also run the
+scheduled workload locally when practical:
+
+```bash
+PYTHONPATH=src python3 scripts/soak_runtime.py --mode extended --seed 1 --output soak-report.json
+```
+
+Both modes use a temporary isolated runtime and fake speech. They do not read
+the active user home, touch the live queue or processes, play audio, or make
+network requests. The JSON report contains aggregate evidence only.
 
 On macOS, changes that affect the native manager app also require:
 

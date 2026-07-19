@@ -1,68 +1,77 @@
-import Foundation
 import Testing
 @testable import JarvisLine
 
 struct RuntimeDiagnosticsTests {
-    @Test func traceEventsDecodeWithoutPrivateContent() throws {
-        let data = #"""
-        [
-          {
-            "ts_ms": 1000,
-            "event": "completed",
-            "message_id": "abc",
-            "session_id": "123456789abc",
-            "phase": "final",
-            "duration_ms": 2400
-          }
-        ]
-        """#.data(using: .utf8)!
-
-        let events = try JSONDecoder().decode([RuntimeTraceEvent].self, from: data)
-
-        #expect(events.first?.event == "completed")
-        #expect(events.first?.messageID == "abc")
-        #expect(events.first?.spokenText == nil)
+    @Test func healthPresentationUsesSemanticCopy() {
+        #expect(ReliabilityPresentation.healthTitle(.healthy) == "All systems ready")
+        #expect(ReliabilityPresentation.healthTitle(.degraded) == "Needs attention")
+        #expect(ReliabilityPresentation.healthTitle(.actionRequired) == "Action required")
+        #expect(ReliabilityPresentation.healthIcon(.healthy) == "checkmark.circle.fill")
+        #expect(ReliabilityPresentation.healthIcon(.degraded) == "exclamationmark.circle.fill")
+        #expect(ReliabilityPresentation.healthIcon(.actionRequired) == "exclamationmark.triangle.fill")
     }
 
-    @Test func diagnosticsSummaryHighlightsMemoryExit() {
-        let event = RuntimeTraceEvent(
-            timestampMS: 1000,
-            event: "worker_rss_exit",
-            messageID: nil,
-            sessionID: nil,
-            phase: nil,
-            queueDelayMS: nil,
-            durationMS: nil,
-            rssMB: 700,
-            limitMB: 512,
+    @Test func reliabilityPresentationExplainsSkippedDelivery() {
+        let delivery = ReliabilityDelivery(
+            messageID: "m1",
+            sessionID: "abcdef012345",
+            phase: "final",
+            state: "skipped",
             backend: nil,
-            reason: nil
+            reason: "quiet_hours",
+            receivedAtMS: 1,
+            updatedAtMS: 2,
+            queueDelayMS: nil,
+            durationMS: nil
         )
 
-        let summary = RuntimeDiagnosticsSummary(events: [event])
-
-        #expect(summary.headline == "Worker released memory")
-        #expect(summary.detail == "700 MB used · 512 MB limit")
+        #expect(ReliabilityPresentation.deliveryTitle(delivery) == "Final update")
+        #expect(ReliabilityPresentation.deliveryDetail(delivery) == "Skipped · Quiet hours")
+        #expect(ReliabilityPresentation.deliveryIcon(delivery) == "speaker.slash.fill")
     }
 
-    @Test func diagnosticsSummaryReportsLatestQueueDelay() {
-        let event = RuntimeTraceEvent(
-            timestampMS: 1000,
-            event: "speaking",
-            messageID: "abc",
-            sessionID: "123456789abc",
+    @Test func reliabilityPresentationFormatsCompletedTiming() {
+        let delivery = ReliabilityDelivery(
+            messageID: "m1",
+            sessionID: "",
             phase: "commentary",
-            queueDelayMS: 1800,
-            durationMS: nil,
-            rssMB: nil,
-            limitMB: nil,
+            state: "completed",
             backend: "kokoro",
-            reason: nil
+            reason: nil,
+            receivedAtMS: 1,
+            updatedAtMS: 2,
+            queueDelayMS: 1_850,
+            durationMS: 2_400
         )
 
-        let summary = RuntimeDiagnosticsSummary(events: [event])
+        #expect(ReliabilityPresentation.deliveryTitle(delivery) == "Progress update")
+        #expect(
+            ReliabilityPresentation.deliveryDetail(delivery)
+                == "Completed · Kokoro · 1.9 s queue · 2.4 s speech"
+        )
+    }
 
-        #expect(summary.headline == "Speech in progress")
-        #expect(summary.queueDelayText == "1.8 s")
+    @Test func recoveryLabelsMatchControlledActions() {
+        #expect(ReliabilityAction.restartRuntime.label == "Restart Runtime")
+        #expect(ReliabilityAction.pruneExpired.label == "Remove Expired")
+        #expect(ReliabilityAction.testTTS.label == "Test Voice")
+        #expect(ReliabilityPresentation.actionIcon(.restartRuntime) == "arrow.clockwise")
+        #expect(ReliabilityPresentation.actionIcon(.pruneExpired) == "text.badge.minus")
+        #expect(ReliabilityPresentation.actionIcon(.testTTS) == "speaker.wave.2.fill")
+    }
+
+    @Test func queueSummarySeparatesActiveAndRejectedWork() {
+        let queue = ReliabilityQueue(
+            total: 5,
+            active: 2,
+            expired: 2,
+            stale: 1,
+            oldestAgeMS: 91_200,
+            phaseCounts: ["final": 2],
+            maxSize: 8
+        )
+
+        #expect(ReliabilityPresentation.queueValue(queue) == "2 active · 3 rejected")
+        #expect(ReliabilityPresentation.ageText(queue.oldestAgeMS) == "1m 31s")
     }
 }

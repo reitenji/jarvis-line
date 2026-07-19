@@ -55,7 +55,7 @@ For installation choices and the first real session, follow
 - One audio worker across sessions, with stale-job and overlap protection.
 - Kokoro, system voices, macOS `say`, and custom TTS command support.
 - Codex integration plus generated instructions for Claude, Gemini, and other agents.
-- A Preview macOS manager for setup, status, voice controls, updates, and diagnostics.
+- A Preview macOS manager with guided setup, voice controls, updates, and a privacy-safe Reliability Center.
 
 ```text
 Agent event -> Jarvis Line hook -> session-aware queue -> selected TTS
