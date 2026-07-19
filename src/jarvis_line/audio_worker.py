@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import weakref
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -38,6 +40,8 @@ WORKER_HEARTBEAT_SECONDS = 5.0
 IDLE_SLEEP_SECONDS = 0.2
 LOG_ROTATE_BYTES = 2 * 1024 * 1024
 _SPEAKER = None
+_PROCESS_LOCKS_GUARD = threading.Lock()
+_PROCESS_LOCKS = weakref.WeakValueDictionary()
 
 
 try:
@@ -73,6 +77,16 @@ def _release_windows_file_lock(lock_file) -> None:
     msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
 
 
+def _process_lock_for(path: Path):
+    key = path.expanduser().resolve()
+    with _PROCESS_LOCKS_GUARD:
+        lock = _PROCESS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PROCESS_LOCKS[key] = lock
+        return lock
+
+
 def rotate_log_if_needed() -> None:
     try:
         if not LOG_PATH.exists() or LOG_PATH.stat().st_size < LOG_ROTATE_BYTES:
@@ -96,6 +110,13 @@ def append_log(message: str) -> None:
 
 @contextmanager
 def file_lock(path: Path):
+    with _process_lock_for(path):
+        with _file_lock_without_process_guard(path):
+            yield
+
+
+@contextmanager
+def _file_lock_without_process_guard(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     if fcntl is None and msvcrt is not None:
         with path.open("a+b") as lock_file:
@@ -135,6 +156,19 @@ def file_lock(path: Path):
 @contextmanager
 def try_file_lock(path: Path):
     """Acquire a runtime lock once and report contention without waiting."""
+    process_lock = _process_lock_for(path)
+    if not process_lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        with _try_file_lock_without_process_guard(path) as acquired:
+            yield acquired
+    finally:
+        process_lock.release()
+
+
+@contextmanager
+def _try_file_lock_without_process_guard(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     if fcntl is None and msvcrt is not None:
         with path.open("a+b") as lock_file:
