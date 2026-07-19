@@ -535,6 +535,43 @@ def test_prune_expired_recovery_preserves_active_jobs(tmp_path, monkeypatch, cap
     assert queue["last_session_key"] == "session-b"
 
 
+def test_prune_expired_recovery_preserves_unknown_queue_entries(
+    tmp_path, monkeypatch, capsys
+):
+    now_ms = 1_000_000
+    queue_path = tmp_path / "queue.json"
+    monkeypatch.setattr(cli, "QUEUE_PATH", queue_path)
+    monkeypatch.setattr(cli, "RUNTIME_LOCK_PATH", tmp_path / "runtime.lock")
+    monkeypatch.setattr(cli.time, "time", lambda: now_ms / 1000)
+    monkeypatch.setattr(cli, "reliability_snapshot", reliability_result_snapshot)
+    cli.save_json(
+        queue_path,
+        {
+            "jobs": [
+                "unexpected-entry",
+                {
+                    "message_id": "expired",
+                    "enqueued_ts_ms": now_ms - 1,
+                    "expires_ts_ms": now_ms,
+                },
+                {"message_id": "active", "enqueued_ts_ms": now_ms},
+            ]
+        },
+    )
+
+    rc = cli.diagnostics_recover_command(
+        argparse.Namespace(action="prune-expired", json_output=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["changed"] is True
+    assert cli.load_json(queue_path, {})["jobs"] == [
+        "unexpected-entry",
+        {"message_id": "active", "enqueued_ts_ms": now_ms},
+    ]
+
+
 def test_prune_expired_recovery_reports_busy_without_mutation(tmp_path, monkeypatch, capsys):
     queue_path = tmp_path / "queue.json"
     cli.save_json(queue_path, {"jobs": [{"message_id": "active", "enqueued_ts_ms": 10}]})
@@ -578,6 +615,31 @@ def test_restart_recovery_delegates_to_existing_runtime_path(monkeypatch, capsys
     assert payload["ok"] is True
     assert payload["changed"] is True
     assert payload["summary"] == "Restarted the voice runtime."
+
+
+def test_successful_recovery_keeps_action_result_when_snapshot_refresh_fails(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "runtime_restart", lambda _args: 0)
+
+    def fail_snapshot():
+        raise OSError("unavailable")
+
+    monkeypatch.setattr(cli, "reliability_snapshot", fail_snapshot)
+
+    rc = cli.diagnostics_recover_command(
+        argparse.Namespace(action="restart-runtime", json_output=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert payload["summary"] == (
+        "Restarted the voice runtime. Runtime status refresh is unavailable."
+    )
+    assert payload["snapshot"]["version"] == 1
+    assert payload["snapshot"]["generated_at_ms"] == 0
 
 
 def test_tts_recovery_uses_fixed_private_test_sentence(monkeypatch, capsys):

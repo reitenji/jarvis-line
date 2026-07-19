@@ -1713,13 +1713,49 @@ def _recovery_result(
     changed: bool,
     summary: str,
 ) -> dict[str, Any]:
+    try:
+        snapshot = reliability_snapshot()
+        if not isinstance(snapshot, dict) or snapshot.get("version") != reliability.SNAPSHOT_VERSION:
+            raise ValueError("unsupported snapshot")
+    except Exception:
+        snapshot = _unavailable_reliability_snapshot()
+        summary = f"{summary} Runtime status refresh is unavailable."
     return {
         "version": reliability.SNAPSHOT_VERSION,
         "ok": ok,
         "action": action,
         "changed": changed,
         "summary": summary,
-        "snapshot": reliability_snapshot(),
+        "snapshot": snapshot,
+    }
+
+
+def _unavailable_reliability_snapshot() -> dict[str, Any]:
+    return {
+        "version": reliability.SNAPSHOT_VERSION,
+        "generated_at_ms": 0,
+        "health": "degraded",
+        "runtime": {
+            "speech_enabled": False,
+            "watcher": {"state": "unknown", "pid": None},
+            "worker": {"state": "unknown", "pid": None, "rss_mb": None},
+        },
+        "queue": {
+            "total": 0,
+            "active": 0,
+            "expired": 0,
+            "stale": 0,
+            "oldest_age_ms": 0,
+            "phase_counts": {},
+            "max_size": 0,
+        },
+        "tts": {
+            "backend": "unknown",
+            "ready": False,
+            "reason": "snapshot_failed",
+        },
+        "deliveries": [],
+        "recommendations": [],
     }
 
 
@@ -1774,22 +1810,12 @@ def diagnostics_recover_command(args) -> int:
         changed = False
         summary = "Recovery failed without changing unrelated state."
 
-    try:
-        result = _recovery_result(
-            action=action,
-            ok=ok,
-            changed=changed,
-            summary=summary,
-        )
-    except Exception:
-        result = {
-            "version": reliability.SNAPSHOT_VERSION,
-            "ok": False,
-            "action": action,
-            "changed": changed,
-            "summary": "Recovery finished, but the runtime snapshot could not be refreshed.",
-        }
-        ok = False
+    result = _recovery_result(
+        action=action,
+        ok=ok,
+        changed=changed,
+        summary=summary,
+    )
 
     if getattr(args, "json_output", False):
         print(json.dumps(result, ensure_ascii=False, indent=2))

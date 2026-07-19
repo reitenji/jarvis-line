@@ -35,6 +35,8 @@ jobs:
       - name: Quick runtime soak
         if: matrix.python-version == '3.12'
         run: python scripts/soak_runtime.py --mode quick --seed 1 --json
+        env:
+          PYTHONPATH: src
       - name: Build wheel for isolated install check
         if: matrix.python-version == '3.12'
         run: |

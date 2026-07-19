@@ -142,6 +142,19 @@ struct JarvisLineModelTests {
         #expect(model.errorMessage == nil)
     }
 
+    @Test func recoveryWithoutFreshSnapshotPreservesPriorReliabilityState() async {
+        let runner = ReliabilityModelRunner(recoveryUsesUnavailableSnapshot: true)
+        let model = JarvisLineModel(cli: runner)
+        await model.refreshReliability()
+        let previous = model.reliabilitySnapshot
+
+        await model.runReliabilityAction(.pruneExpired)
+
+        #expect(model.reliabilitySnapshot == previous)
+        #expect(model.reliabilityResultText.contains("refresh is unavailable"))
+        #expect(model.errorMessage == nil)
+    }
+
     @Test func malformedReliabilityResponseLeavesPriorStateAndShowsError() async {
         let runner = ReliabilityModelRunner(snapshotOutput: #"{"version":1}"#)
         let model = JarvisLineModel(cli: runner)
@@ -433,10 +446,15 @@ private actor UpdateAvailableRunner: JarvisLineCommandRunning {
 
 private actor ReliabilityModelRunner: JarvisLineCommandRunning {
     private let snapshotOutput: String
+    private let recoveryUsesUnavailableSnapshot: Bool
     private(set) var calls: [[String]] = []
 
-    init(snapshotOutput: String = reliabilityModelSnapshotJSON()) {
+    init(
+        snapshotOutput: String = reliabilityModelSnapshotJSON(),
+        recoveryUsesUnavailableSnapshot: Bool = false
+    ) {
         self.snapshotOutput = snapshotOutput
+        self.recoveryUsesUnavailableSnapshot = recoveryUsesUnavailableSnapshot
     }
 
     func run(_ args: [String], stdin: Data?) async throws -> String {
@@ -445,19 +463,52 @@ private actor ReliabilityModelRunner: JarvisLineCommandRunning {
             return snapshotOutput
         }
         if args == ["diagnostics", "recover", "prune-expired", "--json"] {
+            let recoverySnapshot = recoveryUsesUnavailableSnapshot
+                ? reliabilityUnavailableSnapshotJSON()
+                : snapshotOutput
+            let summary = recoveryUsesUnavailableSnapshot
+                ? "Removed 1 expired or stale queue entry. Runtime status refresh is unavailable."
+                : "Removed 1 expired or stale queue entry."
             return """
             {
               "version": 1,
               "ok": true,
               "action": "prune-expired",
               "changed": true,
-              "summary": "Removed 1 expired or stale queue entry.",
-              "snapshot": \(snapshotOutput)
+              "summary": "\(summary)",
+              "snapshot": \(recoverySnapshot)
             }
             """
         }
         return snapshotOutput
     }
+}
+
+private func reliabilityUnavailableSnapshotJSON() -> String {
+    """
+    {
+      "version": 1,
+      "generated_at_ms": 0,
+      "health": "degraded",
+      "runtime": {
+        "speech_enabled": false,
+        "watcher": {"state": "unknown", "pid": null},
+        "worker": {"state": "unknown", "pid": null, "rss_mb": null}
+      },
+      "queue": {
+        "total": 0,
+        "active": 0,
+        "expired": 0,
+        "stale": 0,
+        "oldest_age_ms": 0,
+        "phase_counts": {},
+        "max_size": 0
+      },
+      "tts": {"backend": "unknown", "ready": false, "reason": "snapshot_failed"},
+      "deliveries": [],
+      "recommendations": []
+    }
+    """
 }
 
 private func reliabilityModelSnapshotJSON() -> String {

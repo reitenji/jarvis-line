@@ -298,7 +298,9 @@ final class JarvisLineModel: ObservableObject {
     func runReliabilityAction(_ action: ReliabilityAction) async {
         await run(label: action.label) {
             let result = try await loadReliabilityRecovery(action)
-            reliabilitySnapshot = result.snapshot
+            if result.snapshot.isLoaded {
+                reliabilitySnapshot = result.snapshot
+            }
             reliabilityResultText = result.summary
             guard result.ok else {
                 throw ReliabilityModelError.actionFailed(result.summary)

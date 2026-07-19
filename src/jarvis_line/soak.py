@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import random
+import secrets
 import shutil
 import tempfile
 import threading
 import time
 from collections import Counter
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -52,6 +53,8 @@ _MODES = {
     },
 }
 _RUN_LOCK = threading.Lock()
+_OWNED_ROOTS_LOCK = threading.Lock()
+_OWNED_ROOTS: dict[Path, str] = {}
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,7 @@ class SoakConfig:
     max_queue_size: int
     root: Path
     cleanup_root: bool
+    cleanup_token: str = field(repr=False, compare=False)
     lock_threads: int
     lock_iterations: int
     trace_threads: int
@@ -80,11 +84,15 @@ class SoakConfig:
             raise ValueError(f"Unsupported soak mode: {mode}")
         values = _MODES[normalized]
         cleanup_root = root is None
+        cleanup_token = secrets.token_hex(16) if cleanup_root else ""
         resolved_root = (
             Path(tempfile.mkdtemp(prefix="jarvis-line-soak-"))
             if cleanup_root
             else Path(root).expanduser().resolve()
         )
+        if cleanup_root:
+            with _OWNED_ROOTS_LOCK:
+                _OWNED_ROOTS[resolved_root.resolve()] = cleanup_token
         return cls(
             mode=normalized,
             seed=int(seed),
@@ -93,6 +101,7 @@ class SoakConfig:
             max_queue_size=8,
             root=resolved_root,
             cleanup_root=cleanup_root,
+            cleanup_token=cleanup_token,
             lock_threads=values["lock_threads"],
             lock_iterations=values["lock_iterations"],
             trace_threads=values["trace_threads"],
@@ -801,5 +810,14 @@ def run_soak(config: SoakConfig) -> dict[str, Any]:
             report["ok"] = False
         return report
     finally:
-        if config.cleanup_root:
+        root = config.root.resolve()
+        with _OWNED_ROOTS_LOCK:
+            owns_root = (
+                config.cleanup_root
+                and bool(config.cleanup_token)
+                and _OWNED_ROOTS.get(root) == config.cleanup_token
+            )
+            if owns_root:
+                del _OWNED_ROOTS[root]
+        if owns_root:
             shutil.rmtree(config.root, ignore_errors=True)

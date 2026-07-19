@@ -72,13 +72,13 @@ def prune_expired_jobs(
     *,
     now_ms: int,
     stale_after_ms: int = DEFAULT_STALE_AFTER_MS,
-) -> tuple[list[dict[str, Any]], int]:
-    active: list[dict[str, Any]] = []
+) -> tuple[list[Any], int]:
+    active: list[Any] = []
     removed = 0
     stale_before_ms = now_ms - max(0, int(stale_after_ms))
     for raw_job in jobs:
         if not isinstance(raw_job, dict):
-            removed += 1
+            active.append(raw_job)
             continue
         enqueued_ts_ms = _integer(raw_job.get("enqueued_ts_ms"))
         expires_ts_ms = _integer(raw_job.get("expires_ts_ms"))

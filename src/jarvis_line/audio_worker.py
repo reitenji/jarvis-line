@@ -45,6 +45,33 @@ try:
 except Exception:
     fcntl = None
 
+try:
+    import msvcrt
+except Exception:
+    msvcrt = None
+
+
+def _prepare_windows_lock_file(lock_file) -> None:
+    lock_file.seek(0, os.SEEK_END)
+    if lock_file.tell() == 0:
+        lock_file.write(b"\0")
+        lock_file.flush()
+    lock_file.seek(0)
+
+
+def _try_windows_file_lock(lock_file) -> bool:
+    _prepare_windows_lock_file(lock_file)
+    try:
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        return False
+    return True
+
+
+def _release_windows_file_lock(lock_file) -> None:
+    lock_file.seek(0)
+    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+
 
 def rotate_log_if_needed() -> None:
     try:
@@ -70,6 +97,15 @@ def append_log(message: str) -> None:
 @contextmanager
 def file_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is None and msvcrt is not None:
+        with path.open("a+b") as lock_file:
+            while not _try_windows_file_lock(lock_file):
+                time.sleep(0.05)
+            try:
+                yield
+            finally:
+                _release_windows_file_lock(lock_file)
+        return
     if fcntl is None:
         lock_dir = path.with_name(path.name + ".d")
         while True:
@@ -100,6 +136,16 @@ def file_lock(path: Path):
 def try_file_lock(path: Path):
     """Acquire a runtime lock once and report contention without waiting."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is None and msvcrt is not None:
+        with path.open("a+b") as lock_file:
+            if not _try_windows_file_lock(lock_file):
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                _release_windows_file_lock(lock_file)
+        return
     if fcntl is None:
         lock_dir = path.with_name(path.name + ".d")
         try:

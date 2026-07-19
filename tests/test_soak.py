@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -158,3 +159,19 @@ def test_default_soak_root_is_removed_after_run():
 
     assert report["ok"] is True
     assert not root.exists()
+
+
+def test_manual_config_cannot_claim_cleanup_ownership(tmp_path):
+    root = tmp_path / "manual"
+    root.mkdir()
+    sentinel = root / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    config = replace(
+        soak.SoakConfig.for_mode("quick", seed=19, root=root),
+        cleanup_root=True,
+    )
+
+    report = soak.run_soak(config)
+
+    assert report["ok"] is True
+    assert sentinel.read_text(encoding="utf-8") == "keep"

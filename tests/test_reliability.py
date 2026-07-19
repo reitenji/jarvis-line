@@ -230,6 +230,23 @@ def test_prune_expired_jobs_preserves_active_jobs():
     assert removed == 2
 
 
+def test_prune_expired_jobs_preserves_unknown_queue_entries():
+    active_job = {"message_id": "active", "enqueued_ts_ms": 199_500}
+
+    active, removed = reliability.prune_expired_jobs(
+        [
+            "unexpected-entry",
+            {"message_id": "expired", "enqueued_ts_ms": 199_000, "expires_ts_ms": 200_000},
+            active_job,
+        ],
+        now_ms=200_000,
+        stale_after_ms=90_000,
+    )
+
+    assert active == ["unexpected-entry", active_job]
+    assert removed == 1
+
+
 def test_correlate_deliveries_keeps_only_the_requested_limit():
     events = []
     for index in range(5):

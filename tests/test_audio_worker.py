@@ -46,6 +46,7 @@ def test_save_json_unlocked_uses_recognizable_temporary_name(tmp_path, monkeypat
 def test_try_file_lock_acquires_and_releases_fallback_lock(tmp_path, monkeypatch):
     lock_path = tmp_path / "runtime.lock"
     monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", None)
 
     with audio_worker.try_file_lock(lock_path) as acquired:
         assert acquired is True
@@ -58,11 +59,58 @@ def test_try_file_lock_returns_immediately_when_fallback_lock_is_owned(tmp_path,
     lock_path = tmp_path / "runtime.lock"
     lock_path.with_name("runtime.lock.d").mkdir()
     monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", None)
 
     with audio_worker.try_file_lock(lock_path) as acquired:
         assert acquired is False
 
     assert lock_path.with_name("runtime.lock.d").is_dir()
+
+
+def test_try_file_lock_uses_windows_kernel_lock_without_directory(
+    tmp_path, monkeypatch
+):
+    class FakeMSVCRT:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self):
+            self.calls = []
+
+        def locking(self, descriptor, mode, size):
+            self.calls.append((descriptor, mode, size))
+
+    lock_path = tmp_path / "runtime.lock"
+    windows_lock = FakeMSVCRT()
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", windows_lock)
+
+    with audio_worker.try_file_lock(lock_path) as acquired:
+        assert acquired is True
+
+    assert [call[1:] for call in windows_lock.calls] == [(1, 1), (2, 1)]
+    assert lock_path.is_file()
+    assert not lock_path.with_name("runtime.lock.d").exists()
+
+
+def test_try_file_lock_reports_busy_windows_kernel_lock(tmp_path, monkeypatch):
+    class BusyMSVCRT:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        @staticmethod
+        def locking(_descriptor, mode, _size):
+            if mode == BusyMSVCRT.LK_NBLCK:
+                raise OSError("busy")
+
+    lock_path = tmp_path / "runtime.lock"
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", BusyMSVCRT())
+
+    with audio_worker.try_file_lock(lock_path) as acquired:
+        assert acquired is False
+
+    assert not lock_path.with_name("runtime.lock.d").exists()
 
 
 def test_dequeue_drops_stale_jobs(tmp_path, monkeypatch):

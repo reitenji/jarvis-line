@@ -27,6 +27,8 @@ jobs:
           python-version: "3.12"
       - name: Extended runtime soak
         run: python scripts/soak_runtime.py --mode extended --seed 1 --output soak-report.json
+        env:
+          PYTHONPATH: src
       - name: Upload privacy-safe soak report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
