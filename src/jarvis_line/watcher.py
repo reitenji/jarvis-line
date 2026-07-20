@@ -1099,7 +1099,7 @@ def speak_latest_final_from_cache(session_key: str | None = None, min_updated_ts
 def extract_jarvis_line(text: str) -> str | None:
     matches = []
     for prefix in line_prefixes():
-        pattern = re.compile(rf"(?im)(?:^|(?<=\s)){re.escape(prefix)}\s*(.+?)\s*$")
+        pattern = re.compile(rf"(?im)^{re.escape(prefix)}\s*(.+?)\s*$")
         matches.extend(pattern.findall(text or ""))
     if not matches:
         return None
