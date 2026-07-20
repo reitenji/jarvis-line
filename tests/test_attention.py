@@ -43,6 +43,17 @@ def test_permission_formatter_keeps_only_safe_url_hostname():
 
 
 @pytest.mark.parametrize(
+    "language",
+    ["English", "Turkish", "French", "Italian", "Japanese", "Chinese"],
+)
+def test_permission_formatter_handles_network_commands_without_a_url(language):
+    result = format_permission_request("Bash", {"command": "curl --help"}, language)
+
+    assert result.category == "network"
+    assert result.line
+
+
+@pytest.mark.parametrize(
     ("tool_name", "expected_category", "expected_text"),
     [
         ("apply_patch", "file_modify", "modify project files"),

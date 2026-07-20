@@ -38,6 +38,7 @@ class _PermissionIntent:
 
 _ACTIONS = {
     "English": {
+        "network": "connect to the network",
         "dependency_install": "install project dependencies",
         "git_push": "push changes to the remote repository",
         "git_pull": "pull changes from the remote repository",
@@ -50,6 +51,7 @@ _ACTIONS = {
         "github_pull_request": "create a GitHub pull request",
     },
     "Turkish": {
+        "network": "ağa bağlanmak",
         "dependency_install": "proje bağımlılıklarını yüklemek",
         "git_push": "değişiklikleri uzak depoya göndermek",
         "git_pull": "değişiklikleri uzak depodan almak",
@@ -62,6 +64,7 @@ _ACTIONS = {
         "github_pull_request": "GitHub pull request oluşturmak",
     },
     "French": {
+        "network": "se connecter au réseau",
         "dependency_install": "installer les dépendances du projet",
         "git_push": "envoyer les modifications vers le dépôt distant",
         "git_pull": "récupérer les modifications du dépôt distant",
@@ -74,6 +77,7 @@ _ACTIONS = {
         "github_pull_request": "créer une pull request GitHub",
     },
     "Italian": {
+        "network": "connettersi alla rete",
         "dependency_install": "installare le dipendenze del progetto",
         "git_push": "inviare le modifiche al repository remoto",
         "git_pull": "ricevere le modifiche dal repository remoto",
@@ -86,6 +90,7 @@ _ACTIONS = {
         "github_pull_request": "creare una pull request GitHub",
     },
     "Japanese": {
+        "network": "ネットワークに接続する",
         "dependency_install": "プロジェクトの依存関係をインストールする",
         "git_push": "変更をリモートリポジトリへ送信する",
         "git_pull": "リモートリポジトリから変更を取得する",
@@ -98,6 +103,7 @@ _ACTIONS = {
         "github_pull_request": "GitHubプルリクエストを作成する",
     },
     "Chinese": {
+        "network": "连接网络",
         "dependency_install": "安装项目依赖",
         "git_push": "将更改推送到远程仓库",
         "git_pull": "从远程仓库拉取更改",
