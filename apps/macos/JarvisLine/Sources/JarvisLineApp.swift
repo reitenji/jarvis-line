@@ -1259,10 +1259,10 @@ struct DoctorStatus {
     static func parse(_ output: String) -> DoctorStatus {
         for line in output.split(separator: "\n") {
             let text = String(line)
-            if text.contains("[OK] Codex hooks.json") {
+            if text.contains("[OK] Jarvis Line Codex hook") {
                 return DoctorStatus(codexHookInstalled: true)
             }
-            if text.contains("Codex hooks.json") && !text.contains("[OK]") {
+            if text.contains("Jarvis Line Codex hook") && !text.contains("[OK]") {
                 return DoctorStatus(codexHookInstalled: false)
             }
         }

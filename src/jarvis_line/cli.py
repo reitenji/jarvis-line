@@ -993,6 +993,31 @@ def is_jarvis_hook_command(command: str) -> bool:
     ))
 
 
+def has_codex_session_start_hook(hooks) -> bool:
+    """Return whether Codex has a Jarvis Line SessionStart watcher hook."""
+    if not isinstance(hooks, dict):
+        return False
+    events = hooks.get("hooks")
+    if not isinstance(events, dict):
+        return False
+    session_hooks = events.get("SessionStart")
+    if not isinstance(session_hooks, list):
+        return False
+    for entry in session_hooks:
+        if not isinstance(entry, dict):
+            continue
+        commands = entry.get("hooks")
+        if not isinstance(commands, list):
+            continue
+        for hook in commands:
+            if not isinstance(hook, dict):
+                continue
+            command = str(hook.get("command", ""))
+            if "jarvis_line_watcher.py" in command or "jarvis_line.watcher" in command:
+                return True
+    return False
+
+
 def launch_runtime(args, selected: str) -> int:
     if not WATCHER_PATH.exists() or not WORKER_PATH.exists():
         print("Jarvis Line hook scripts are missing.")
@@ -1481,6 +1506,7 @@ def tts_test(args, quiet: bool = False) -> int:
 
 def doctor(_args) -> int:
     cfg = load_effective_config({})
+    hooks = load_json(HOOKS_JSON, {})
     state = load_json(STATE_PATH, {})
     queue = load_json(QUEUE_PATH, {"jobs": []})
     watcher = state.get("__watcher__", {}) if isinstance(state, dict) else {}
@@ -1501,6 +1527,7 @@ def doctor(_args) -> int:
         print(json.dumps({
             "config": CONFIG_PATH.exists(),
             "hooks_json": HOOKS_JSON.exists(),
+            "codex_hook_installed": has_codex_session_start_hook(hooks),
             "watcher_script": WATCHER_PATH.exists(),
             "audio_worker_script": WORKER_PATH.exists(),
             "kokoro": {"ok": ready, "detail": reason},
@@ -1524,6 +1551,7 @@ def doctor(_args) -> int:
     print("Jarvis Line doctor")
     print_check(CONFIG_PATH.exists(), "config", str(CONFIG_PATH))
     print_check(HOOKS_JSON.exists(), "Codex hooks.json", str(HOOKS_JSON))
+    print_check(has_codex_session_start_hook(hooks), "Jarvis Line Codex hook")
     print_check(WATCHER_PATH.exists(), "watcher script", str(WATCHER_PATH))
     print_check(WORKER_PATH.exists(), "audio worker script", str(WORKER_PATH))
     print_check(ready, "kokoro", reason)

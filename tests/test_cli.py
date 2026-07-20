@@ -786,7 +786,21 @@ def test_doctor_allows_idle_audio_worker_when_queue_empty(tmp_path, monkeypatch,
     out = capsys.readouterr().out
 
     assert "[OK] audio worker process - idle/stopped pid=202 queue_jobs=0" in out
+    assert "[WARN] Jarvis Line Codex hook" in out
     assert "Jarvis Line is healthy." in out
+
+
+def test_has_codex_session_start_hook_ignores_unrelated_hooks():
+    hooks = {
+        "hooks": {
+            "SessionStart": [{"hooks": [{"command": "echo unrelated"}]}],
+            "PermissionRequest": [{"hooks": [{"command": "python -m jarvis_line.codex_hook"}]}],
+        }
+    }
+
+    assert not cli.has_codex_session_start_hook(hooks)
+    hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"] = "python -m jarvis_line.watcher --launch"
+    assert cli.has_codex_session_start_hook(hooks)
 
 
 def test_pid_alive_rejects_zombie_process(monkeypatch):
