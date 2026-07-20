@@ -426,7 +426,8 @@ def play_final_chime(_cfg: dict[str, Any]) -> None:
         ) as output:
             path = Path(output.name)
             output.write(completion_chime.wav_bytes())
-        ks.spawn_player(path, 1.0)
+        if not ks.spawn_player(path, 1.0):
+            raise RuntimeError("final chime playback failed")
     finally:
         if path is not None:
             path.unlink(missing_ok=True)

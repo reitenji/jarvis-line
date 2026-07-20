@@ -2,6 +2,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from jarvis_line import audio_worker
 from jarvis_line.queue_policy import attention_cancellation_key
 
@@ -480,12 +482,28 @@ def test_play_final_chime_removes_temporary_wave(tmp_path, monkeypatch):
     monkeypatch.setattr(
         audio_worker.ks,
         "spawn_player",
-        lambda path, volume: played.append((path.read_bytes(), volume)),
+        lambda path, volume: played.append((path.read_bytes(), volume)) or True,
     )
 
     audio_worker.play_final_chime({})
 
     assert played == [(b"RIFF-test", 1.0)]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_play_final_chime_reports_player_failure_and_removes_wave(tmp_path, monkeypatch):
+    real_named_temporary_file = audio_worker.tempfile.NamedTemporaryFile
+
+    def temporary_file(*args, **kwargs):
+        kwargs["dir"] = tmp_path
+        return real_named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(audio_worker.tempfile, "NamedTemporaryFile", temporary_file)
+    monkeypatch.setattr(audio_worker.ks, "spawn_player", lambda _path, _volume: False)
+
+    with pytest.raises(RuntimeError, match="final chime playback failed"):
+        audio_worker.play_final_chime({})
+
     assert list(tmp_path.iterdir()) == []
 
 
