@@ -1229,6 +1229,8 @@ def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str
     try:
         if CONFIG_PATH.exists() and not backup.exists():
             backup.write_bytes(CONFIG_PATH.read_bytes())
+            if os.name != "nt":
+                backup.chmod(0o600)
             steps.append({"name": "config_backup", "ok": True, "path": str(backup)})
         save_json(CONFIG_PATH, config)
         steps.append({"name": "config_write", "ok": True})

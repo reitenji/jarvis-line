@@ -1,6 +1,8 @@
 import argparse
 import io
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 
@@ -523,6 +525,24 @@ def test_apply_creates_config_backup_once_before_atomic_write(monkeypatch, tmp_p
 
     assert second["ok"] is True
     assert json.loads(backup.read_text(encoding="utf-8")) == {"preserve": True}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are not supported on Windows")
+def test_apply_creates_private_config_backup(monkeypatch, tmp_path):
+    patch_setup_paths(monkeypatch, tmp_path)
+    cli.CONFIG_PATH.write_text('{"command_env": {"TOKEN": "secret"}}\n', encoding="utf-8")
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "setup_doctor_json", healthy_doctor)
+
+    result = cli.apply_setup_plan(
+        kokoro_codex_plan(install_kokoro=False, install_codex_hook=False, start_runtime=False),
+        json_mode=True,
+    )
+
+    backup = tmp_path / "jarvis_line_config.json.setup.bak"
+    assert result["ok"] is True
+    assert stat.S_IMODE(backup.stat().st_mode) == 0o600
 
 
 def test_setup_apply_keeps_json_stdout_clean_when_helpers_print(monkeypatch, tmp_path, capsys):
