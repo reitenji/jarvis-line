@@ -206,6 +206,18 @@ struct SettingsWindowView: View {
                         .disabled(!model.config.speechEnabled || model.config.speakMode == "off")
                 }
 
+                SettingsRow(
+                    title: "Final chime",
+                    detail: model.config.speechEnabled && model.config.speakMode != "off"
+                        ? nil
+                        : "Requires speech"
+                ) {
+                    Toggle("Final chime", isOn: $model.config.finalChimeEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .disabled(!model.config.speechEnabled || model.config.speakMode == "off")
+                }
+
                 SettingsRow(title: "Speak mode", restartRequired: true) {
                     Picker("Speak mode", selection: $model.config.speakMode) {
                         ForEach(

@@ -24,6 +24,7 @@ struct JarvisConfigDraft: Equatable {
     var speakMode: String
     var speechEnabled: Bool
     var attentionEnabled: Bool
+    var finalChimeEnabled: Bool
     var cleanupEnabled: Bool
     var cleanupIntervalHours: Int
     var speakWithoutPrefix: Bool
@@ -180,6 +181,7 @@ struct JarvisConfigDraft: Equatable {
         speakMode: "final_only",
         speechEnabled: true,
         attentionEnabled: false,
+        finalChimeEnabled: true,
         cleanupEnabled: true,
         cleanupIntervalHours: 24,
         speakWithoutPrefix: false,
@@ -211,6 +213,7 @@ struct JarvisConfigDraft: Equatable {
         speakMode = Self.string(data["speak_mode"], defaults.speakMode)
         speechEnabled = Self.bool(data["speech_enabled"], defaults.speechEnabled)
         attentionEnabled = Self.bool(data["attention_enabled"], defaults.attentionEnabled)
+        finalChimeEnabled = Self.bool(data["final_chime_enabled"], defaults.finalChimeEnabled)
         cleanupEnabled = Self.bool(data["cleanup_enabled"], defaults.cleanupEnabled)
         cleanupIntervalHours = Self.int(data["cleanup_interval_hours"], defaults.cleanupIntervalHours)
         speakWithoutPrefix = Self.bool(data["speak_without_prefix"], defaults.speakWithoutPrefix)
@@ -246,6 +249,7 @@ struct JarvisConfigDraft: Equatable {
         speakMode: String,
         speechEnabled: Bool,
         attentionEnabled: Bool,
+        finalChimeEnabled: Bool,
         cleanupEnabled: Bool,
         cleanupIntervalHours: Int,
         speakWithoutPrefix: Bool,
@@ -274,6 +278,7 @@ struct JarvisConfigDraft: Equatable {
         self.speakMode = speakMode
         self.speechEnabled = speechEnabled
         self.attentionEnabled = attentionEnabled
+        self.finalChimeEnabled = finalChimeEnabled
         self.cleanupEnabled = cleanupEnabled
         self.cleanupIntervalHours = cleanupIntervalHours
         self.speakWithoutPrefix = speakWithoutPrefix
@@ -305,6 +310,7 @@ struct JarvisConfigDraft: Equatable {
         updated["speak_mode"] = speakMode
         updated["speech_enabled"] = speechEnabled
         updated["attention_enabled"] = attentionEnabled
+        updated["final_chime_enabled"] = finalChimeEnabled
         updated["cleanup_enabled"] = cleanupEnabled
         updated["cleanup_interval_hours"] = cleanupIntervalHours
         updated["speak_without_prefix"] = speakWithoutPrefix
@@ -467,6 +473,7 @@ struct JarvisConfigStore {
             "assistant_name": "Jarvis",
             "speech_enabled": true,
             "attention_enabled": false,
+            "final_chime_enabled": true,
             "cleanup_enabled": true,
             "cleanup_interval_hours": 24,
             "update_check_enabled": true,

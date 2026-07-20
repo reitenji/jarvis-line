@@ -33,6 +33,7 @@ DEFAULT_KOKORO_CONFIG = {
     "assistant_name": "Jarvis",
     "speech_enabled": True,
     "attention_enabled": False,
+    "final_chime_enabled": True,
     "cleanup_enabled": True,
     "cleanup_interval_hours": 24,
     "debug_content_logging": False,
@@ -104,6 +105,7 @@ COMMON_CONFIG_KEYS = {
     "assistant_name",
     "speech_enabled",
     "attention_enabled",
+    "final_chime_enabled",
     "cleanup_enabled",
     "cleanup_interval_hours",
     "debug_content_logging",
@@ -175,6 +177,7 @@ CONFIG_FIELD_HELP = {
     "assistant_name": {"type": "string", "description": "Assistant/persona name used in generated instructions."},
     "speech_enabled": {"type": "boolean", "description": "Project/user switch for all Jarvis Line speech."},
     "attention_enabled": {"type": "boolean", "description": "Speak optional permission and input-required alerts."},
+    "final_chime_enabled": {"type": "boolean", "description": "Play a short notification chime immediately before final speech."},
     "cleanup_enabled": {
         "type": "boolean",
         "description": "Run bounded cleanup automatically when maintenance is due.",

@@ -2,6 +2,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from jarvis_line import audio_worker
 from jarvis_line.queue_policy import attention_cancellation_key
 
@@ -287,7 +289,11 @@ def test_worker_skips_attention_cancelled_after_dequeue(monkeypatch):
         lambda: jobs.pop(0) if jobs else None,
     )
     monkeypatch.setattr(audio_worker, "attention_job_is_cancelled", lambda _job: True)
-    monkeypatch.setattr(audio_worker, "speak_line", spoken.append)
+    monkeypatch.setattr(
+        audio_worker,
+        "speak_line",
+        lambda line, *_args, **_kwargs: spoken.append(line),
+    )
     monkeypatch.setattr(audio_worker, "rss_limit_exceeded", lambda: (True, 700.0, 512.0))
     monkeypatch.setattr(audio_worker, "worker_idle_exit_seconds", lambda: 0.01)
     monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
@@ -367,6 +373,140 @@ def test_speak_line_rechecks_cancellation_after_kokoro_setup(tmp_path, monkeypat
     assert len(checks) == 2
 
 
+def test_speak_line_plays_chime_before_final_speech(tmp_path, monkeypatch):
+    config = {"tts": "system", "final_chime_enabled": True}
+    calls = []
+
+    monkeypatch.setattr(audio_worker, "AUDIO_LOCK_PATH", tmp_path / "audio.lock")
+    monkeypatch.setattr(audio_worker.ks, "load_config", lambda: config)
+    monkeypatch.setattr(
+        audio_worker,
+        "play_final_chime",
+        lambda _cfg: calls.append("chime"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        audio_worker,
+        "speak_with_backend",
+        lambda *_args, **_kwargs: calls.append("speech") or True,
+    )
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+
+    assert audio_worker.speak_line("Finished.", phase="final") is True
+    assert calls == ["chime", "speech"]
+
+
+def test_speak_line_omits_chime_for_non_final_phases(tmp_path, monkeypatch):
+    config = {"tts": "system", "final_chime_enabled": True}
+
+    monkeypatch.setattr(audio_worker, "AUDIO_LOCK_PATH", tmp_path / "audio.lock")
+    monkeypatch.setattr(audio_worker.ks, "load_config", lambda: config)
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+
+    for phase in ("commentary", "attention"):
+        calls = []
+        monkeypatch.setattr(
+            audio_worker,
+            "play_final_chime",
+            lambda _cfg: calls.append("chime"),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            audio_worker,
+            "speak_with_backend",
+            lambda *_args, **_kwargs: calls.append("speech") or True,
+        )
+
+        assert audio_worker.speak_line("Status.", phase=phase) is True
+        assert calls == ["speech"]
+
+
+def test_speak_line_respects_disabled_final_chime(tmp_path, monkeypatch):
+    config = {"tts": "system", "final_chime_enabled": False}
+    calls = []
+
+    monkeypatch.setattr(audio_worker, "AUDIO_LOCK_PATH", tmp_path / "audio.lock")
+    monkeypatch.setattr(audio_worker.ks, "load_config", lambda: config)
+    monkeypatch.setattr(
+        audio_worker,
+        "play_final_chime",
+        lambda _cfg: calls.append("chime"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        audio_worker,
+        "speak_with_backend",
+        lambda *_args, **_kwargs: calls.append("speech") or True,
+    )
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+
+    assert audio_worker.speak_line("Finished.", phase="final") is True
+    assert calls == ["speech"]
+
+
+def test_speak_line_continues_when_final_chime_fails(tmp_path, monkeypatch):
+    config = {"tts": "system", "final_chime_enabled": True}
+    calls = []
+    logs = []
+
+    monkeypatch.setattr(audio_worker, "AUDIO_LOCK_PATH", tmp_path / "audio.lock")
+    monkeypatch.setattr(audio_worker.ks, "load_config", lambda: config)
+
+    def fail_chime(_cfg):
+        calls.append("chime")
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(audio_worker, "play_final_chime", fail_chime, raising=False)
+    monkeypatch.setattr(
+        audio_worker,
+        "speak_with_backend",
+        lambda *_args, **_kwargs: calls.append("speech") or True,
+    )
+    monkeypatch.setattr(audio_worker, "append_log", logs.append)
+
+    assert audio_worker.speak_line("Finished.", phase="final") is True
+    assert calls == ["chime", "speech"]
+    assert any("final-chime-error reason=RuntimeError" in line for line in logs)
+
+
+def test_play_final_chime_removes_temporary_wave(tmp_path, monkeypatch):
+    real_named_temporary_file = audio_worker.tempfile.NamedTemporaryFile
+    played = []
+
+    def temporary_file(*args, **kwargs):
+        kwargs["dir"] = tmp_path
+        return real_named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(audio_worker.tempfile, "NamedTemporaryFile", temporary_file)
+    monkeypatch.setattr(audio_worker.completion_chime, "wav_bytes", lambda: b"RIFF-test")
+    monkeypatch.setattr(
+        audio_worker.ks,
+        "spawn_player",
+        lambda path, volume: played.append((path.read_bytes(), volume)) or True,
+    )
+
+    audio_worker.play_final_chime({})
+
+    assert played == [(b"RIFF-test", 1.0)]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_play_final_chime_reports_player_failure_and_removes_wave(tmp_path, monkeypatch):
+    real_named_temporary_file = audio_worker.tempfile.NamedTemporaryFile
+
+    def temporary_file(*args, **kwargs):
+        kwargs["dir"] = tmp_path
+        return real_named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(audio_worker.tempfile, "NamedTemporaryFile", temporary_file)
+    monkeypatch.setattr(audio_worker.ks, "spawn_player", lambda _path, _volume: False)
+
+    with pytest.raises(RuntimeError, match="final chime playback failed"):
+        audio_worker.play_final_chime({})
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_worker_idle_exit_seconds_uses_config():
     assert audio_worker.worker_idle_exit_seconds({"audio_worker_idle_exit_seconds": 12}) == 12
     assert audio_worker.worker_idle_exit_seconds({"audio_worker_idle_exit_seconds": 0}) == 0
@@ -392,14 +532,18 @@ def test_worker_drains_pending_jobs_before_rss_exit(monkeypatch):
     logs = []
 
     monkeypatch.setattr(audio_worker, "dequeue_audio_job", lambda: jobs.pop(0))
-    monkeypatch.setattr(audio_worker, "speak_line", spoken.append)
+    monkeypatch.setattr(
+        audio_worker,
+        "speak_line",
+        lambda line, *_args, phase="", **_kwargs: spoken.append((line, phase)),
+    )
     monkeypatch.setattr(audio_worker, "rss_limit_exceeded", lambda: (True, 700.0, 512.0))
     monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
     monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
     monkeypatch.setattr(audio_worker, "append_log", logs.append)
 
     assert audio_worker.run_worker() == 0
-    assert spoken == ["one", "two"]
+    assert spoken == [("one", "commentary"), ("two", "final")]
     assert any("worker-rss-drained-exit" in line for line in logs)
 
 
@@ -416,7 +560,11 @@ def test_worker_trace_records_speaking_completion_and_memory_exit(monkeypatch):
     events = []
 
     monkeypatch.setattr(audio_worker, "dequeue_audio_job", lambda: jobs.pop(0))
-    monkeypatch.setattr(audio_worker, "speak_line", lambda _line: None)
+    monkeypatch.setattr(
+        audio_worker,
+        "speak_line",
+        lambda _line, *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(audio_worker, "rss_limit_exceeded", lambda: (True, 700.0, 512.0))
     monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
     monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)

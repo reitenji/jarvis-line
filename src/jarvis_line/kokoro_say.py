@@ -78,44 +78,51 @@ def build_voice_tensor(engine: Any, spec: str):
     return np.tensordot(weight_array, stacked, axes=1).astype(np.float32)
 
 
-def spawn_player(sound_path: Path, volume: float) -> None:
+def spawn_player(sound_path: Path, volume: float) -> bool:
     volume = max(0.0, min(volume, 1.0))
     if sys.platform == "darwin":
-        subprocess.run(
+        result = subprocess.run(
             ["afplay", "-v", f"{volume:.2f}", str(sound_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
-        return
+        return result.returncode == 0
     if sys.platform.startswith("win"):
+        shell = shutil.which("powershell") or shutil.which("pwsh")
+        if not shell:
+            return False
         escaped_path = str(sound_path).replace("'", "''")
         ps = (
             "$p=New-Object System.Media.SoundPlayer "
             f"'{escaped_path}';"
             "$p.PlaySync()"
         )
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps],
+        result = subprocess.run(
+            [shell, "-NoProfile", "-Command", ps],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
-        return
+        return result.returncode == 0
     if sys.platform.startswith("linux"):
         for command in (
             ["paplay", str(sound_path)],
             ["aplay", str(sound_path)],
             ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(sound_path)],
         ):
-            if shutil.which(command[0]):
-                subprocess.run(
-                    command,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-                return
+            executable = shutil.which(command[0])
+            if not executable:
+                continue
+            result = subprocess.run(
+                [executable, *command[1:]],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if result.returncode == 0:
+                return True
+        return False
     raise RuntimeError(f"Unsupported platform for playback: {sys.platform}")
 
 

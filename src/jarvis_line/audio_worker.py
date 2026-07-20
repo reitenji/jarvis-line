@@ -15,11 +15,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from jarvis_line import diagnostics, kokoro_say as ks
+from jarvis_line import completion_chime, diagnostics, kokoro_say as ks
 from jarvis_line.queue_policy import (
     attention_cancellation_key,
     dequeue_next,
     is_attention_phase,
+    is_final_phase,
     prune_attention_cancellations,
 )
 
@@ -415,9 +416,28 @@ def cancellation_requested(check: Callable[[], bool] | None) -> bool:
         return False
 
 
+def play_final_chime(_cfg: dict[str, Any]) -> None:
+    path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="jarvis_line_final_",
+            suffix=".wav",
+            delete=False,
+        ) as output:
+            path = Path(output.name)
+            output.write(completion_chime.wav_bytes())
+        if not ks.spawn_player(path, 1.0):
+            raise RuntimeError("final chime playback failed")
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+
 def speak_line(
     line: str,
     should_cancel: Callable[[], bool] | None = None,
+    *,
+    phase: str = "",
 ) -> bool:
     if not line:
         return False
@@ -428,6 +448,16 @@ def speak_line(
         cfg = ks.load_config()
         fallback = str(cfg.get("fallback_tts") or "").strip().lower()
         backend = str(cfg.get("tts") or "kokoro").strip().lower()
+        if is_final_phase(phase) and cfg.get("final_chime_enabled", True) is not False:
+            chime_started = time.perf_counter()
+            try:
+                play_final_chime(cfg)
+                append_log(
+                    "final-chime-done "
+                    f"duration_ms={(time.perf_counter() - chime_started) * 1000:.0f}"
+                )
+            except Exception as exc:
+                append_log(f"final-chime-error reason={exc.__class__.__name__}")
         try:
             if not speak_with_backend(line, cfg, backend, should_cancel):
                 return False
@@ -730,9 +760,13 @@ def run_worker() -> int:
         started = time.perf_counter()
         try:
             played = (
-                speak_line(line, lambda: attention_job_is_cancelled(job))
+                speak_line(
+                    line,
+                    lambda: attention_job_is_cancelled(job),
+                    phase=phase,
+                )
                 if is_attention_phase(phase)
-                else speak_line(line)
+                else speak_line(line, phase=phase)
             )
             if played is False:
                 append_log(f"job-skip cancelled-before-play phase={phase}")

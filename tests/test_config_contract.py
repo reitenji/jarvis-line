@@ -11,9 +11,11 @@ def test_contract_contains_defaults_fields_and_backends():
     assert contract["defaults"]["tts"] == "kokoro"
     assert contract["defaults"]["debug_content_logging"] is False
     assert contract["defaults"]["attention_enabled"] is False
+    assert contract["defaults"]["final_chime_enabled"] is True
     assert contract["defaults"]["cleanup_enabled"] is True
     assert contract["defaults"]["cleanup_interval_hours"] == 24
     assert contract["fields"]["attention_enabled"]["type"] == "boolean"
+    assert contract["fields"]["final_chime_enabled"]["type"] == "boolean"
     assert contract["fields"]["cleanup_enabled"]["type"] == "boolean"
     assert contract["fields"]["cleanup_interval_hours"]["values"] == [24, 168]
     assert contract["fields"]["tts"]["values"] == ["command", "kokoro", "macos", "system"]
@@ -23,6 +25,7 @@ def test_contract_contains_defaults_fields_and_backends():
     assert "system" in contract["backends"]
     assert isinstance(contract["backends"]["system"]["supports"], list)
     for backend in contract["backends"].values():
+        assert "final_chime_enabled" in backend["supports"]
         assert "cleanup_enabled" in backend["supports"]
         assert "cleanup_interval_hours" in backend["supports"]
 
@@ -70,3 +73,4 @@ def test_kokoro_load_config_preserves_user_values(tmp_path, monkeypatch):
     assert config["volume"] == 0.4
     assert config["speak_mode"] == "final_only"
     assert config["attention_enabled"] is False
+    assert config["final_chime_enabled"] is True
