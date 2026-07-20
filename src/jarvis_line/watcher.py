@@ -69,6 +69,33 @@ try:
 except Exception:
     fcntl = None
 
+try:
+    import msvcrt
+except Exception:
+    msvcrt = None
+
+
+def _prepare_windows_lock_file(lock_file) -> None:
+    lock_file.seek(0, os.SEEK_END)
+    if lock_file.tell() == 0:
+        lock_file.write(b"\0")
+        lock_file.flush()
+    lock_file.seek(0)
+
+
+def _try_windows_file_lock(lock_file) -> bool:
+    _prepare_windows_lock_file(lock_file)
+    try:
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        return False
+    return True
+
+
+def _release_windows_file_lock(lock_file) -> None:
+    lock_file.seek(0)
+    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+
 
 def is_final_phase(phase: str) -> bool:
     return phase in ("final", "final_answer")
@@ -195,6 +222,15 @@ def rotate_log_if_needed() -> None:
 @contextmanager
 def file_lock():
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is None and msvcrt is not None:
+        with LOCK_PATH.open("a+b") as lock_file:
+            while not _try_windows_file_lock(lock_file):
+                time.sleep(0.05)
+            try:
+                yield
+            finally:
+                _release_windows_file_lock(lock_file)
+        return
     if fcntl is None:
         lock_dir = LOCK_PATH.with_name(LOCK_PATH.name + ".d")
         while True:

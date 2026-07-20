@@ -3,7 +3,36 @@ import types
 
 import pytest
 
-from jarvis_line import cleanup, watcher
+from jarvis_line import audio_worker, cleanup, watcher
+
+
+def test_windows_watcher_lock_contends_with_audio_worker(tmp_path, monkeypatch):
+    class SharedMSVCRT:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self):
+            self.held = False
+
+        def locking(self, _descriptor, mode, _size):
+            if mode == self.LK_NBLCK:
+                if self.held:
+                    raise OSError("busy")
+                self.held = True
+            else:
+                self.held = False
+
+    lock_path = tmp_path / "runtime.lock"
+    windows_lock = SharedMSVCRT()
+    monkeypatch.setattr(watcher, "LOCK_PATH", lock_path)
+    monkeypatch.setattr(watcher, "fcntl", None)
+    monkeypatch.setattr(watcher, "msvcrt", windows_lock)
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", windows_lock)
+
+    with watcher.file_lock():
+        with audio_worker.try_file_lock(lock_path) as acquired:
+            assert acquired is False
 
 
 def test_save_json_unlocked_closes_descriptor_when_fdopen_fails(tmp_path, monkeypatch):
