@@ -316,6 +316,7 @@ def test_lock_owner_read_tolerates_handle_timestamp_differences(
 def test_run_removes_only_old_known_lock_with_a_dead_recorded_owner(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     stale = paths.hooks_dir / ".jarvis_line.lock.d"
     recent = paths.hooks_dir / ".jarvis_line_audio.lock.d"
@@ -349,6 +350,7 @@ def test_run_removes_only_old_known_lock_with_a_dead_recorded_owner(
 
 
 def test_cleanup_claims_dead_lock_before_removing_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     quarantine = quarantine_for(lock)
@@ -379,6 +381,7 @@ def test_cleanup_claims_dead_lock_before_removing_owner(tmp_path, monkeypatch):
 
 
 def test_cleanup_restores_claim_when_owner_identity_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     quarantine = quarantine_for(lock)
@@ -413,6 +416,7 @@ def test_cleanup_restores_claim_when_owner_identity_changes(tmp_path, monkeypatc
 
 
 def test_cleanup_never_restores_a_replaced_quarantine_object(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     quarantine = quarantine_for(lock)
@@ -451,6 +455,7 @@ def test_cleanup_never_restores_a_replaced_quarantine_object(tmp_path, monkeypat
 
 
 def test_cleanup_restores_owner_when_entry_appears_after_claim(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     quarantine = quarantine_for(lock)
@@ -487,6 +492,7 @@ def test_cleanup_restores_owner_when_entry_appears_after_claim(tmp_path, monkeyp
 def test_cleanup_does_not_restore_owner_into_replaced_quarantine(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     quarantine = quarantine_for(lock)
@@ -535,6 +541,7 @@ def test_cleanup_does_not_restore_owner_into_replaced_quarantine(
 
 
 def test_existing_lock_quarantine_is_left_untouched(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     quarantine = quarantine_for(lock)
@@ -559,6 +566,7 @@ def test_existing_lock_quarantine_is_left_untouched(tmp_path, monkeypatch):
 
 
 def test_cleanup_keeps_old_known_lock_with_live_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     lock.mkdir()
@@ -576,6 +584,28 @@ def test_cleanup_keeps_old_known_lock_with_live_owner(tmp_path, monkeypatch):
     assert report.categories["stale_locks"].eligible_files == 0
 
 
+def test_pid_alive_uses_windows_safe_process_probe(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", True)
+    monkeypatch.setattr(
+        cleanup, "_windows_pid_alive", lambda pid: calls.append(pid) or True
+    )
+    monkeypatch.setattr(
+        cleanup.os,
+        "kill",
+        lambda _pid, _signal: pytest.fail("Windows must not use os.kill"),
+    )
+
+    assert cleanup._pid_alive(123) is True
+    assert calls == [123]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process API integration test")
+def test_windows_pid_probe_handles_live_and_missing_processes():
+    assert cleanup._windows_pid_alive(os.getpid()) is True
+    assert cleanup._windows_pid_alive(0xFFFFFFFF) is False
+
+
 def test_cleanup_keeps_old_ownerless_known_lock(tmp_path):
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
@@ -589,6 +619,7 @@ def test_cleanup_keeps_old_ownerless_known_lock(tmp_path):
 
 
 def test_cleanup_keeps_old_known_lock_with_malformed_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     lock.mkdir()
@@ -612,6 +643,7 @@ def test_cleanup_keeps_old_known_lock_with_malformed_owner(tmp_path, monkeypatch
 def test_cleanup_conservatively_keeps_lock_when_pid_status_is_not_provably_dead(
     tmp_path, monkeypatch, pid_check_error
 ):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     lock.mkdir()
@@ -630,6 +662,7 @@ def test_cleanup_conservatively_keeps_lock_when_pid_status_is_not_provably_dead(
 
 
 def test_cleanup_keeps_lock_with_recent_owner_record(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     lock.mkdir()
@@ -648,6 +681,7 @@ def test_cleanup_keeps_lock_with_recent_owner_record(tmp_path, monkeypatch):
 
 
 def test_lock_owner_record_is_rechecked_before_deletion(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     lock.mkdir()
@@ -679,6 +713,7 @@ def test_lock_owner_record_is_rechecked_before_deletion(tmp_path, monkeypatch):
 
 
 def test_lock_directory_identity_is_rechecked_before_deletion(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
     displaced = paths.hooks_dir / ".displaced-lock"
@@ -1034,6 +1069,7 @@ def test_run_returns_already_running_without_waiting(tmp_path):
 
 
 def test_run_treats_permission_error_checking_owner_as_alive(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     paths.lock_dir.mkdir()
     write_lock_owner(paths.lock_dir, pid=123, created_ts=100_000)
@@ -1051,6 +1087,7 @@ def test_run_treats_permission_error_checking_owner_as_alive(tmp_path, monkeypat
 
 
 def test_run_recovers_old_cleanup_lock_with_dead_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", False)
     paths = paths_for(tmp_path)
     paths.lock_dir.mkdir()
     write_lock_owner(paths.lock_dir, pid=123, created_ts=100_000)
