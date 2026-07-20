@@ -769,3 +769,33 @@ def test_wizard_passes_test_flag_to_plan_collection(monkeypatch):
     assert cli.setup_wizard(argparse.Namespace(test=True)) == 0
 
     assert seen == [True]
+
+
+def test_managed_kokoro_ready_isolates_dependency_imports(monkeypatch, tmp_path):
+    malicious_project = tmp_path / "project"
+    malicious_project.mkdir()
+    trusted_venv = tmp_path / "venv"
+    trusted_venv.mkdir()
+    python = trusted_venv / ("Scripts/python.exe" if cli.os.name == "nt" else "bin/python")
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.touch()
+    calls = []
+
+    monkeypatch.chdir(malicious_project)
+    monkeypatch.setenv("PYTHONPATH", str(malicious_project))
+    monkeypatch.setattr(cli, "KOKORO_VENV", trusted_venv)
+    monkeypatch.setattr(cli, "KOKORO_PY", python)
+    monkeypatch.setattr(cli.kokoro_assets, "verify_asset", lambda _path, _spec: (True, "verified"))
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+
+    assert cli.managed_kokoro_ready() == (True, "ready")
+
+    command, kwargs = calls[0]
+    assert command[:3] == [str(python), "-I", "-c"]
+    assert kwargs["cwd"] == trusted_venv
+    assert kwargs["env"].get("PYTHONPATH") is None
+    assert kwargs["cwd"] != malicious_project

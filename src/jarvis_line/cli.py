@@ -656,16 +656,32 @@ def kokoro_ready() -> tuple[bool, str]:
     if not voices_path.exists():
         return False, "kokoro voices missing"
     try:
-        subprocess.run(
-            [str(KOKORO_PY), "-c", "import kokoro_onnx, sounddevice, soundfile, numpy"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            check=True,
-        )
+        _run_kokoro_dependency_check()
     except Exception:
         return False, "kokoro python dependencies missing"
     return True, "ready"
+
+
+def _kokoro_dependency_check_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    return env
+
+
+def _kokoro_dependency_check_cwd() -> Path:
+    return KOKORO_VENV if KOKORO_VENV.exists() else Path.home()
+
+
+def _run_kokoro_dependency_check() -> None:
+    subprocess.run(
+        [str(KOKORO_PY), "-I", "-c", "import kokoro_onnx, sounddevice, soundfile, numpy"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=5,
+        check=True,
+        cwd=_kokoro_dependency_check_cwd(),
+        env=_kokoro_dependency_check_env(),
+    )
 
 
 def managed_kokoro_ready() -> tuple[bool, str]:
@@ -680,13 +696,7 @@ def managed_kokoro_ready() -> tuple[bool, str]:
     if not KOKORO_PY.exists():
         return False, "kokoro venv python missing"
     try:
-        subprocess.run(
-            [str(KOKORO_PY), "-c", "import kokoro_onnx, sounddevice, soundfile, numpy"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            check=True,
-        )
+        _run_kokoro_dependency_check()
     except Exception:
         return False, "kokoro python dependencies missing"
     return True, "ready"
