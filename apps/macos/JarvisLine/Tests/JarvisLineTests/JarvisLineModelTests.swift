@@ -4,6 +4,11 @@ import Testing
 
 @MainActor
 struct JarvisLineModelTests {
+    @Test func doctorStatusRequiresJarvisLineHook() {
+        #expect(!DoctorStatus.parse("[OK] Codex hooks.json").codexHookInstalled)
+        #expect(DoctorStatus.parse("[OK] Jarvis Line Codex hook").codexHookInstalled)
+    }
+
     @Test func draftTracksEditsAndRevertRestoresSavedConfig() {
         let model = JarvisLineModel(cli: ModelFakeRunner())
 
