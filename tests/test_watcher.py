@@ -511,6 +511,31 @@ def test_recover_latest_recent_line_skips_old_session_line(tmp_path, monkeypatch
     assert queued == []
 
 
+@pytest.mark.parametrize("timestamp", [None, "not-a-timestamp"])
+def test_recover_latest_recent_line_skips_missing_or_invalid_timestamp(tmp_path, monkeypatch, timestamp):
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
+    queued = []
+    monkeypatch.setattr(watcher, "queue_jarvis_line", lambda *args, **kwargs: queued.append(args) or True)
+    session = tmp_path / "session.jsonl"
+    event = {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{"type": "output_text", "text": "Old.\nJarvis line: Old line."}],
+        },
+    }
+    if timestamp is not None:
+        event["timestamp"] = timestamp
+    session.write_text(json.dumps(event) + "\n")
+
+    recovered = watcher.recover_latest_recent_line(session, "session-1", 1780996200000)
+
+    assert recovered is False
+    assert queued == []
+
+
 def test_current_session_candidates_prefers_active_thread_id(tmp_path, monkeypatch):
     sessions_root = tmp_path / "sessions"
     active = sessions_root / "2026" / "05" / "11" / "rollout-2026-05-11T08-44-08-019e1590-7384-76a3-bb84-363d7045f9e5.jsonl"
@@ -1071,3 +1096,38 @@ def test_watch_sessions_checks_cleanup_at_startup_and_in_loop(monkeypatch):
         watcher.watch_sessions()
 
     assert calls == [0.0, 123.0]
+
+
+def test_watch_sessions_uses_rolling_recovery_cutoff(tmp_path, monkeypatch):
+    session = tmp_path / "session.jsonl"
+    session.write_text("")
+    times = iter([2_000.0, 2_601.0])
+    recovery_cutoffs = []
+    discovery_calls = 0
+
+    monkeypatch.setattr(watcher, "append_log", lambda _message: None)
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: 0)
+    monkeypatch.setattr(watcher, "maybe_run_cleanup", lambda last_check: last_check)
+
+    def candidates():
+        nonlocal discovery_calls
+        discovery_calls += 1
+        return [] if discovery_calls == 1 else [session]
+
+    monkeypatch.setattr(watcher, "current_session_candidates", candidates)
+    monkeypatch.setattr(watcher.time, "time", lambda: next(times))
+    monkeypatch.setattr(watcher.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(watcher, "reap_child_processes", lambda: None)
+    monkeypatch.setattr(watcher, "update_watcher_heartbeat", lambda: None)
+    monkeypatch.setattr(watcher, "audio_queue_has_jobs", lambda: False)
+
+    def record_cutoff(_path, _session_key, min_ts_ms):
+        recovery_cutoffs.append(min_ts_ms)
+        raise RuntimeError("stop after recovery")
+
+    monkeypatch.setattr(watcher, "recover_latest_recent_line", record_cutoff)
+
+    with pytest.raises(RuntimeError, match="stop after recovery"):
+        watcher.watch_sessions()
+
+    assert recovery_cutoffs == [2_301_000]
