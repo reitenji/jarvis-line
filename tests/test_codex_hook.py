@@ -52,6 +52,23 @@ def test_permission_hook_emits_normalized_event_without_stdout(monkeypatch, caps
     assert capsys.readouterr().out == ""
 
 
+def test_permission_hook_emits_url_less_network_tool_request(monkeypatch, capsys):
+    patch_runtime(monkeypatch)
+    accepted = []
+    monkeypatch.setattr(
+        codex_hook.events,
+        "emit_event",
+        lambda event: accepted.append(event) or True,
+    )
+
+    payload = permission_payload(tool_input={"command": "curl --help"})
+
+    assert codex_hook.permission_request_main(io.StringIO(json.dumps(payload))) == 0
+    assert len(accepted) == 1
+    assert accepted[0].line == "Permission is required for a shell command."
+    assert capsys.readouterr().out == ""
+
+
 def test_permission_hook_skips_auto_review_from_payload(monkeypatch, capsys):
     patch_runtime(monkeypatch)
     accepted = []

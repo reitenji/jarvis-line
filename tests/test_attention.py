@@ -47,10 +47,18 @@ def test_permission_formatter_keeps_only_safe_url_hostname():
     ["English", "Turkish", "French", "Italian", "Japanese", "Chinese"],
 )
 def test_permission_formatter_handles_network_commands_without_a_url(language):
-    result = format_permission_request("Bash", {"command": "curl --help"}, language)
+    result = format_permission_request("Bash", {"command": "curl api.example.com"}, language)
 
     assert result.category == "network"
     assert result.line
+
+
+@pytest.mark.parametrize("command", ["curl", "curl -I", "wget --help"])
+def test_flag_only_network_tools_use_shell_fallback(command):
+    result = format_permission_request("Bash", {"command": command}, "English")
+
+    assert result.category == "shell"
+    assert result.line == "Permission is required for a shell command."
 
 
 @pytest.mark.parametrize(
