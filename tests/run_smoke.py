@@ -2,10 +2,11 @@ from pathlib import Path
 import argparse
 import tempfile
 
-from jarvis_line import audio_worker, cli, watcher
+from jarvis_line import audio_worker, cli, config_contract, watcher
 
 
 def main() -> int:
+    assert config_contract.default_config()["final_chime_enabled"] is True
     watcher.runtime_config = lambda: {
         "line_prefixes": ["Jarvis line:", "Friday line:"],
         "max_spoken_chars": 12,

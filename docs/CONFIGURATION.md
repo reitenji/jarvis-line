@@ -39,6 +39,7 @@ jarvis-line config set fallback_tts system
 jarvis-line config set quiet_days saturday,sunday
 jarvis-line config set speech_enabled false
 jarvis-line config set attention_enabled true
+jarvis-line config set final_chime_enabled false
 jarvis-line config set cleanup_enabled false
 jarvis-line config set cleanup_interval_hours 168
 ```
@@ -63,6 +64,7 @@ jarvis-line config set cleanup_interval_hours 168
 | `audio_worker_max_rss_mb` | `512` | Maximum audio worker RSS in MB before it drains the current burst and exits |
 | `speech_enabled` | `true` | Global/project switch for speech |
 | `attention_enabled` | `false` | Speak opt-in permission and input-required alerts |
+| `final_chime_enabled` | `true` | Play a short, gentle cue immediately before final speech |
 | `cleanup_enabled` | `true` | Run bounded automatic cleanup when maintenance is due |
 | `cleanup_interval_hours` | `24` | Automatic cleanup frequency: Daily (`24`) or Weekly (`168`) |
 | `debug_content_logging` | `false` | Include spoken text in local legacy logs; the structured trace remains metadata-only |
@@ -113,6 +115,19 @@ resource settings as status speech. `final_only` still allows enabled attention
 alerts; `speak_mode = off` or `speech_enabled = false` suppresses them. The
 toggle does not expose custom templates or raw request formatting rules.
 
+## Final Chime
+
+`final_chime_enabled` is a strict boolean and defaults to `true`, including for
+existing configuration files that do not contain the key. The cue plays only
+before an eligible final line; commentary, attention alerts, warm-up, replaced
+jobs, and stale jobs remain silent. Disable it from **Settings > Speech > Final
+chime** in the macOS app or with `jarvis-line config set
+final_chime_enabled false`.
+
+The short waveform is generated locally, uses no network service or additional
+TTS model, and leaves no retained audio file after playback. A chime playback
+failure is logged and does not prevent final speech.
+
 ## Prefixes
 
 ```bash
@@ -139,6 +154,7 @@ Fresh setup starts from this shape:
   "tts": "kokoro",
   "speak_mode": "final_only",
   "attention_enabled": false,
+  "final_chime_enabled": true,
   "cleanup_enabled": true,
   "cleanup_interval_hours": 24,
   "line_prefixes": ["Jarvis line:"],
@@ -173,6 +189,7 @@ If Kokoro is not ready, or if the user chooses not to use Kokoro, `system` is th
   "tts": "system",
   "speak_mode": "final_only",
   "attention_enabled": false,
+  "final_chime_enabled": true,
   "cleanup_enabled": true,
   "cleanup_interval_hours": 24,
   "line_prefixes": ["Jarvis line:"],

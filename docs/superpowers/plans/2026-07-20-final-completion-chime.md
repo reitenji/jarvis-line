@@ -28,25 +28,25 @@
 **Interfaces:**
 - Produces: `completion_chime.wav_bytes() -> bytes`, a cached valid mono 16-bit PCM WAV shorter than 500 ms.
 
-- [ ] **Step 1: Write failing waveform contract tests**
+- [x] **Step 1: Write failing waveform contract tests**
 
   Parse the result with `wave.open(io.BytesIO(payload), "rb")` and assert one
   channel, 16-bit samples, the declared sample rate, non-empty bounded frames,
   and deterministic cached output.
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
   Run: `.venv/bin/python -m pytest tests/test_completion_chime.py -q`
 
   Expected: collection fails because `jarvis_line.completion_chime` does not exist.
 
-- [ ] **Step 3: Implement the minimal waveform generator**
+- [x] **Step 3: Implement the minimal waveform generator**
 
   Generate an ascending two-tone waveform with smooth attack/release envelopes,
   clamp samples to signed 16-bit PCM, write them through `wave`, and cache the
   immutable result with `functools.lru_cache(maxsize=1)`.
 
-- [ ] **Step 4: Verify waveform tests pass**
+- [x] **Step 4: Verify waveform tests pass**
 
   Run: `.venv/bin/python -m pytest tests/test_completion_chime.py -q`
 
@@ -62,33 +62,33 @@
 - Consumes: `completion_chime.wav_bytes() -> bytes`.
 - Produces: `play_final_chime(cfg: dict[str, Any]) -> None` and phase-aware `speak_line(..., phase: str = "") -> bool`.
 
-- [ ] **Step 1: Write failing ordering and policy tests**
+- [x] **Step 1: Write failing ordering and policy tests**
 
   Stub chime playback and `speak_with_backend` to record calls. Assert final
   order is `["chime", "speech"]`, commentary and attention omit the chime,
   `final_chime_enabled=false` suppresses it, and a chime exception still records
   speech.
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
   Run: `.venv/bin/python -m pytest tests/test_audio_worker.py -q`
 
   Expected: tests fail because phase-aware chime playback is absent.
 
-- [ ] **Step 3: Add fail-open playback inside the audio lock**
+- [x] **Step 3: Add fail-open playback inside the audio lock**
 
   Write cached WAV bytes to `NamedTemporaryFile(suffix=".wav", delete=False)`,
   invoke the existing `kokoro_say.spawn_player`, and unlink the path in
   `finally`. In `speak_line`, call it once only when `is_final_phase(phase)` and
   the setting is enabled. Log completion or the exception class without text.
 
-- [ ] **Step 4: Pass phase from the worker and preserve test doubles**
+- [x] **Step 4: Pass phase from the worker and preserve test doubles**
 
   Pass `phase=phase` from `run_worker`; update local test doubles to accept the
   optional keyword while retaining the existing cancellation callback for
   attention jobs.
 
-- [ ] **Step 5: Verify worker tests pass**
+- [x] **Step 5: Verify worker tests pass**
 
   Run: `.venv/bin/python -m pytest tests/test_audio_worker.py tests/test_completion_chime.py -q`
 
@@ -107,12 +107,12 @@
 - Produces: shared `final_chime_enabled: boolean`, default `true`.
 - Produces: `JarvisConfigDraft.finalChimeEnabled: Bool` round-tripped as `final_chime_enabled`.
 
-- [ ] **Step 1: Write failing Python and Swift config tests**
+- [x] **Step 1: Write failing Python and Swift config tests**
 
   Assert the Python default/schema/backend capabilities include the new boolean.
   Assert a Swift draft defaults it on and persists an off value.
 
-- [ ] **Step 2: Verify targeted tests fail**
+- [x] **Step 2: Verify targeted tests fail**
 
   Run: `.venv/bin/python -m pytest tests/test_config_contract.py -q`
 
@@ -120,7 +120,7 @@
 
   Expected: assertions fail because the field does not exist.
 
-- [ ] **Step 3: Add the shared field and strict Swift toggle**
+- [x] **Step 3: Add the shared field and strict Swift toggle**
 
   Add the default, common backend capability, and field help in Python. Add the
   Swift property to defaults, decoding, initialization, saving, and fallback raw
@@ -143,7 +143,7 @@
 - Documents: default-on final chime and the macOS switch.
 - Verifies: the shared contract and playback policy remain install-safe.
 
-- [ ] **Step 1: Add the bounded setting documentation and smoke assertion**
+- [x] **Step 1: Add the bounded setting documentation and smoke assertion**
 
   Document `final_chime_enabled` in the speech settings table and assert its
   default in the smoke contract without expanding the README.
@@ -154,7 +154,7 @@
 
   Run: `.venv/bin/python tests/run_smoke.py`
 
-  Run: `.venv/bin/python -m jarvis_line.cli soak --quick --json`
+  Run: `.venv/bin/python scripts/soak_runtime.py --mode quick --json`
 
   Run: `.venv/bin/python -m compileall -q src tests`
 
@@ -162,7 +162,7 @@
 
   Expected: Python tests, smoke, quick soak, syntax, and Swift tests all pass.
 
-- [ ] **Step 3: Hear the generated cue once**
+- [x] **Step 3: Hear the generated cue once**
 
   Invoke `play_final_chime(default_config())` locally and confirm the temporary
   WAV is removed after synchronous playback.
