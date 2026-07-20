@@ -41,6 +41,8 @@ def _source(value: object) -> str:
     source = re.sub(r"[^a-z0-9._-]+", "-", source).strip("-")
     if not source:
         raise ValueError("source must contain a letter or number")
+    if source.startswith("__"):
+        raise ValueError("source must not start with '__'")
     return source
 
 
