@@ -23,6 +23,14 @@ struct JarvisConfigContractTests {
         #expect(draft.applying(to: [:])["attention_enabled"] as? Bool == true)
     }
 
+    @Test func finalChimeDefaultsOnAndPersists() {
+        var draft = JarvisConfigDraft([:])
+
+        #expect(draft.finalChimeEnabled)
+        draft.finalChimeEnabled = false
+        #expect(draft.applying(to: [:])["final_chime_enabled"] as? Bool == false)
+    }
+
     @Test func contractDecodesDefaultsAndOptions() throws {
         let json = #"""
         {
