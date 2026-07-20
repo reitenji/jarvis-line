@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.8.1 - 2026-07-20
+
+- Play a short, optional notification chime immediately before final speech so completion is distinguishable from commentary.
+- Generate the cue procedurally without shipping an audio asset, honor the configured playback volume, and remove its temporary WAV after playback.
+- Keep final speech fail-open when cue playback fails, and avoid replaying the cue when TTS falls back to another backend.
+- Detect platform player failures correctly and continue through available Linux playback fallbacks.
+
 ## 0.8.0 - 2026-07-19
 
 - Add a versioned privacy-safe reliability snapshot and three bounded recovery actions for runtime restart, expired-job pruning, and a fixed TTS test.
