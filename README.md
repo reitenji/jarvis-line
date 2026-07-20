@@ -26,14 +26,14 @@ routes it through a single, session-aware audio queue.
 Jarvis line: The tests are passing and the branch is ready.
 ```
 
-> **Release status:** `0.8.0` is beta. The macOS CLI/runtime is the primary
+> **Release status:** `0.8.1` is beta. The macOS CLI/runtime is the primary
 > validated surface. The macOS app, Windows, and Linux are Preview.
 > See [platform support](https://github.com/reitenji/jarvis-line/wiki/Platform-and-Agent-Support).
 
 ## Quick Start
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.8.0"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.8.1"
 jarvis-line setup
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."
@@ -52,6 +52,7 @@ For installation choices and the first real session, follow
 ## What You Get
 
 - Short spoken updates for commentary, completion, permission, and input requests.
+- An optional short notification chime immediately before final speech.
 - One audio worker across sessions, with stale-job and overlap protection.
 - Kokoro, system voices, macOS `say`, and custom TTS command support.
 - Codex integration plus generated instructions for Claude, Gemini, and other agents.
