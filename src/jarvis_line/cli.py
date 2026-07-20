@@ -1186,6 +1186,21 @@ def _setup_backup_path() -> Path:
     return CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.setup.bak")
 
 
+def _write_private_bytes(path: Path, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    descriptor: int | None = os.open(path, flags, 0o600)
+    try:
+        stream = os.fdopen(descriptor, "wb")
+        descriptor = None
+        with stream:
+            stream.write(payload)
+    except Exception:
+        if descriptor is not None:
+            os.close(descriptor)
+        path.unlink(missing_ok=True)
+        raise
+
+
 def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
     try:
@@ -1228,9 +1243,7 @@ def apply_setup_plan(plan: setup_flow.SetupPlan, *, json_mode: bool) -> dict[str
     backup = _setup_backup_path()
     try:
         if CONFIG_PATH.exists() and not backup.exists():
-            backup.write_bytes(CONFIG_PATH.read_bytes())
-            if os.name != "nt":
-                backup.chmod(0o600)
+            _write_private_bytes(backup, CONFIG_PATH.read_bytes())
             steps.append({"name": "config_backup", "ok": True, "path": str(backup)})
         save_json(CONFIG_PATH, config)
         steps.append({"name": "config_write", "ok": True})

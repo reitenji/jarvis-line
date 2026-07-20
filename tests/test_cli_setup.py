@@ -545,6 +545,24 @@ def test_apply_creates_private_config_backup(monkeypatch, tmp_path):
     assert stat.S_IMODE(backup.stat().st_mode) == 0o600
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are not supported on Windows")
+def test_private_backup_is_restricted_when_opened(monkeypatch, tmp_path):
+    backup = tmp_path / "config.json.setup.bak"
+    observed_modes = []
+    real_fdopen = os.fdopen
+
+    def recording_fdopen(descriptor, *args, **kwargs):
+        observed_modes.append(stat.S_IMODE(os.fstat(descriptor).st_mode))
+        return real_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(cli.os, "fdopen", recording_fdopen)
+
+    cli._write_private_bytes(backup, b'{"TOKEN": "secret"}\n')
+
+    assert observed_modes == [0o600]
+    assert backup.read_bytes() == b'{"TOKEN": "secret"}\n'
+
+
 def test_setup_apply_keeps_json_stdout_clean_when_helpers_print(monkeypatch, tmp_path, capsys):
     patch_setup_paths(monkeypatch, tmp_path)
     plan = kokoro_codex_plan(install_kokoro=False, install_codex_hook=True, start_runtime=False)
