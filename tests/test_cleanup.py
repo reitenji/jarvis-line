@@ -576,6 +576,22 @@ def test_cleanup_keeps_old_known_lock_with_live_owner(tmp_path, monkeypatch):
     assert report.categories["stale_locks"].eligible_files == 0
 
 
+def test_pid_alive_uses_windows_safe_process_probe(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cleanup, "_IS_WINDOWS", True)
+    monkeypatch.setattr(
+        cleanup, "_windows_pid_alive", lambda pid: calls.append(pid) or True
+    )
+    monkeypatch.setattr(
+        cleanup.os,
+        "kill",
+        lambda _pid, _signal: pytest.fail("Windows must not use os.kill"),
+    )
+
+    assert cleanup._pid_alive(123) is True
+    assert calls == [123]
+
+
 def test_cleanup_keeps_old_ownerless_known_lock(tmp_path):
     paths = paths_for(tmp_path)
     lock = paths.hooks_dir / ".jarvis_line.lock.d"
