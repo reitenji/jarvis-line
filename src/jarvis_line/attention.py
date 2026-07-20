@@ -195,7 +195,8 @@ def _classify_shell(tool_input: object) -> _PermissionIntent:
     if executable == "git" and subcommand in {"push", "pull", "clone"}:
         return _PermissionIntent(f"git_{subcommand}")
     if executable in {"curl", "wget", "http", "https"}:
-        return _PermissionIntent("network", detail=_safe_hostname(tokens))
+        hostname = _safe_hostname(tokens)
+        return _PermissionIntent("network", detail=hostname) if hostname else _PermissionIntent("shell")
     if executable in {"rm", "rmdir", "unlink", "trash"}:
         return _PermissionIntent("file_delete")
     if executable in {"kill", "killall", "pkill", "taskkill"}:

@@ -42,6 +42,14 @@ def test_permission_formatter_keeps_only_safe_url_hostname():
     assert "8443" not in result.line
 
 
+@pytest.mark.parametrize("command", ["curl", "curl -I", "wget --help", "curl http://[::1]"])
+def test_network_commands_without_safe_hostname_use_shell_fallback(command):
+    result = format_permission_request("Bash", {"command": command}, "English")
+
+    assert result.category == "shell"
+    assert result.line == "Permission is required for a shell command."
+
+
 @pytest.mark.parametrize(
     ("tool_name", "expected_category", "expected_text"),
     [
