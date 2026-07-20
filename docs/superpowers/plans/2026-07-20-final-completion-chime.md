@@ -127,7 +127,7 @@
   config. Render a `Final chime` switch under Speech > Events, disabled when
   speech is disabled or speak mode is off.
 
-- [ ] **Step 4: Verify config tests pass**
+- [x] **Step 4: Verify config tests pass**
 
   Run the two targeted commands from Step 2.
 
@@ -148,7 +148,7 @@
   Document `final_chime_enabled` in the speech settings table and assert its
   default in the smoke contract without expanding the README.
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
   Run: `.venv/bin/python -m pytest -q`
 
@@ -167,7 +167,7 @@
   Invoke `play_final_chime(default_config())` locally and confirm the temporary
   WAV is removed after synchronous playback.
 
-- [ ] **Step 4: Review and commit implementation**
+- [x] **Step 4: Review and commit implementation**
 
   Inspect `git diff --check`, `git diff --stat`, and the final status. Commit
   only the feature files on `feature/final-completion-chime`.
