@@ -3,7 +3,36 @@ import types
 
 import pytest
 
-from jarvis_line import cleanup, watcher
+from jarvis_line import audio_worker, cleanup, watcher
+
+
+def test_windows_watcher_lock_contends_with_audio_worker(tmp_path, monkeypatch):
+    class SharedMSVCRT:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self):
+            self.held = False
+
+        def locking(self, _descriptor, mode, _size):
+            if mode == self.LK_NBLCK:
+                if self.held:
+                    raise OSError("busy")
+                self.held = True
+            else:
+                self.held = False
+
+    lock_path = tmp_path / "runtime.lock"
+    windows_lock = SharedMSVCRT()
+    monkeypatch.setattr(watcher, "LOCK_PATH", lock_path)
+    monkeypatch.setattr(watcher, "fcntl", None)
+    monkeypatch.setattr(watcher, "msvcrt", windows_lock)
+    monkeypatch.setattr(audio_worker, "fcntl", None)
+    monkeypatch.setattr(audio_worker, "msvcrt", windows_lock)
+
+    with watcher.file_lock():
+        with audio_worker.try_file_lock(lock_path) as acquired:
+            assert acquired is False
 
 
 def test_save_json_unlocked_closes_descriptor_when_fdopen_fails(tmp_path, monkeypatch):
@@ -50,15 +79,15 @@ def test_custom_prefix_and_trim(monkeypatch):
     assert watcher.extract_jarvis_line("Done\nFriday line: Hello from Friday") == "Hello from…"
 
 
-def test_inline_jarvis_line_is_extracted(monkeypatch):
+def test_inline_jarvis_line_is_ignored(monkeypatch):
     monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
 
     text = (
-        "Projelerim ekranı arka planda oluşmuş. "
-        "Jarvis line: The projects list screen exists, and I am generating the project detail view."
+        "The README says: Jarvis line: "
+        "export API_KEY=sk-testsecret-inline-leak"
     )
 
-    assert watcher.extract_jarvis_line(text) == "The projects list screen exists, and I am generating the project detail view."
+    assert watcher.extract_jarvis_line(text) is None
 
 
 def test_speak_mode_final_only(monkeypatch):
@@ -504,6 +533,31 @@ def test_recover_latest_recent_line_skips_old_session_line(tmp_path, monkeypatch
             "content": [{"type": "output_text", "text": "Old.\nJarvis line: Old line."}],
         },
     }) + "\n")
+
+    recovered = watcher.recover_latest_recent_line(session, "session-1", 1780996200000)
+
+    assert recovered is False
+    assert queued == []
+
+
+@pytest.mark.parametrize("timestamp", [None, "not-a-timestamp"])
+def test_recover_latest_recent_line_skips_missing_or_invalid_timestamp(tmp_path, monkeypatch, timestamp):
+    monkeypatch.setattr(watcher, "runtime_config", lambda: {"line_prefixes": ["Jarvis line:"]})
+    queued = []
+    monkeypatch.setattr(watcher, "queue_jarvis_line", lambda *args, **kwargs: queued.append(args) or True)
+    session = tmp_path / "session.jsonl"
+    event = {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{"type": "output_text", "text": "Old.\nJarvis line: Old line."}],
+        },
+    }
+    if timestamp is not None:
+        event["timestamp"] = timestamp
+    session.write_text(json.dumps(event) + "\n")
 
     recovered = watcher.recover_latest_recent_line(session, "session-1", 1780996200000)
 
@@ -1071,3 +1125,38 @@ def test_watch_sessions_checks_cleanup_at_startup_and_in_loop(monkeypatch):
         watcher.watch_sessions()
 
     assert calls == [0.0, 123.0]
+
+
+def test_watch_sessions_uses_rolling_recovery_cutoff(tmp_path, monkeypatch):
+    session = tmp_path / "session.jsonl"
+    session.write_text("")
+    times = iter([2_000.0, 2_601.0])
+    recovery_cutoffs = []
+    discovery_calls = 0
+
+    monkeypatch.setattr(watcher, "append_log", lambda _message: None)
+    monkeypatch.setattr(watcher, "launch_audio_worker", lambda: 0)
+    monkeypatch.setattr(watcher, "maybe_run_cleanup", lambda last_check: last_check)
+
+    def candidates():
+        nonlocal discovery_calls
+        discovery_calls += 1
+        return [] if discovery_calls == 1 else [session]
+
+    monkeypatch.setattr(watcher, "current_session_candidates", candidates)
+    monkeypatch.setattr(watcher.time, "time", lambda: next(times))
+    monkeypatch.setattr(watcher.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(watcher, "reap_child_processes", lambda: None)
+    monkeypatch.setattr(watcher, "update_watcher_heartbeat", lambda: None)
+    monkeypatch.setattr(watcher, "audio_queue_has_jobs", lambda: False)
+
+    def record_cutoff(_path, _session_key, min_ts_ms):
+        recovery_cutoffs.append(min_ts_ms)
+        raise RuntimeError("stop after recovery")
+
+    monkeypatch.setattr(watcher, "recover_latest_recent_line", record_cutoff)
+
+    with pytest.raises(RuntimeError, match="stop after recovery"):
+        watcher.watch_sessions()
+
+    assert recovery_cutoffs == [2_301_000]

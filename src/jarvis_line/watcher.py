@@ -69,6 +69,33 @@ try:
 except Exception:
     fcntl = None
 
+try:
+    import msvcrt
+except Exception:
+    msvcrt = None
+
+
+def _prepare_windows_lock_file(lock_file) -> None:
+    lock_file.seek(0, os.SEEK_END)
+    if lock_file.tell() == 0:
+        lock_file.write(b"\0")
+        lock_file.flush()
+    lock_file.seek(0)
+
+
+def _try_windows_file_lock(lock_file) -> bool:
+    _prepare_windows_lock_file(lock_file)
+    try:
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        return False
+    return True
+
+
+def _release_windows_file_lock(lock_file) -> None:
+    lock_file.seek(0)
+    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+
 
 def is_final_phase(phase: str) -> bool:
     return phase in ("final", "final_answer")
@@ -195,6 +222,15 @@ def rotate_log_if_needed() -> None:
 @contextmanager
 def file_lock():
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is None and msvcrt is not None:
+        with LOCK_PATH.open("a+b") as lock_file:
+            while not _try_windows_file_lock(lock_file):
+                time.sleep(0.05)
+            try:
+                yield
+            finally:
+                _release_windows_file_lock(lock_file)
+        return
     if fcntl is None:
         lock_dir = LOCK_PATH.with_name(LOCK_PATH.name + ".d")
         while True:
@@ -1063,7 +1099,7 @@ def speak_latest_final_from_cache(session_key: str | None = None, min_updated_ts
 def extract_jarvis_line(text: str) -> str | None:
     matches = []
     for prefix in line_prefixes():
-        pattern = re.compile(rf"(?im)(?:^|(?<=\s)){re.escape(prefix)}\s*(.+?)\s*$")
+        pattern = re.compile(rf"(?im)^{re.escape(prefix)}\s*(.+?)\s*$")
         matches.extend(pattern.findall(text or ""))
     if not matches:
         return None
@@ -1180,16 +1216,16 @@ def process_line(raw_line: str, session_key: str) -> None:
         maybe_speak_from_payload(payload, session_key)
 
 
-def event_timestamp_ms(event: dict[str, Any]) -> int:
+def event_timestamp_ms(event: dict[str, Any]) -> int | None:
     raw = str(event.get("timestamp") or "").strip()
     if not raw:
-        return 0
+        return None
     try:
         if raw.endswith("Z"):
             raw = raw[:-1] + "+00:00"
         return int(datetime.fromisoformat(raw).timestamp() * 1000)
     except Exception:
-        return 0
+        return None
 
 
 def recover_latest_recent_line(path: Path, session_key: str, min_ts_ms: int) -> bool:
@@ -1201,7 +1237,7 @@ def recover_latest_recent_line(path: Path, session_key: str, min_ts_ms: int) -> 
         if not isinstance(event, dict):
             continue
         ts_ms = event_timestamp_ms(event)
-        if ts_ms and ts_ms < min_ts_ms:
+        if ts_ms is None or ts_ms < min_ts_ms:
             return False
         payload = assistant_payload_from_event(event)
         if not payload:
@@ -1359,8 +1395,6 @@ def watch_sessions(read_existing: bool = False) -> int:
     handles: dict[str, Any] = {}
     last_refresh = 0.0
     last_heartbeat = 0.0
-    recovery_min_ts_ms = int((time.time() - SESSION_RECOVERY_WINDOW_SECONDS) * 1000)
-
     while True:
         last_cleanup_check = maybe_run_cleanup(last_cleanup_check)
         now = time.time()
@@ -1386,7 +1420,7 @@ def watch_sessions(read_existing: bool = False) -> int:
                         if recover_latest_recent_line(
                             path,
                             session_key_for_path(path),
-                            recovery_min_ts_ms,
+                            int((now - SESSION_RECOVERY_WINDOW_SECONDS) * 1000),
                         ):
                             append_log(f"watch-recover {diagnostics.runtime_log_context(session_key=key)}")
                         f.seek(0, os.SEEK_END)

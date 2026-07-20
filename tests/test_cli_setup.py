@@ -1,6 +1,8 @@
 import argparse
 import io
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 
@@ -525,6 +527,42 @@ def test_apply_creates_config_backup_once_before_atomic_write(monkeypatch, tmp_p
     assert json.loads(backup.read_text(encoding="utf-8")) == {"preserve": True}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are not supported on Windows")
+def test_apply_creates_private_config_backup(monkeypatch, tmp_path):
+    patch_setup_paths(monkeypatch, tmp_path)
+    cli.CONFIG_PATH.write_text('{"command_env": {"TOKEN": "secret"}}\n', encoding="utf-8")
+    monkeypatch.setattr(cli, "detect_setup_environment", lambda: ready_environment())
+    monkeypatch.setattr(cli, "kokoro_ready", lambda: (True, "ready"))
+    monkeypatch.setattr(cli, "setup_doctor_json", healthy_doctor)
+
+    result = cli.apply_setup_plan(
+        kokoro_codex_plan(install_kokoro=False, install_codex_hook=False, start_runtime=False),
+        json_mode=True,
+    )
+
+    backup = tmp_path / "jarvis_line_config.json.setup.bak"
+    assert result["ok"] is True
+    assert stat.S_IMODE(backup.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are not supported on Windows")
+def test_private_backup_is_restricted_when_opened(monkeypatch, tmp_path):
+    backup = tmp_path / "config.json.setup.bak"
+    observed_modes = []
+    real_fdopen = os.fdopen
+
+    def recording_fdopen(descriptor, *args, **kwargs):
+        observed_modes.append(stat.S_IMODE(os.fstat(descriptor).st_mode))
+        return real_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(cli.os, "fdopen", recording_fdopen)
+
+    cli._write_private_bytes(backup, b'{"TOKEN": "secret"}\n')
+
+    assert observed_modes == [0o600]
+    assert backup.read_bytes() == b'{"TOKEN": "secret"}\n'
+
+
 def test_setup_apply_keeps_json_stdout_clean_when_helpers_print(monkeypatch, tmp_path, capsys):
     patch_setup_paths(monkeypatch, tmp_path)
     plan = kokoro_codex_plan(install_kokoro=False, install_codex_hook=True, start_runtime=False)
@@ -769,3 +807,33 @@ def test_wizard_passes_test_flag_to_plan_collection(monkeypatch):
     assert cli.setup_wizard(argparse.Namespace(test=True)) == 0
 
     assert seen == [True]
+
+
+def test_managed_kokoro_ready_isolates_dependency_imports(monkeypatch, tmp_path):
+    malicious_project = tmp_path / "project"
+    malicious_project.mkdir()
+    trusted_venv = tmp_path / "venv"
+    trusted_venv.mkdir()
+    python = trusted_venv / ("Scripts/python.exe" if cli.os.name == "nt" else "bin/python")
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.touch()
+    calls = []
+
+    monkeypatch.chdir(malicious_project)
+    monkeypatch.setenv("PYTHONPATH", str(malicious_project))
+    monkeypatch.setattr(cli, "KOKORO_VENV", trusted_venv)
+    monkeypatch.setattr(cli, "KOKORO_PY", python)
+    monkeypatch.setattr(cli.kokoro_assets, "verify_asset", lambda _path, _spec: (True, "verified"))
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+
+    assert cli.managed_kokoro_ready() == (True, "ready")
+
+    command, kwargs = calls[0]
+    assert command[:3] == [str(python), "-I", "-c"]
+    assert kwargs["cwd"] == trusted_venv
+    assert kwargs["env"].get("PYTHONPATH") is None
+    assert kwargs["cwd"] != malicious_project

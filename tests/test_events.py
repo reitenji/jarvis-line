@@ -98,6 +98,19 @@ def test_speech_event_rejects_control_characters():
         )
 
 
+def test_speech_event_rejects_internal_source_namespace():
+    with pytest.raises(ValueError, match="must not start"):
+        SpeechEvent.from_mapping(
+            {
+                "version": 1,
+                "source": "__external_adapter",
+                "session_id": "abc",
+                "phase": "final",
+                "line": "Done.",
+            }
+        )
+
+
 def test_emit_event_queues_normalized_session_key(monkeypatch):
     remembered = []
     queued = []
