@@ -25,6 +25,7 @@ struct JarvisConfigDraft: Equatable {
     var speechEnabled: Bool
     var attentionEnabled: Bool
     var finalChimeEnabled: Bool
+    var finalChimeVolume: Double
     var cleanupEnabled: Bool
     var cleanupIntervalHours: Int
     var speakWithoutPrefix: Bool
@@ -115,6 +116,9 @@ struct JarvisConfigDraft: Equatable {
         if !(0...1).contains(volume) {
             issues.append("Volume must be between 0.00 and 1.00.")
         }
+        if !(0...1).contains(finalChimeVolume) {
+            issues.append("Final chime volume must be between 0% and 100%.")
+        }
 
         if tts == "kokoro" {
             if !warmTextOptions.contains(warmTTSText) {
@@ -182,6 +186,7 @@ struct JarvisConfigDraft: Equatable {
         speechEnabled: true,
         attentionEnabled: false,
         finalChimeEnabled: true,
+        finalChimeVolume: 1.0,
         cleanupEnabled: true,
         cleanupIntervalHours: 24,
         speakWithoutPrefix: false,
@@ -214,6 +219,7 @@ struct JarvisConfigDraft: Equatable {
         speechEnabled = Self.bool(data["speech_enabled"], defaults.speechEnabled)
         attentionEnabled = Self.bool(data["attention_enabled"], defaults.attentionEnabled)
         finalChimeEnabled = Self.bool(data["final_chime_enabled"], defaults.finalChimeEnabled)
+        finalChimeVolume = Self.double(data["final_chime_volume"], defaults.finalChimeVolume)
         cleanupEnabled = Self.bool(data["cleanup_enabled"], defaults.cleanupEnabled)
         cleanupIntervalHours = Self.int(data["cleanup_interval_hours"], defaults.cleanupIntervalHours)
         speakWithoutPrefix = Self.bool(data["speak_without_prefix"], defaults.speakWithoutPrefix)
@@ -250,6 +256,7 @@ struct JarvisConfigDraft: Equatable {
         speechEnabled: Bool,
         attentionEnabled: Bool,
         finalChimeEnabled: Bool,
+        finalChimeVolume: Double,
         cleanupEnabled: Bool,
         cleanupIntervalHours: Int,
         speakWithoutPrefix: Bool,
@@ -279,6 +286,7 @@ struct JarvisConfigDraft: Equatable {
         self.speechEnabled = speechEnabled
         self.attentionEnabled = attentionEnabled
         self.finalChimeEnabled = finalChimeEnabled
+        self.finalChimeVolume = finalChimeVolume
         self.cleanupEnabled = cleanupEnabled
         self.cleanupIntervalHours = cleanupIntervalHours
         self.speakWithoutPrefix = speakWithoutPrefix
@@ -311,6 +319,7 @@ struct JarvisConfigDraft: Equatable {
         updated["speech_enabled"] = speechEnabled
         updated["attention_enabled"] = attentionEnabled
         updated["final_chime_enabled"] = finalChimeEnabled
+        updated["final_chime_volume"] = min(max(finalChimeVolume, 0), 1)
         updated["cleanup_enabled"] = cleanupEnabled
         updated["cleanup_interval_hours"] = cleanupIntervalHours
         updated["speak_without_prefix"] = speakWithoutPrefix
@@ -474,6 +483,7 @@ struct JarvisConfigStore {
             "speech_enabled": true,
             "attention_enabled": false,
             "final_chime_enabled": true,
+            "final_chime_volume": 1.0,
             "cleanup_enabled": true,
             "cleanup_interval_hours": 24,
             "update_check_enabled": true,

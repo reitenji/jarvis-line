@@ -27,8 +27,37 @@ struct JarvisConfigContractTests {
         var draft = JarvisConfigDraft([:])
 
         #expect(draft.finalChimeEnabled)
+        #expect(draft.finalChimeVolume == 1.0)
         draft.finalChimeEnabled = false
-        #expect(draft.applying(to: [:])["final_chime_enabled"] as? Bool == false)
+        draft.finalChimeVolume = 0.6
+        let saved = draft.applying(to: [:])
+        #expect(saved["final_chime_enabled"] as? Bool == false)
+        #expect(saved["final_chime_volume"] as? Double == 0.6)
+    }
+
+    @Test func finalChimeVolumeLoadsAndRejectsOutOfRangeValues() {
+        var draft = JarvisConfigDraft(["final_chime_volume": 0.35])
+
+        #expect(draft.finalChimeVolume == 0.35)
+        #expect(
+            !draft.blockingIssues.contains(
+                "Final chime volume must be between 0% and 100%."
+            )
+        )
+
+        draft.finalChimeVolume = -0.1
+        #expect(
+            draft.blockingIssues.contains(
+                "Final chime volume must be between 0% and 100%."
+            )
+        )
+
+        draft.finalChimeVolume = 1.1
+        #expect(
+            draft.blockingIssues.contains(
+                "Final chime volume must be between 0% and 100%."
+            )
+        )
     }
 
     @Test func contractDecodesDefaultsAndOptions() throws {
