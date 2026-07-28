@@ -472,21 +472,27 @@ def test_speak_line_continues_when_final_chime_fails(tmp_path, monkeypatch):
 def test_play_final_chime_removes_temporary_wave(tmp_path, monkeypatch):
     real_named_temporary_file = audio_worker.tempfile.NamedTemporaryFile
     played = []
+    generated_volumes = []
 
     def temporary_file(*args, **kwargs):
         kwargs["dir"] = tmp_path
         return real_named_temporary_file(*args, **kwargs)
 
     monkeypatch.setattr(audio_worker.tempfile, "NamedTemporaryFile", temporary_file)
-    monkeypatch.setattr(audio_worker.completion_chime, "wav_bytes", lambda: b"RIFF-test")
+    monkeypatch.setattr(
+        audio_worker.completion_chime,
+        "wav_bytes",
+        lambda volume: generated_volumes.append(volume) or b"RIFF-test",
+    )
     monkeypatch.setattr(
         audio_worker.ks,
         "spawn_player",
         lambda path, volume: played.append((path.read_bytes(), volume)) or True,
     )
 
-    audio_worker.play_final_chime({})
+    audio_worker.play_final_chime({"final_chime_volume": 0.6})
 
+    assert generated_volumes == [0.6]
     assert played == [(b"RIFF-test", 1.0)]
     assert list(tmp_path.iterdir()) == []
 
