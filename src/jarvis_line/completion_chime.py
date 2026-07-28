@@ -23,6 +23,8 @@ def _tone(time_seconds: float, start: float, duration: float, frequency: float) 
 
 
 def _normalized_volume(value: object) -> float:
+    if isinstance(value, bool):
+        return 1.0
     try:
         volume = float(value)
     except (TypeError, ValueError):

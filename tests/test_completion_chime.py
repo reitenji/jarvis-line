@@ -51,3 +51,5 @@ def test_wav_bytes_normalizes_volume_before_caching():
     assert completion_chime.wav_bytes(2.0) is completion_chime.wav_bytes(1.0)
     assert completion_chime.wav_bytes("invalid") is completion_chime.wav_bytes(1.0)
     assert completion_chime.wav_bytes(float("nan")) is completion_chime.wav_bytes(1.0)
+    assert completion_chime.wav_bytes(False) is completion_chime.wav_bytes(1.0)
+    assert completion_chime.wav_bytes(True) is completion_chime.wav_bytes(1.0)
