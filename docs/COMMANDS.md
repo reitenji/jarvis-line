@@ -618,6 +618,14 @@ jarvis-line config get tts
 kokoro
 ```
 
+```bash
+jarvis-line config set final_chime_volume 0.6
+```
+
+```text
+Set final_chime_volume = 0.6
+```
+
 ## `instructions`
 
 ```bash

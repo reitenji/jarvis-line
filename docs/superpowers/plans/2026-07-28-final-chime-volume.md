@@ -370,7 +370,7 @@ Run:
 
 ```bash
 python tests/run_smoke.py
-python scripts/runtime_soak.py --quick
+python scripts/soak_runtime.py --mode quick
 ```
 
 Expected: smoke reports `smoke_ok`; soak reports every invariant as passing.
