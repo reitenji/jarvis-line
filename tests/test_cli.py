@@ -1443,3 +1443,43 @@ def test_config_set_accepts_bounded_cleanup_values(
 
     assert cli.config_set(argparse.Namespace(key=key, value=value)) == 0
     assert saved == [{"tts": "system", key: expected}]
+
+
+@pytest.mark.parametrize("value", ["-0.01", "1.01", "true", "quiet"])
+def test_config_set_rejects_invalid_final_chime_volume(
+    value, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "load_effective_config", lambda: {"tts": "system"})
+    monkeypatch.setattr(cli, "save_json", lambda *_args: pytest.fail("must not save"))
+
+    assert (
+        cli.config_set(
+            argparse.Namespace(key="final_chime_volume", value=value)
+        )
+        == 1
+    )
+    assert "Invalid value for final_chime_volume" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0", 0.0),
+        ("0.6", 0.6),
+        ("1", 1.0),
+    ],
+)
+def test_config_set_accepts_bounded_final_chime_volume(
+    value, expected, monkeypatch
+):
+    saved = []
+    monkeypatch.setattr(cli, "load_effective_config", lambda: {"tts": "system"})
+    monkeypatch.setattr(cli, "save_json", lambda _path, cfg: saved.append(dict(cfg)))
+
+    assert (
+        cli.config_set(
+            argparse.Namespace(key="final_chime_volume", value=value)
+        )
+        == 0
+    )
+    assert saved == [{"tts": "system", "final_chime_volume": expected}]
