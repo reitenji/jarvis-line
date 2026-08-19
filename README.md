@@ -26,14 +26,14 @@ routes it through a single, session-aware audio queue.
 Jarvis line: The tests are passing and the branch is ready.
 ```
 
-> **Release status:** `0.8.2` is beta. The macOS CLI/runtime is the primary
+> **Release status:** `0.8.3` is beta. The macOS CLI/runtime is the primary
 > validated surface. The macOS app, Windows, and Linux are Preview.
 > See [platform support](https://github.com/reitenji/jarvis-line/wiki/Platform-and-Agent-Support).
 
 ## Quick Start
 
 ```bash
-python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.8.2"
+python3 -m pip install "git+https://github.com/reitenji/jarvis-line.git@v0.8.3"
 jarvis-line setup
 jarvis-line doctor
 jarvis-line tts test --text "Jarvis line test is ready."

@@ -298,6 +298,7 @@ def test_worker_skips_attention_cancelled_after_dequeue(monkeypatch):
     monkeypatch.setattr(audio_worker, "worker_idle_exit_seconds", lambda: 0.01)
     monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
     monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
+    monkeypatch.setattr(audio_worker, "prepare_worker_exit_if_queue_empty", lambda: True)
     monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
     monkeypatch.setattr(
         audio_worker.diagnostics,
@@ -469,6 +470,36 @@ def test_speak_line_continues_when_final_chime_fails(tmp_path, monkeypatch):
     assert any("final-chime-error reason=RuntimeError" in line for line in logs)
 
 
+def test_speak_line_plays_final_chime_once_when_falling_back(tmp_path, monkeypatch):
+    config = {
+        "tts": "primary",
+        "fallback_tts": "system",
+        "final_chime_enabled": True,
+    }
+    calls = []
+
+    monkeypatch.setattr(audio_worker, "AUDIO_LOCK_PATH", tmp_path / "audio.lock")
+    monkeypatch.setattr(audio_worker.ks, "load_config", lambda: config)
+    monkeypatch.setattr(
+        audio_worker,
+        "play_final_chime",
+        lambda _cfg: calls.append("chime"),
+    )
+
+    def speak_with_backend(_line, cfg, backend, _should_cancel):
+        calls.append(backend)
+        assert cfg["tts"] == backend
+        if backend == "primary":
+            raise RuntimeError("primary unavailable")
+        return True
+
+    monkeypatch.setattr(audio_worker, "speak_with_backend", speak_with_backend)
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+
+    assert audio_worker.speak_line("Finished.", phase="final") is True
+    assert calls == ["chime", "primary", "system"]
+
+
 def test_play_final_chime_removes_temporary_wave(tmp_path, monkeypatch):
     real_named_temporary_file = audio_worker.tempfile.NamedTemporaryFile
     played = []
@@ -528,6 +559,102 @@ def test_rss_limit_exceeded(monkeypatch):
     assert limit_mb == 768
 
 
+def test_worker_exits_when_warmup_already_exceeds_rss_limit(monkeypatch):
+    logs = []
+    events = []
+
+    monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
+    monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
+    monkeypatch.setattr(audio_worker, "dequeue_audio_job", lambda: None)
+    monkeypatch.setattr(audio_worker, "prepare_worker_exit_if_queue_empty", lambda: True)
+    monkeypatch.setattr(
+        audio_worker,
+        "rss_limit_exceeded",
+        lambda: (True, 700.0, 512.0),
+    )
+    monkeypatch.setattr(audio_worker, "append_log", logs.append)
+    monkeypatch.setattr(
+        audio_worker.diagnostics,
+        "record_event",
+        lambda event, **metadata: events.append((event, metadata)),
+    )
+    monkeypatch.setattr(
+        audio_worker.time,
+        "sleep",
+        lambda _seconds: pytest.fail("worker must exit without idling"),
+    )
+
+    assert audio_worker.run_worker() == 0
+    assert any("worker-rss-drained-exit" in line for line in logs)
+    assert [event for event, _metadata in events] == [
+        "worker_started",
+        "worker_rss_exit",
+    ]
+
+
+def test_worker_drains_job_enqueued_during_rss_exit(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio_worker, "QUEUE_PATH", tmp_path / "queue.json")
+    monkeypatch.setattr(audio_worker, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(audio_worker, "LOCK_PATH", tmp_path / "runtime.lock")
+    now_ms = int(time.time() * 1000)
+    audio_worker.save_json_unlocked(audio_worker.QUEUE_PATH, {"jobs": []})
+    audio_worker.save_json_unlocked(
+        audio_worker.STATE_PATH,
+        {
+            "__audio_worker__": {
+                "pid": audio_worker.os.getpid(),
+                "mode": "audio",
+                "heartbeat_ts_ms": now_ms,
+            }
+        },
+    )
+    real_dequeue = audio_worker.dequeue_audio_job
+    first_dequeue = True
+
+    def dequeue_with_racing_enqueue():
+        nonlocal first_dequeue
+        job = real_dequeue()
+        if first_dequeue:
+            first_dequeue = False
+
+            def enqueue(queue):
+                queue["jobs"] = [
+                    {
+                        "message_id": "raced",
+                        "session_key": "session-b",
+                        "phase": "final",
+                        "jarvis_line": "Queued during exit.",
+                        "enqueued_ts_ms": int(time.time() * 1000),
+                    }
+                ]
+
+            audio_worker.update_json(audio_worker.QUEUE_PATH, {"jobs": []}, enqueue)
+        return job
+
+    spoken = []
+    monkeypatch.setattr(audio_worker, "dequeue_audio_job", dequeue_with_racing_enqueue)
+    monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
+    monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
+    monkeypatch.setattr(
+        audio_worker,
+        "rss_limit_exceeded",
+        lambda: (True, 700.0, 512.0),
+    )
+    monkeypatch.setattr(
+        audio_worker,
+        "speak_line",
+        lambda line, *_args, **_kwargs: spoken.append(line) or True,
+    )
+    monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
+    monkeypatch.setattr(audio_worker.diagnostics, "record_event", lambda *_args, **_kwargs: None)
+
+    assert audio_worker.run_worker() == 0
+    assert spoken == ["Queued during exit."]
+    assert audio_worker.load_json(audio_worker.QUEUE_PATH, {})["jobs"] == []
+    state = audio_worker.load_json(audio_worker.STATE_PATH, {})
+    assert state["__audio_worker__"]["mode"] == "exiting"
+
+
 def test_worker_drains_pending_jobs_before_rss_exit(monkeypatch):
     jobs = [
         {"jarvis_line": "one", "phase": "commentary", "session_key": "a"},
@@ -546,6 +673,7 @@ def test_worker_drains_pending_jobs_before_rss_exit(monkeypatch):
     monkeypatch.setattr(audio_worker, "rss_limit_exceeded", lambda: (True, 700.0, 512.0))
     monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
     monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
+    monkeypatch.setattr(audio_worker, "prepare_worker_exit_if_queue_empty", lambda: True)
     monkeypatch.setattr(audio_worker, "append_log", logs.append)
 
     assert audio_worker.run_worker() == 0
@@ -574,6 +702,7 @@ def test_worker_trace_records_speaking_completion_and_memory_exit(monkeypatch):
     monkeypatch.setattr(audio_worker, "rss_limit_exceeded", lambda: (True, 700.0, 512.0))
     monkeypatch.setattr(audio_worker, "warm_tts_if_configured", lambda: None)
     monkeypatch.setattr(audio_worker, "update_worker_heartbeat", lambda: None)
+    monkeypatch.setattr(audio_worker, "prepare_worker_exit_if_queue_empty", lambda: True)
     monkeypatch.setattr(audio_worker, "append_log", lambda _line: None)
     monkeypatch.setattr(
         audio_worker.diagnostics,

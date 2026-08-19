@@ -60,6 +60,26 @@ struct JarvisConfigContractTests {
         )
     }
 
+    @Test func configStoreRejectsBooleanNumericValues() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let path = directory.appendingPathComponent("config.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try Data(
+            #"{"final_chime_volume":false,"max_queue_size":false,"cleanup_interval_hours":true}"#.utf8
+        ).write(to: path)
+        let falseDraft = try JarvisConfigStore(path: path).load()
+        #expect(falseDraft.finalChimeVolume == 1.0)
+        #expect(falseDraft.maxQueueSize == 8)
+        #expect(falseDraft.cleanupIntervalHours == 24)
+
+        try Data(#"{"final_chime_volume":true}"#.utf8).write(to: path)
+        let trueDraft = try JarvisConfigStore(path: path).load()
+        #expect(trueDraft.finalChimeVolume == 1.0)
+    }
+
     @Test func contractDecodesDefaultsAndOptions() throws {
         let json = #"""
         {

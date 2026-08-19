@@ -389,7 +389,15 @@ struct JarvisConfigDraft: Equatable {
         return fallback
     }
 
+    private static func isBooleanNumber(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else { return false }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
+    }
+
     private static func int(_ value: Any?, _ fallback: Int) -> Int {
+        if isBooleanNumber(value) {
+            return fallback
+        }
         if let value = value as? Int {
             return value
         }
@@ -403,6 +411,9 @@ struct JarvisConfigDraft: Equatable {
     }
 
     private static func double(_ value: Any?, _ fallback: Double) -> Double {
+        if isBooleanNumber(value) {
+            return fallback
+        }
         if let value = value as? Double {
             return value
         }
