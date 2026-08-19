@@ -22,8 +22,24 @@ def _tone(time_seconds: float, start: float, duration: float, frequency: float) 
     return math.sin(2.0 * math.pi * frequency * local_time) * attack * release * decay
 
 
-@lru_cache(maxsize=1)
-def wav_bytes() -> bytes:
+def _normalized_volume(value: object) -> float:
+    if isinstance(value, bool):
+        return 1.0
+    try:
+        volume = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(volume):
+        return 1.0
+    return round(max(0.0, min(volume, 1.0)), 3)
+
+
+def wav_bytes(volume: float = 1.0) -> bytes:
+    return _wav_bytes(_normalized_volume(volume))
+
+
+@lru_cache(maxsize=32)
+def _wav_bytes(volume: float) -> bytes:
     frame_count = int(SAMPLE_RATE * _DURATION_SECONDS)
     frames = bytearray()
     for index in range(frame_count):
@@ -32,7 +48,7 @@ def wav_bytes() -> bytes:
             0.72 * _tone(time_seconds, 0.0, 0.22, 523.25)
             + 0.72 * _tone(time_seconds, 0.095, 0.235, 659.25)
         )
-        sample = max(-1.0, min(1.0, signal * _MASTER_AMPLITUDE))
+        sample = max(-1.0, min(1.0, signal * _MASTER_AMPLITUDE * volume))
         frames.extend(struct.pack("<h", round(sample * 32767)))
 
     output = io.BytesIO()

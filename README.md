@@ -52,7 +52,7 @@ For installation choices and the first real session, follow
 ## What You Get
 
 - Short spoken updates for commentary, completion, permission, and input requests.
-- An optional short notification chime immediately before final speech.
+- An optional short notification chime with independent volume control before final speech.
 - One audio worker across sessions, with stale-job and overlap protection.
 - Kokoro, system voices, macOS `say`, and custom TTS command support.
 - Codex integration plus generated instructions for Claude, Gemini, and other agents.

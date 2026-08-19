@@ -416,7 +416,7 @@ def cancellation_requested(check: Callable[[], bool] | None) -> bool:
         return False
 
 
-def play_final_chime(_cfg: dict[str, Any]) -> None:
+def play_final_chime(cfg: dict[str, Any]) -> None:
     path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -425,7 +425,9 @@ def play_final_chime(_cfg: dict[str, Any]) -> None:
             delete=False,
         ) as output:
             path = Path(output.name)
-            output.write(completion_chime.wav_bytes())
+            output.write(
+                completion_chime.wav_bytes(cfg.get("final_chime_volume", 1.0))
+            )
         if not ks.spawn_player(path, 1.0):
             raise RuntimeError("final chime playback failed")
     finally:
