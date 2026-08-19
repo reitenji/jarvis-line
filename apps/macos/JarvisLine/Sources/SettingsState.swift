@@ -58,6 +58,8 @@ enum SettingsApplyImpact: Equatable {
         guard saved != draft else { return .none }
 
         var normalizedSaved = saved
+        normalizedSaved.finalChimeEnabled = draft.finalChimeEnabled
+        normalizedSaved.finalChimeVolume = draft.finalChimeVolume
         normalizedSaved.cleanupEnabled = draft.cleanupEnabled
         normalizedSaved.cleanupIntervalHours = draft.cleanupIntervalHours
         normalizedSaved.updateCheckEnabled = draft.updateCheckEnabled

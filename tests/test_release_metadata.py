@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_repository_versions_are_consistent():
     versions = check_version_consistency.read_versions(ROOT)
 
-    assert versions.package == "0.8.1"
+    assert versions.package == "0.8.3"
     assert versions.module == versions.package
     assert versions.app == versions.package
     assert versions.bundle_build.isdigit()
@@ -38,8 +38,8 @@ def test_workflows_pin_actions_to_reviewed_commits():
     security_workflow = (ROOT / ".github/workflows/security.yml").read_text(encoding="utf-8")
     workflows = ci_workflow + release_workflow + security_workflow
 
-    assert "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" in workflows
-    assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" in workflows
+    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in workflows
+    assert "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" in workflows
     assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflows
     assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflows
     assert "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610" in workflows

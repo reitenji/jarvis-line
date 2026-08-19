@@ -27,8 +27,57 @@ struct JarvisConfigContractTests {
         var draft = JarvisConfigDraft([:])
 
         #expect(draft.finalChimeEnabled)
+        #expect(draft.finalChimeVolume == 1.0)
         draft.finalChimeEnabled = false
-        #expect(draft.applying(to: [:])["final_chime_enabled"] as? Bool == false)
+        draft.finalChimeVolume = 0.6
+        let saved = draft.applying(to: [:])
+        #expect(saved["final_chime_enabled"] as? Bool == false)
+        #expect(saved["final_chime_volume"] as? Double == 0.6)
+    }
+
+    @Test func finalChimeVolumeLoadsAndRejectsOutOfRangeValues() {
+        var draft = JarvisConfigDraft(["final_chime_volume": 0.35])
+
+        #expect(draft.finalChimeVolume == 0.35)
+        #expect(
+            !draft.blockingIssues.contains(
+                "Final chime volume must be between 0% and 100%."
+            )
+        )
+
+        draft.finalChimeVolume = -0.1
+        #expect(
+            draft.blockingIssues.contains(
+                "Final chime volume must be between 0% and 100%."
+            )
+        )
+
+        draft.finalChimeVolume = 1.1
+        #expect(
+            draft.blockingIssues.contains(
+                "Final chime volume must be between 0% and 100%."
+            )
+        )
+    }
+
+    @Test func configStoreRejectsBooleanNumericValues() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let path = directory.appendingPathComponent("config.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try Data(
+            #"{"final_chime_volume":false,"max_queue_size":false,"cleanup_interval_hours":true}"#.utf8
+        ).write(to: path)
+        let falseDraft = try JarvisConfigStore(path: path).load()
+        #expect(falseDraft.finalChimeVolume == 1.0)
+        #expect(falseDraft.maxQueueSize == 8)
+        #expect(falseDraft.cleanupIntervalHours == 24)
+
+        try Data(#"{"final_chime_volume":true}"#.utf8).write(to: path)
+        let trueDraft = try JarvisConfigStore(path: path).load()
+        #expect(trueDraft.finalChimeVolume == 1.0)
     }
 
     @Test func contractDecodesDefaultsAndOptions() throws {

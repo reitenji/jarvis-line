@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.8.3 - 2026-08-19
+
+- Reject JSON booleans for numeric macOS settings instead of silently coercing them to integers or floating-point values.
+- Enforce the Kokoro worker memory ceiling immediately after model warm-up as well as after speech jobs.
+- Make worker exit and watcher replacement atomic so jobs arriving during memory-limited shutdown cannot remain stranded.
+- Add regression coverage for worker handoff, numeric configuration parsing, and one-time final-chime playback across TTS fallback.
+
+## 0.8.2 - 2026-08-19
+
+- Add an independent `final_chime_volume` setting with strict `0.0` to `1.0` validation and a backward-compatible default.
+- Scale the generated completion-chime PCM directly for consistent volume on macOS, Windows, and Linux without new dependencies.
+- Add a constrained 0-100% macOS slider with 5% steps, disabled whenever final-chime playback is unavailable.
+- Keep malformed persisted values fail-open, including explicit protection against Python boolean-to-number coercion.
+
 ## 0.8.1 - 2026-07-20
 
 - Play a short, optional notification chime immediately before final speech so completion is distinguishable from commentary.
