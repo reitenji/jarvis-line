@@ -40,6 +40,7 @@ jarvis-line config set quiet_days saturday,sunday
 jarvis-line config set speech_enabled false
 jarvis-line config set attention_enabled true
 jarvis-line config set final_chime_enabled false
+jarvis-line config set final_chime_volume 0.6
 jarvis-line config set cleanup_enabled false
 jarvis-line config set cleanup_interval_hours 168
 ```
@@ -65,6 +66,7 @@ jarvis-line config set cleanup_interval_hours 168
 | `speech_enabled` | `true` | Global/project switch for speech |
 | `attention_enabled` | `false` | Speak opt-in permission and input-required alerts |
 | `final_chime_enabled` | `true` | Play a short, gentle cue immediately before final speech |
+| `final_chime_volume` | `1.0` | Independent final cue volume from `0.0` (silent) to `1.0` (original level) |
 | `cleanup_enabled` | `true` | Run bounded automatic cleanup when maintenance is due |
 | `cleanup_interval_hours` | `24` | Automatic cleanup frequency: Daily (`24`) or Weekly (`168`) |
 | `debug_content_logging` | `false` | Include spoken text in local legacy logs; the structured trace remains metadata-only |
@@ -124,9 +126,17 @@ jobs, and stale jobs remain silent. Disable it from **Settings > Speech > Final
 chime** in the macOS app or with `jarvis-line config set
 final_chime_enabled false`.
 
+`final_chime_volume` controls the cue independently from spoken-output
+`volume`. It accepts only numbers from `0.0` through `1.0`; for example,
+`jarvis-line config set final_chime_volume 0.6` selects 60%. The default `1.0`
+preserves the original gentle cue. The macOS app exposes the same setting as a
+0-100% slider in 5% steps.
+
 The short waveform is generated locally, uses no network service or additional
-TTS model, and leaves no retained audio file after playback. A chime playback
-failure is logged and does not prevent final speech.
+TTS model, and leaves no retained audio file after playback. Volume is encoded
+into the generated WAV, so it does not depend on platform-player volume support
+and behaves consistently on macOS, Windows, and Linux. A chime playback failure
+is logged and does not prevent final speech.
 
 ## Prefixes
 
@@ -155,6 +165,7 @@ Fresh setup starts from this shape:
   "speak_mode": "final_only",
   "attention_enabled": false,
   "final_chime_enabled": true,
+  "final_chime_volume": 1.0,
   "cleanup_enabled": true,
   "cleanup_interval_hours": 24,
   "line_prefixes": ["Jarvis line:"],
@@ -190,6 +201,7 @@ If Kokoro is not ready, or if the user chooses not to use Kokoro, `system` is th
   "speak_mode": "final_only",
   "attention_enabled": false,
   "final_chime_enabled": true,
+  "final_chime_volume": 1.0,
   "cleanup_enabled": true,
   "cleanup_interval_hours": 24,
   "line_prefixes": ["Jarvis line:"],

@@ -42,6 +42,22 @@ struct SettingsStateTests {
         )
     }
 
+    @Test func finalChimeChangesDoNotRestartRuntime() {
+        var draft = JarvisConfigDraft.defaults
+        draft.finalChimeVolume = 0.6
+
+        #expect(
+            SettingsApplyImpact.between(.defaults, draft) == .saveOnly
+        )
+
+        draft = .defaults
+        draft.finalChimeEnabled = false
+
+        #expect(
+            SettingsApplyImpact.between(.defaults, draft) == .saveOnly
+        )
+    }
+
     @Test func speechChangesRestartRuntime() {
         var draft = JarvisConfigDraft.defaults
         draft.volume = 0.6
