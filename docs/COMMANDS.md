@@ -297,8 +297,8 @@ jarvis-line update check
 ```
 
 ```text
-Current version: 0.8.1
-Latest version: 0.8.1
+Current version: 0.8.3
+Latest version: 0.8.3
 Jarvis Line is up to date.
 ```
 
@@ -309,8 +309,8 @@ jarvis-line update check --source git --repo https://github.com/reitenji/jarvis-
 ```
 
 ```text
-Current version: 0.8.1
-Latest version: 0.8.1
+Current version: 0.8.3
+Latest version: 0.8.3
 Jarvis Line is up to date.
 ```
 
@@ -321,9 +321,9 @@ jarvis-line update apply
 ```
 
 ```text
-Current version: 0.8.0
-Latest version: 0.8.1
-Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.8.1
+Current version: 0.8.2
+Latest version: 0.8.3
+Running: ... pip install --upgrade git+https://github.com/reitenji/jarvis-line.git@v0.8.3
 Next: run `jarvis-line --version` and `jarvis-line doctor`.
 ```
 
@@ -616,6 +616,14 @@ jarvis-line config get tts
 
 ```text
 kokoro
+```
+
+```bash
+jarvis-line config set final_chime_volume 0.6
+```
+
+```text
+Set final_chime_volume = 0.6
 ```
 
 ## `instructions`

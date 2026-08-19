@@ -841,7 +841,10 @@ def audio_worker_is_healthy(state: dict[str, Any] | None = None) -> bool:
     state = state if state is not None else load_json(STATE_PATH, {})
     worker = state.get("__audio_worker__", {}) if isinstance(state, dict) else {}
     pid = int((worker or {}).get("pid") or 0)
+    mode = str((worker or {}).get("mode") or "audio")
     heartbeat_ms = int((worker or {}).get("heartbeat_ts_ms") or 0)
+    if mode != "audio":
+        return False
     if not pid or not pid_alive(pid):
         return False
     if heartbeat_ms and int(time.time() * 1000) - heartbeat_ms > AUDIO_WORKER_STALE_SECONDS * 1000:

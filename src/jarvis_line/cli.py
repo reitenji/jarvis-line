@@ -2283,6 +2283,16 @@ def config_set(args) -> int:
     ):
         print("Invalid value for cleanup_interval_hours: expected 24 or 168.")
         return 1
+    if args.key == "final_chime_volume" and not (
+        type(value) in (int, float) and 0.0 <= float(value) <= 1.0
+    ):
+        print(
+            "Invalid value for final_chime_volume: "
+            "expected a number from 0.0 to 1.0."
+        )
+        return 1
+    if args.key == "final_chime_volume":
+        value = float(value)
     cfg[args.key] = value
     save_json(CONFIG_PATH, cfg)
     print(f"Set {args.key} = {cfg[args.key]!r}")

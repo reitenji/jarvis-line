@@ -7,6 +7,7 @@ from jarvis_line import audio_worker, cli, config_contract, watcher
 
 def main() -> int:
     assert config_contract.default_config()["final_chime_enabled"] is True
+    assert config_contract.default_config()["final_chime_volume"] == 1.0
     watcher.runtime_config = lambda: {
         "line_prefixes": ["Jarvis line:", "Friday line:"],
         "max_spoken_chars": 12,

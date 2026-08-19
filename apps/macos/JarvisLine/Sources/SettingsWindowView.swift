@@ -218,6 +218,37 @@ struct SettingsWindowView: View {
                         .disabled(!model.config.speechEnabled || model.config.speakMode == "off")
                 }
 
+                SettingsRow(
+                    title: "Final chime volume",
+                    detail: model.config.finalChimeEnabled
+                        ? nil
+                        : "Requires final chime"
+                ) {
+                    HStack(spacing: 10) {
+                        Slider(
+                            value: $model.config.finalChimeVolume,
+                            in: 0...1,
+                            step: 0.05
+                        )
+                        .frame(width: 168)
+                        .accessibilityLabel("Final chime volume")
+                        Text(
+                            String(
+                                format: "%.0f%%",
+                                model.config.finalChimeVolume * 100
+                            )
+                        )
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(JarvisTheme.mutedText)
+                        .frame(width: 34, alignment: .trailing)
+                    }
+                    .disabled(
+                        !model.config.speechEnabled
+                            || model.config.speakMode == "off"
+                            || !model.config.finalChimeEnabled
+                    )
+                }
+
                 SettingsRow(title: "Speak mode", restartRequired: true) {
                     Picker("Speak mode", selection: $model.config.speakMode) {
                         ForEach(

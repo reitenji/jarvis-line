@@ -278,6 +278,31 @@ def dequeue_audio_job() -> dict[str, Any] | None:
     return update_json(QUEUE_PATH, {"jobs": []}, mutate)
 
 
+def prepare_worker_exit_if_queue_empty() -> bool:
+    """Atomically recheck the queue and advertise that this worker is exiting."""
+    now_ms = int(time.time() * 1000)
+    with file_lock(LOCK_PATH):
+        queue = load_json(QUEUE_PATH, {"jobs": []})
+        if not isinstance(queue, dict):
+            queue = {"jobs": []}
+        jobs = drop_stale_jobs(list(queue.get("jobs") or []), now_ms)
+        queue["jobs"] = jobs
+        queue["updated_ts_ms"] = now_ms
+        save_json_unlocked(QUEUE_PATH, queue)
+        if jobs:
+            return False
+
+        state = load_json(STATE_PATH, {})
+        if not isinstance(state, dict):
+            state = {}
+        worker = state.get("__audio_worker__")
+        if isinstance(worker, dict) and int(worker.get("pid") or 0) == os.getpid():
+            worker["mode"] = "exiting"
+            worker["heartbeat_ts_ms"] = now_ms
+            save_json_unlocked(STATE_PATH, state)
+        return True
+
+
 def attention_job_is_cancelled(job: dict[str, Any]) -> bool:
     if not is_attention_phase(str(job.get("phase") or "")):
         return False
@@ -416,7 +441,7 @@ def cancellation_requested(check: Callable[[], bool] | None) -> bool:
         return False
 
 
-def play_final_chime(_cfg: dict[str, Any]) -> None:
+def play_final_chime(cfg: dict[str, Any]) -> None:
     path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -425,7 +450,9 @@ def play_final_chime(_cfg: dict[str, Any]) -> None:
             delete=False,
         ) as output:
             path = Path(output.name)
-            output.write(completion_chime.wav_bytes())
+            output.write(
+                completion_chime.wav_bytes(cfg.get("final_chime_volume", 1.0))
+            )
         if not ks.spawn_player(path, 1.0):
             raise RuntimeError("final chime playback failed")
     finally:
@@ -686,9 +713,12 @@ def run_worker() -> int:
     diagnostics.record_event("worker_started", pid=os.getpid())
     update_worker_heartbeat()
     warm_tts_if_configured()
+    exceeded, rss_mb, limit_mb = rss_limit_exceeded()
+    rss_exit_details: tuple[float | None, float] | None = (
+        (rss_mb, limit_mb) if exceeded else None
+    )
     last_heartbeat = 0.0
     idle_since = time.time()
-    rss_exit_details: tuple[float | None, float] | None = None
     while True:
         now = time.time()
         if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
@@ -698,12 +728,16 @@ def run_worker() -> int:
         job = dequeue_audio_job()
         if not job:
             if rss_exit_details is not None:
+                if not prepare_worker_exit_if_queue_empty():
+                    continue
                 rss_mb, limit_mb = rss_exit_details
                 append_log(f"worker-rss-drained-exit rss_mb={rss_mb:.0f} limit_mb={limit_mb:.0f}")
                 diagnostics.record_event("worker_rss_exit", rss_mb=rss_mb, limit_mb=limit_mb)
                 return 0
             idle_exit_seconds = worker_idle_exit_seconds()
             if idle_exit_seconds and now - idle_since >= idle_exit_seconds:
+                if not prepare_worker_exit_if_queue_empty():
+                    continue
                 append_log(f"worker-idle-exit idle_seconds={now - idle_since:.0f}")
                 diagnostics.record_event("worker_idle_exit", idle_seconds=round(now - idle_since, 1))
                 return 0

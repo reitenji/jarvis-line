@@ -890,6 +890,19 @@ def test_audio_worker_health_rejects_zombie_process(monkeypatch):
     assert watcher.audio_worker_is_healthy(state) is False
 
 
+def test_audio_worker_health_rejects_exiting_worker(monkeypatch):
+    monkeypatch.setattr(watcher, "pid_alive", lambda _pid: True)
+    state = {
+        "__audio_worker__": {
+            "pid": 123,
+            "mode": "exiting",
+            "heartbeat_ts_ms": int(watcher.time.time() * 1000),
+        }
+    }
+
+    assert watcher.audio_worker_is_healthy(state) is False
+
+
 def test_audio_queue_has_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "AUDIO_QUEUE_PATH", tmp_path / "queue.json")
     monkeypatch.setattr(watcher, "LOCK_PATH", tmp_path / "lock")
