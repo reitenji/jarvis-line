@@ -52,7 +52,7 @@ jobs:
           python -m zipfile -e clean-dist/jarvis_line-*.whl build/sbom-wheel
       - name: Generate SPDX SBOM smoke artifact
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: ./build/sbom-wheel
           format: spdx-json
