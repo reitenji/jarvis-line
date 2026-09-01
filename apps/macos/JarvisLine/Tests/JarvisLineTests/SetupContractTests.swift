@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import JarvisLine
@@ -250,6 +251,38 @@ struct SetupContractTests {
 
         #expect(timedOut)
         #expect(started.duration(to: clock.now) < .seconds(2))
+    }
+
+    @Test func cliTimeoutReapsAStubbornDirectProcessBeforeReturning() async {
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let script = "echo $$ > '\(marker.path)'; trap '' TERM; sleep 5"
+        let runner = JarvisLineCLI(
+            executable: "/bin/sh",
+            timeoutSeconds: 0.1,
+            isolateProcessGroup: false
+        )
+
+        do {
+            _ = try await runner.run(["-c", script])
+        } catch is SetupContractError {
+            // Expected timeout.
+        } catch {
+            Issue.record("Expected setup command timeout, received: \(error)")
+        }
+
+        guard let pidText = try? String(contentsOf: marker, encoding: .utf8),
+              let pid = Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            Issue.record("Timed process did not publish its PID")
+            return
+        }
+        defer {
+            if Darwin.kill(pid, 0) == 0 {
+                Darwin.kill(pid, SIGKILL)
+            }
+        }
+
+        #expect(Darwin.kill(pid, 0) != 0)
     }
 
     @Test func cliTimeoutTerminatesTheIsolatedDescendantProcessGroup() async {
