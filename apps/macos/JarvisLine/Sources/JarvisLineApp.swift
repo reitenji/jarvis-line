@@ -838,6 +838,7 @@ struct JarvisLinePanel: View {
                 HStack(spacing: 9) {
                     Text("Jarvis Line")
                         .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(JarvisTheme.primaryText)
                     stateBadge
                 }
                 Text(model.status.summary)
