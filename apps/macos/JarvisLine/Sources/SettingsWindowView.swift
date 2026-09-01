@@ -16,6 +16,7 @@ struct SettingsWindowView: View {
                 Divider()
                     .overlay(JarvisTheme.border.opacity(0.65))
                 content
+                    .disabled(model.isWorking)
             }
         }
         .frame(minWidth: 700, minHeight: 660)
@@ -32,7 +33,7 @@ struct SettingsWindowView: View {
                     }
                     .help("Revert unapplied changes")
                     .accessibilityLabel("Revert unapplied changes")
-                    .disabled(model.isBusy)
+                    .disabled(model.isWorking)
 
                     Button {
                         Task { await model.applyConfig() }
@@ -45,7 +46,7 @@ struct SettingsWindowView: View {
                         )
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isBusy || !model.validationIssues.isEmpty)
+                    .disabled(model.isWorking || !model.validationIssues.isEmpty)
                     .help(applyHelp)
                 }
             }
@@ -54,9 +55,12 @@ struct SettingsWindowView: View {
             await model.refresh()
         }
         .onChange(of: destination) { newDestination in
-            guard newDestination == .diagnostics else { return }
-            model.requestCleanupStatusRefresh()
-            Task { await model.refreshReliability() }
+            if newDestination == .voice {
+                Task { await model.refreshSystemVoices() }
+            } else if newDestination == .diagnostics {
+                model.requestCleanupStatusRefresh()
+                Task { await model.refreshReliability() }
+            }
         }
     }
 
@@ -95,7 +99,7 @@ struct SettingsWindowView: View {
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundStyle(JarvisTheme.primaryText)
                     Spacer()
-                    if model.isBusy {
+                    if model.isWorking {
                         ProgressView()
                             .controlSize(.small)
                             .accessibilityLabel("Working")
@@ -178,7 +182,7 @@ struct SettingsWindowView: View {
                             Label("Install", systemImage: "link.badge.plus")
                         }
                         .buttonStyle(.bordered)
-                        .disabled(model.isBusy)
+                        .disabled(model.isWorking)
                     }
                 }
             }
@@ -378,7 +382,7 @@ struct SettingsWindowView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(
-                        model.isBusy
+                        model.isWorking
                             || model.hasUnsavedChanges
                             || !model.validationIssues.isEmpty
                     )
@@ -541,7 +545,7 @@ struct SettingsWindowView: View {
                         Label("Check Now", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isBusy)
+                    .disabled(model.isWorking)
                 }
             }
         }
@@ -553,7 +557,7 @@ struct SettingsWindowView: View {
                 snapshot: model.reliabilitySnapshot,
                 resultText: model.reliabilityResultText,
                 doctorText: model.doctorText,
-                isBusy: model.isBusy,
+                isBusy: model.isWorking,
                 onRefresh: { Task { await model.refreshReliability() } },
                 onAction: { action in
                     Task { await model.runReliabilityAction(action) }
@@ -615,7 +619,7 @@ struct SettingsWindowView: View {
                         .accessibilityLabel("Clean storage now")
                         .accessibilityHint("Removes eligible files and refreshes cleanup status")
                     }
-                    .disabled(model.isBusy)
+                    .disabled(model.isWorking)
                 }
             }
 
@@ -843,7 +847,7 @@ private struct SettingsHeader: View {
             .buttonStyle(.borderless)
             .help("Refresh status")
             .accessibilityLabel("Refresh status")
-            .disabled(model.isBusy)
+            .disabled(model.isWorking)
         }
         .padding(.horizontal, 18)
         .frame(height: 62)

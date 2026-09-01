@@ -193,6 +193,9 @@ final class JarvisLineModel: ObservableObject {
     @Published private(set) var reliabilityResultText = "Not checked"
     @Published private(set) var settingsConfirmation: String?
     @Published var isBusy = false
+    @Published private(set) var isStopping = false
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var isRefreshingSystemVoices = false
     @Published var errorMessage: String?
     @Published var codexHookInstalled = false
     @Published var showDockIcon = JarvisAppPreferences.showDockIcon
@@ -204,6 +207,7 @@ final class JarvisLineModel: ObservableObject {
     private var confirmationID: UUID?
     private var cleanupStatusRefreshRequested = false
     private(set) var cleanupStatusRefreshTask: Task<Void, Never>?
+    private var refreshRequested = false
     var onInitialSetupInspection: ((SetupInspection) -> Void)?
 
     init(
@@ -237,21 +241,43 @@ final class JarvisLineModel: ObservableObject {
         config != savedConfig
     }
 
+    var isWorking: Bool {
+        isBusy || isStopping || isRefreshing
+    }
+
+    var runtimeControlsLocked: Bool {
+        isBusy || isStopping
+    }
+
     var pendingApplyImpact: SettingsApplyImpact {
         SettingsApplyImpact.between(savedConfig, config)
     }
 
     func refresh() async {
-        await run(label: "Refresh") {
+        guard !isRefreshing else {
+            refreshRequested = true
+            return
+        }
+
+        isRefreshing = true
+        defer { isRefreshing = false }
+        repeat {
+            refreshRequested = false
+            await performRefresh()
+        } while refreshRequested
+    }
+
+    private func performRefresh() async {
+        do {
             let preserveDraft = hasUnsavedChanges
             cliVersion = (try? await cli.run(["--version"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "jarvis-line unavailable"
             await refreshConfigContract()
             let loadedConfig = try configStore.load(defaults: configContract.defaults.isEmpty ? nil : configContract.defaults)
-            if !preserveDraft {
+            if !preserveDraft && !hasUnsavedChanges {
                 config = loadedConfig
                 savedConfig = loadedConfig
             }
-            systemVoices = await JarvisLineCLI.systemVoices(preserving: config.systemVoice)
+            systemVoices = JarvisLineCLI.voiceOptions(systemVoices, preserving: config.systemVoice)
             let statusOutput = try await cli.run(["status"])
             let doctorOutput = try await cli.run(["doctor"])
             status = RuntimeStatus.parse(statusOutput)
@@ -259,6 +285,8 @@ final class JarvisLineModel: ObservableObject {
             codexHookInstalled = DoctorStatus.parse(doctorOutput).codexHookInstalled
             lastOutput = statusOutput
             await refreshSetupRequirementIfNeeded()
+        } catch {
+            errorMessage = "Refresh failed: \(error.localizedDescription)"
         }
     }
 
@@ -267,13 +295,32 @@ final class JarvisLineModel: ObservableObject {
         await refresh()
     }
 
+    func refreshSystemVoices() async {
+        guard !isRefreshingSystemVoices else { return }
+        isRefreshingSystemVoices = true
+        defer { isRefreshingSystemVoices = false }
+
+        systemVoices = await JarvisLineCLI.systemVoices(
+            preserving: config.systemVoice
+        )
+    }
+
     func start() async {
         await command("Start", ["start"])
         await refresh()
     }
 
     func stop() async {
-        await command("Stop", ["stop"])
+        guard !isStopping else { return }
+        isStopping = true
+        errorMessage = nil
+        do {
+            lastOutput = try await cli.run(["stop"])
+        } catch {
+            errorMessage = "Stop failed: \(error.localizedDescription)"
+        }
+        isStopping = false
+        startCleanupStatusRefreshIfPossible()
         await refresh()
     }
 
@@ -548,14 +595,16 @@ final class JarvisLineModel: ObservableObject {
     private func startCleanupStatusRefreshIfPossible() {
         guard cleanupStatusRefreshRequested,
               !isBusy,
+              !isStopping,
               cleanupStatusRefreshTask == nil else {
             return
         }
 
         cleanupStatusRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            guard !self.isBusy else {
+            guard !self.isBusy, !self.isStopping else {
                 self.cleanupStatusRefreshTask = nil
+                self.startCleanupStatusRefreshIfPossible()
                 return
             }
 
@@ -568,7 +617,7 @@ final class JarvisLineModel: ObservableObject {
 
     @discardableResult
     private func run(label: String, operation: () async throws -> Void) async -> Bool {
-        guard !isBusy else { return false }
+        guard !isBusy, !isStopping else { return false }
         isBusy = true
         errorMessage = nil
         defer {
@@ -706,7 +755,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let applyButton = alert.addButton(withTitle: "Apply")
         alert.addButton(withTitle: "Discard")
         alert.addButton(withTitle: "Cancel")
-        applyButton.isEnabled = model.validationIssues.isEmpty && !model.isBusy
+        applyButton.isEnabled = model.validationIssues.isEmpty && !model.isWorking
 
         alert.beginSheetModal(for: window) { [weak self, weak window] response in
             guard let self, let window else { return }
@@ -801,7 +850,7 @@ struct JarvisLinePanel: View {
                 }
             }
             Spacer()
-            if model.isBusy {
+            if model.isWorking {
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 22, height: 22)
@@ -943,7 +992,7 @@ struct JarvisLinePanel: View {
             ))
             .labelsHidden()
             .toggleStyle(.switch)
-            .disabled(model.isBusy || !model.config.speechEnabled || model.config.speakMode == "off")
+            .disabled(model.runtimeControlsLocked || !model.config.speechEnabled || model.config.speakMode == "off")
             .help("Speak a short alert when an agent needs permission or input.")
         }
         .padding(10)
@@ -989,7 +1038,7 @@ struct JarvisLinePanel: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(JarvisTheme.cyan)
-            .disabled(model.isBusy)
+            .disabled(model.runtimeControlsLocked)
         }
         .padding(12)
         .background(sectionFill)
@@ -1002,17 +1051,21 @@ struct JarvisLinePanel: View {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     CommandButton(title: "Start", icon: "play.fill") { Task { await model.start() } }
+                        .disabled(model.runtimeControlsLocked)
                     CommandButton(title: "Stop", icon: "stop.fill") { Task { await model.stop() } }
+                        .disabled(model.isStopping)
                     CommandButton(title: "Restart", icon: "arrow.clockwise") { Task { await model.restart() } }
+                        .disabled(model.runtimeControlsLocked)
                 }
                 HStack(spacing: 8) {
                     CommandButton(title: "Repair", icon: "wrench.and.screwdriver") { Task { await model.repair() } }
+                        .disabled(model.runtimeControlsLocked)
                     if !model.codexHookInstalled {
                         CommandButton(title: "Install Hook", icon: "link.badge.plus") { Task { await model.installCodexHook() } }
+                            .disabled(model.runtimeControlsLocked)
                     }
                 }
             }
-            .disabled(model.isBusy)
         }
     }
 
@@ -1341,12 +1394,10 @@ final class CLIProcessState: @unchecked Sendable {
                 Darwin.kill(pid, SIGKILL)
             }
         } else if process.isRunning {
-            process.terminate()
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
-                if process.isRunning {
-                    Darwin.kill(pid, SIGKILL)
-                }
-            }
+            Darwin.kill(pid, SIGKILL)
+        }
+        if process.isRunning {
+            process.waitUntilExit()
         }
         continuation.resume(
             throwing: SetupContractError.commandTimedOut(
@@ -1511,36 +1562,32 @@ struct JarvisLineCLI: JarvisLineCommandRunning {
         return "/opt/homebrew/bin/jarvis-line"
     }
 
-    static func systemVoices(preserving current: String) async -> [String] {
-        await Task.detached(priority: .utility) {
-            var voices = [""]
-            let process = Process()
-            let pipe = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-            process.arguments = ["-v", "?"]
-            process.standardOutput = pipe
+    static func systemVoices(
+        preserving current: String,
+        listing: @escaping @Sendable () async throws -> String = {
+            try await JarvisLineCLI(
+                executable: "/usr/bin/say",
+                timeoutSeconds: 2
+            ).run(["-v", "?"])
+        }
+    ) async -> [String] {
+        var voices = [""]
 
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                for line in output.split(separator: "\n") {
-                    let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-                    guard let localeIndex = parts.firstIndex(where: { $0.contains("_") }), localeIndex > 0 else {
-                        continue
-                    }
-                    let name = parts[..<localeIndex].joined(separator: " ")
-                    if !voices.contains(name) {
-                        voices.append(name)
-                    }
-                }
-            } catch {
-                return voiceOptions(voices, preserving: current)
-            }
-
+        guard let output = try? await listing() else {
             return voiceOptions(voices, preserving: current)
-        }.value
+        }
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+            guard let localeIndex = parts.firstIndex(where: { $0.contains("_") }), localeIndex > 0 else {
+                continue
+            }
+            let name = parts[..<localeIndex].joined(separator: " ")
+            if !voices.contains(name) {
+                voices.append(name)
+            }
+        }
+
+        return voiceOptions(voices, preserving: current)
     }
 
     static func voiceOptions(_ voices: [String], preserving current: String) -> [String] {
