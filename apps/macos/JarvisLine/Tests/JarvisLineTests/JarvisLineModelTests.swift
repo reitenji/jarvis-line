@@ -384,6 +384,104 @@ struct JarvisLineModelTests {
             ) == ["", "Samantha"]
         )
     }
+
+    @Test func systemVoiceLookupFallsBackWhenListingTimesOut() async {
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        let voices = await JarvisLineCLI.systemVoices(preserving: "Samantha") {
+            try await JarvisLineCLI(
+                executable: "/bin/sh",
+                timeoutSeconds: 0.05
+            ).run(["-c", "sleep 5"])
+        }
+
+        #expect(voices == ["", "Samantha"])
+        #expect(started.duration(to: clock.now) < .seconds(2))
+    }
+
+    @Test func statusRefreshDoesNotLockRuntimeControls() async {
+        let runner = BlockingRefreshRunner()
+        let (store, path) = temporaryConfigStore()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let model = JarvisLineModel(cli: runner, configStore: store)
+
+        let refresh = Task { await model.refresh() }
+        await runner.waitUntilBlocked()
+
+        #expect(!model.isBusy)
+
+        await runner.finishRefresh()
+        await refresh.value
+    }
+
+    @Test func statusRefreshPreservesEditsMadeWhileTheReadIsInFlight() async {
+        let runner = BlockingRefreshRunner()
+        let (store, path) = temporaryConfigStore()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let model = JarvisLineModel(cli: runner, configStore: store)
+
+        let refresh = Task { await model.refresh() }
+        await runner.waitUntilBlocked()
+        model.config.volume = 0.6
+
+        await runner.finishRefresh()
+        await refresh.value
+
+        #expect(model.config.volume == 0.6)
+        #expect(model.hasUnsavedChanges)
+    }
+
+    @Test func stopIsSentEvenWhenAnotherOperationOwnsTheBusyState() async {
+        let runner = ModelFakeRunner(output: "[OK] Jarvis Line Codex hook")
+        let (store, path) = temporaryConfigStore()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let model = JarvisLineModel(cli: runner, configStore: store)
+        model.isBusy = true
+
+        await model.stop()
+
+        #expect(await runner.calls.contains(["stop"]))
+    }
+
+    @Test func stopOwnsAnExclusiveRuntimeCommandLane() async {
+        let runner = BlockingStopRunner()
+        let (store, path) = temporaryConfigStore()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let model = JarvisLineModel(cli: runner, configStore: store)
+
+        let firstStop = Task { await model.stop() }
+        await runner.waitUntilStopIsBlocked()
+        let duplicateStop = Task { await model.stop() }
+        await model.start()
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let callsWhileStopped = await runner.calls
+        #expect(callsWhileStopped.filter { $0 == ["stop"] }.count == 1)
+        #expect(!callsWhileStopped.contains(["start"]))
+
+        await runner.finishStop()
+        await firstStop.value
+        await duplicateStop.value
+    }
+
+    @Test func cleanupRefreshRequestedDuringStopRunsAfterStopCompletes() async {
+        let runner = BlockingStopRunner()
+        let (store, path) = temporaryConfigStore()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let model = JarvisLineModel(cli: runner, configStore: store)
+
+        let stop = Task { await model.stop() }
+        await runner.waitUntilStopIsBlocked()
+        model.requestCleanupStatusRefresh()
+
+        await runner.finishStop()
+        await stop.value
+        try? await Task.sleep(for: .milliseconds(50))
+
+        #expect(await runner.calls.contains(["cleanup", "status", "--json"]))
+        await model.cleanupStatusRefreshTask?.value
+    }
 }
 
 private func cleanupJSON(
@@ -635,5 +733,78 @@ private actor ControllableCleanupRefreshRunner: JarvisLineCommandRunning {
     func finishCleanupStatus() {
         cleanupStatusContinuation?.resume()
         cleanupStatusContinuation = nil
+    }
+}
+
+private actor BlockingRefreshRunner: JarvisLineCommandRunning {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var isBlocked = false
+
+    func run(_ args: [String], stdin: Data?) async throws -> String {
+        if args == ["--version"] {
+            isBlocked = true
+            waiters.forEach { $0.resume() }
+            waiters.removeAll()
+            await withCheckedContinuation { continuation = $0 }
+            return "jarvis-line test"
+        }
+        if args == ["status"] {
+            return "Watcher: stopped"
+        }
+        if args == ["doctor"] {
+            return "[OK] Jarvis Line Codex hook"
+        }
+        return "{}"
+    }
+
+    func waitUntilBlocked() async {
+        guard !isBlocked else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func finishRefresh() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor BlockingStopRunner: JarvisLineCommandRunning {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var stopIsBlocked = false
+    private(set) var calls: [[String]] = []
+
+    func run(_ args: [String], stdin: Data?) async throws -> String {
+        calls.append(args)
+        if args == ["stop"] {
+            if !stopIsBlocked {
+                stopIsBlocked = true
+                waiters.forEach { $0.resume() }
+                waiters.removeAll()
+                await withCheckedContinuation { continuation = $0 }
+            }
+            return "Stopped"
+        }
+        if args == ["status"] {
+            return "Watcher: stopped"
+        }
+        if args == ["doctor"] {
+            return "[OK] Jarvis Line Codex hook"
+        }
+        if args == ["cleanup", "status", "--json"] {
+            return cleanupJSON()
+        }
+        return "{}"
+    }
+
+    func waitUntilStopIsBlocked() async {
+        guard !stopIsBlocked else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func finishStop() {
+        continuation?.resume()
+        continuation = nil
     }
 }
