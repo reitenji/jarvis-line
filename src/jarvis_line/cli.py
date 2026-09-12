@@ -2477,9 +2477,7 @@ Rules:
 """
     return f"""## Jarvis Line
 
-Jarvis Line is enabled for this agent.
-
-Every final assistant response must include exactly one spoken status line using this format:
+Add a spoken status line using this format:
 
 `Jarvis line: <one short spoken summary>`
 
@@ -2488,12 +2486,10 @@ Rules:
 - Include exactly one `Jarvis line: ...` line in every final response.
 - Include one `Jarvis line: ...` line in meaningful commentary/progress updates, such as starting work, changing approach, hitting a blocker, or verifying results.
 - Do not include more than one `Jarvis line: ...` line in a single commentary/progress message.
-- Keep each Jarvis line to one short natural sentence.
-- Use Jarvis lines only for status, completion, or the next action.
-- Do not include secrets, private data, raw logs, code, or long file contents in the Jarvis line.
+- Use one short natural sentence for status, completion, or the next action.
+- Keep spoken content free of secrets, private data, raw logs, code, and long file contents.
 - Do not start normal messages with phrases like "Jarvis here" or similar persona announcements.
-- Keep normal user-facing text in the user's language unless there is a separate reason to switch.
-- If the response language differs from the Jarvis line language rule, only the Jarvis line is governed by this section.
+- Keep ordinary text in the user's language; the language rule above applies only to the spoken line.
 - Before sending any final response, verify that it includes exactly one `Jarvis line: ...` line.
 """
 
