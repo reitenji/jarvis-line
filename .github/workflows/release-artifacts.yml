@@ -46,7 +46,7 @@ jobs:
           mkdir -p build/sbom-wheel
           python -m zipfile -e dist/jarvis_line-*.whl build/sbom-wheel
       - name: Generate tag-scoped SPDX SBOM from built artifacts
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           path: ./build/sbom-wheel
           format: spdx-json
